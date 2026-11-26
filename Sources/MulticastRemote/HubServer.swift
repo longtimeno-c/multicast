@@ -805,7 +805,7 @@ enum RemoteInputPolicy {
         case .removeFromQueue(let ids), .moveInQueue(let ids, _):
             guard ids.count <= maxQueuedTracks, ids.allSatisfy(idOK) else { return .failure(notFound) }
             return .success(command)
-        case .clearQueue:
+        case .clearQueue, .setShuffle:
             return .success(command)
         case .captureApp(let bundleID):
             return isBundleID(bundleID) ? .success(command) : .failure(notFound)

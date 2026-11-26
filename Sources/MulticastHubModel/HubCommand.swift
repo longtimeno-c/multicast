@@ -47,6 +47,8 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     case moveInQueue(ids: [String], toOffset: Int)
     /// Empties Up Next; the current song plays on.
     case clearQueue
+    /// Shuffles Up Next, or puts it back in its order.
+    case setShuffle(enabled: Bool)
 
     // Pinned playlists
     /// Pin an Apple Music playlist by id.
@@ -79,7 +81,7 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
         case .play, .pause, .next, .previous, .seek: .transport
         case .selectSource, .playTrack, .playPlaylist, .captureApp, .addFiles, .removeFiles, .openSpotify,
              .requestPermission: .source
-        case .addToQueue, .addSpotifyLink, .removeFromQueue, .moveInQueue, .clearQueue,
+        case .addToQueue, .addSpotifyLink, .removeFromQueue, .moveInQueue, .clearQueue, .setShuffle,
              .pinPlaylist, .pinSpotifyLink, .unpinPlaylist: .queue
         case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume,
              .refreshSpeakers: .speaker

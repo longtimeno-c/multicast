@@ -39,12 +39,16 @@ public struct QueueStatus: Equatable, Hashable, Sendable, Codable {
     /// Someone played something directly in Music or Spotify: the hub follows that app and the
     /// queue waits. Next, or choosing a song in Up Next, carries on with the queue.
     public var isHeld: Bool
+    /// Up Next plays in a random order (`HubCommand.setShuffle`).
+    public var isShuffled: Bool
 
-    public init(currentID: String? = nil, currentSource: SourceKind? = nil, upcomingCount: Int = 0, isHeld: Bool = false) {
+    public init(currentID: String? = nil, currentSource: SourceKind? = nil, upcomingCount: Int = 0, isHeld: Bool = false,
+                isShuffled: Bool = false) {
         self.currentID = currentID
         self.currentSource = currentSource
         self.upcomingCount = upcomingCount
         self.isHeld = isHeld
+        self.isShuffled = isShuffled
     }
 }
 

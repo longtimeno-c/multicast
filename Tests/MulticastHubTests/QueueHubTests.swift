@@ -163,6 +163,11 @@ struct QueueHubTests {
         #expect(try await upNextIDs(rig).isEmpty)
         try await rig.hub.perform(.addToQueue(tracks: [Self.t("a1"), Self.t("a2")], source: .appleMusic, placement: .last))
         let before = rig.state.content.upNext
+        try await rig.hub.perform(.setShuffle(enabled: true))
+        #expect(rig.state.queue.isShuffled)
+        try await rig.hub.perform(.setShuffle(enabled: false))
+        let restored = try await upNextIDs(rig)
+        #expect(!rig.state.queue.isShuffled && restored == ["a1", "a2"])
         try await rig.hub.perform(.clearQueue)
         #expect(try await upNextIDs(rig).isEmpty && rig.state.content.upNext > before)
         // Spotify songs without a track URI can't be queued.

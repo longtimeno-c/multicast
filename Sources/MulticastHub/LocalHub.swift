@@ -326,6 +326,7 @@ public actor LocalHub: HubBackend {
         case .removeFromQueue(let ids): removeFromQueue(ids)
         case .moveInQueue(let ids, let offset): moveInQueue(ids, toOffset: offset)
         case .clearQueue: clearQueue()
+        case .setShuffle(let on): setShuffle(on)
         case .pinPlaylist(let id): try await pinPlaylist(id: id)
         case .pinSpotifyLink(let link): try await pinSpotifyLink(link)
         case .unpinPlaylist(let id): unpinPlaylist(id: id)

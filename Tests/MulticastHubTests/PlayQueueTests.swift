@@ -33,6 +33,30 @@ import MulticastHubModel
         #expect(q.current?.track.id == "a")
     }
 
+    @Test func shuffleAndPutBack() {
+        var q = PlayQueue()
+        var rng = FixedRNG()
+        let many = (1...12).map { Self.t("s\($0)") }
+        q.play(many, source: .appleMusic, startingAt: "s1")
+        let ordered = q.upcoming.map(\.track.id)
+        q.setShuffle(true, using: &rng)
+        #expect(q.isShuffled && q.upcoming.map(\.track.id) != ordered && Set(q.upcoming.map(\.track.id)) == Set(ordered))
+        q.insert([Self.t("next")], source: .spotify, at: .next)
+        q.insert([Self.t("last")], source: .files, at: .last)
+        q.advance()   // plays "next"
+        q.setShuffle(false, using: &rng)
+        #expect(!q.isShuffled)
+        #expect(q.upcoming.map(\.track.id) == ordered + ["last"])
+        // A shuffled playlist puts back into playlist order.
+        q.play(many, source: .appleMusic, shuffled: true, using: &rng)
+        #expect(q.isShuffled)
+        let first = q.current!.track.id
+        q.setShuffle(false, using: &rng)
+        #expect(q.upcoming.map(\.track.id) == many.map(\.id).filter { $0 != first })
+        q.play(many, source: .appleMusic, startingAt: "s3")
+        #expect(!q.isShuffled)
+    }
+
     @Test func insertNextAndLastMixSources() {
         var q = PlayQueue()
         q.play(list, source: .appleMusic, startingAt: "c")
