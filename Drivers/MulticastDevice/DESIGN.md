@@ -1,6 +1,31 @@
 # Multicast as a Mac output device: design
 
-Status: design only. No driver code yet.
+Status: prototype built (driver, hub source, Mac output source in the apps, tests). Live checks
+are recorded under "Verification" below.
+
+## Build, install, uninstall
+
+```bash
+Drivers/MulticastDevice/build.sh                 # no admin rights; team-signed if Apps/Config/Local.xcconfig exists
+sudo Drivers/MulticastDevice/install.sh          # copies to /Library/Audio/Plug-Ins/HAL, restarts coreaudiod
+sudo Drivers/MulticastDevice/uninstall.sh        # removes it, restarts coreaudiod
+```
+
+Restarting coreaudiod stops all sound on the Mac for a moment. Then choose "Multicast" in System
+Settings › Sound › Output (or an app's output menu) and choose "Mac output" as the hub's source.
+`swift run multicast-cli play --mac-output --to "MacBook Air Speakers" --volume 0.1 --seconds 6`
+plays it without the app.
+
+## Layout
+
+- `Core/`: pure C, shared by the driver and the `MulticastDeviceCore` SwiftPM target (tested in
+  `Tests/MulticastDeviceCoreTests`): loopback ring keyed by sample time, zero time stamps, volume
+  curve, latency frames.
+- `Driver/MulticastDevice.c`: the AudioServerPlugIn (objects, properties, IO).
+- `MulticastDevice.xcodeproj` + `Driver.xcconfig`: builds `MulticastDevice.driver`.
+- Hub side: `OutputDeviceSource` (Sources/MulticastSources/macOS), `SourceKind.macOutput`,
+  `LocalHub+MacOutput.swift`, `MacOutputView` (Mac) and `MacOutputScreen` (iPhone).
+
 
 ## Options
 

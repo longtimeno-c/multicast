@@ -103,7 +103,8 @@ Mac:    Multicast (window, menu bar) ── HubModel ─────────
 - `Sources/MulticastDiscovery` — Bonjour discovery of AirPlay speakers
 - `Sources/MulticastRAOP` — AirPlay (RAOP) sender; AirPlay 2 devices are driven over RAOP after `POST /auth-setup`
 - `Sources/MulticastLocalOutput` — local and Bluetooth outputs
-- `Sources/MulticastSources` — tone, file and app-audio capture sources
+- `Sources/MulticastSources` — tone, file, app-audio capture and Mac-output (`OutputDeviceSource`) sources
+- `Drivers/MulticastDevice` — the "Multicast" output device (an AudioServerPlugIn) that the Mac output source reads; see its DESIGN.md for build, install and uninstall
 - `Sources/MulticastEngine` — pacing clock and fan-out
 - `Sources/MulticastKit` — `SpeakerDirectory`, `SinkFactory` and `MulticastSession` (the façade over all of the above)
 - `Sources/MulticastHubModel` — the UI seam described above (no dependencies; macOS and iOS)
