@@ -13,14 +13,20 @@ public enum PCM {
     public static let framesPerPacket: Int = 352
     public static let bytesPerPacket: Int = framesPerPacket * bytesPerFrame
 
-    /// Duration of `frames` frames in nanoseconds (rounded down).
+    /// Duration of `frames` frames in nanoseconds (rounded down). 128-bit intermediate, so it
+    /// never traps; saturates at `UInt64.max` (beyond ~584 years of audio).
     public static func nanos(forFrames frames: UInt64) -> UInt64 {
-        frames * 1_000_000_000 / UInt64(sampleRate)
+        let rate = UInt64(sampleRate)
+        let product = frames.multipliedFullWidth(by: 1_000_000_000)
+        guard product.high < rate else { return .max }
+        return rate.dividingFullWidth(product).quotient
     }
 
-    /// Number of whole frames in `nanos` nanoseconds (rounded down).
+    /// Number of whole frames in `nanos` nanoseconds (rounded down). 128-bit intermediate; the
+    /// result is always smaller than `nanos`, so it never overflows.
     public static func frames(forNanos nanos: UInt64) -> UInt64 {
-        nanos * UInt64(sampleRate) / 1_000_000_000
+        let product = nanos.multipliedFullWidth(by: UInt64(sampleRate))
+        return UInt64(1_000_000_000).dividingFullWidth(product).quotient
     }
 }
 

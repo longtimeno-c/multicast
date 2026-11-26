@@ -274,10 +274,12 @@ func runPlay(_ args: Args) async -> Int32 {
     guard let timeline = session.engine.currentTimeline else { await session.shutdown(); fail("no timeline", code: 1) }
     let audibleStart = timeline.anchorHostNanos
     let fade = config.fadeSeconds
-    // The source is read `latency` ahead of playout, so the fade must start that much earlier
-    // for the audible end to land at `seconds`.
-    let productionStart = audibleStart - min(audibleStart, timeline.latencyNanos)
-    let fadeAt = productionStart + UInt64(max(0, seconds - fade) * 1e9)
+    // The pacer reads the source one group latency ahead of playout, so a fade requested at host
+    // time T is heard from T + latency. Requesting it at audibleStart - latency + (seconds - fade)
+    // makes it audible from `seconds - fade` and silent at `seconds`: audible time == `seconds`,
+    // fade included. (The request itself is therefore logged ~latency + fade before the end.)
+    let fadeAt = PlayTiming.fadeRequestHostNanos(audibleStart: audibleStart, latencyNanos: timeline.latencyNanos,
+                                                 seconds: seconds, fadeSeconds: fade)
     let hardLimit = audibleStart + UInt64((seconds + 5) * 1e9)
     var fading = false
     var pendingAdds = scheduledAdds.sorted { $0.0 < $1.0 }
@@ -293,10 +295,15 @@ func runPlay(_ args: Args) async -> Int32 {
         if !fading && (interruptsSeen == 1 || now >= fadeAt) {
             fading = true
             if interruptsSeen == 1 { exitCode = 130 }
-            say("fading out")
+            let heardFrom = Double(Int64(now + timeline.latencyNanos) - Int64(audibleStart)) / 1e9
+            say(String(format: "fading out (heard from t=%+.2fs, silent by t=%+.2fs)", heardFrom, heardFrom + fade))
             session.requestFadeOut()
         }
-        if let until = endBox.value, now >= until + 100_000_000 { say("tail played out"); break }
+        if let until = endBox.value, now >= until + 100_000_000 {
+            say(String(format: "tail played out: audible for %.2fs (asked for %.2fs)",
+                       Double(Int64(until) - Int64(audibleStart)) / 1e9, seconds))
+            break
+        }
         if now >= hardLimit { say("time limit reached"); break }
         while let next = pendingAdds.first, elapsed >= next.0, !fading {
             pendingAdds.removeFirst()
@@ -332,6 +339,16 @@ func runPlay(_ args: Args) async -> Int32 {
         if exitCode == 0 { exitCode = 1 }
     }
     return exitCode
+}
+
+enum PlayTiming {
+    /// Host time to request the fade-out so the audio is heard for `seconds` in all, its fade
+    /// included: the source is read `latencyNanos` ahead of playout.
+    static func fadeRequestHostNanos(audibleStart: UInt64, latencyNanos: UInt64, seconds: Double,
+                                     fadeSeconds: Double) -> UInt64 {
+        let fadeAudibleAt = audibleStart + UInt64(max(0, seconds - fadeSeconds) * 1e9)
+        return fadeAudibleAt > latencyNanos ? fadeAudibleAt - latencyNanos : 0
+    }
 }
 
 /// Largest source peak since the last status line.
