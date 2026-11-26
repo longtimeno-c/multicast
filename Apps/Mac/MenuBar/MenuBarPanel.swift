@@ -5,6 +5,7 @@ import MulticastHubModel
 struct MenuBarPanel: View {
     @Environment(HubModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @Environment(HubRuntime.self) private var runtime: HubRuntime?
     /// Snapshots have no menu-bar material behind them, so they ask for a solid surface.
     var solidBackground = false
 
@@ -19,6 +20,31 @@ struct MenuBarPanel: View {
                 MasterVolumeRow(volume: model.masterVolume, levels: model.levels,
                                 grid: .dense, showsBigNumber: false,
                                 onChange: model.setMasterVolume, onCommit: model.commitMasterVolume)
+            }
+
+            if model.needsLocalNetwork || runtime?.localNetworkBlocked == true {
+                GroupedSection {
+                    HStack(alignment: .top, spacing: MC.Space.s) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(MC.Ink.body)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                            Text("Local Network access is off")
+                                .font(MC.Font.body)
+                                .foregroundStyle(MC.Ink.primary)
+                            Text("No AirPlay speakers, and iPhone remotes can\u{2019}t find this Mac.")
+                                .font(MC.Font.caption)
+                                .foregroundStyle(MC.Ink.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("Open Settings\u{2026}", action: LocalNetworkSettings.open)
+                            .controlSize(.small)
+                    }
+                    .padding(MC.Space.m)
+                    .accessibilityElement(children: .combine)
+                }
             }
 
             GroupedSection {
@@ -52,6 +78,7 @@ struct MenuBarPanel: View {
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 Spacer(minLength: MC.Space.s)
+                RefreshSpeakersButton()
                 SettingsLink {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 13))

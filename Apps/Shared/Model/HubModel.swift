@@ -471,6 +471,12 @@ final class HubModel {
         send(.setSpeakerSyncTrim(id: id, milliseconds: v))
     }
 
+    /// Look for speakers again on the hub (known ones stay listed) and retry failed ones.
+    func refreshSpeakers() {
+        isDiscovering = true
+        send(.refreshSpeakers)
+    }
+
     func retry(_ id: SpeakerID) {
         mutateSpeaker(id) { $0.state = .connecting }
         send(.retrySpeaker(id: id))

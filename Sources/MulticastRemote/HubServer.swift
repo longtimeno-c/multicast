@@ -804,6 +804,8 @@ enum RemoteInputPolicy {
             return .success(.setSpeakerSyncTrim(id: id, milliseconds: min(r.upperBound, max(r.lowerBound, ms))))
         case .setMasterVolume(let volume):
             return .success(.setMasterVolume(volume: clamp01(volume)))
+        case .refreshSpeakers:
+            return .success(command)
         }
     }
 

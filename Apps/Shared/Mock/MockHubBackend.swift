@@ -173,6 +173,7 @@ actor MockHubBackend: HubBackend {
             guard let s = state.speaker(id), s.isEnabled else { return }
             beginConnecting(id)
         case .setMasterVolume(let volume): update { $0.masterVolume = volume }
+        case .refreshSpeakers: break
         }
     }
 

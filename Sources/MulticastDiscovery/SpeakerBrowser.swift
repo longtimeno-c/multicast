@@ -30,6 +30,12 @@ public final class SpeakerBrowser: @unchecked Sendable {
         public var coalescing: DispatchTimeInterval = .milliseconds(150)
         /// Delay before re-creating a browse/resolve that failed (e.g. mDNSResponder restarted).
         public var retryDelay: DispatchTimeInterval = .seconds(2)
+        /// Browse again from scratch this often (seconds), so a speaker mDNSResponder lost track of
+        /// is asked for afresh. nil = only on `refresh()` and interface changes.
+        public var rescanInterval: TimeInterval? = 45
+        /// After a re-scan starts, snapshots are held this long so the list goes straight from the
+        /// old answers to the new ones instead of emptying first.
+        public var rescanSettle: DispatchTimeInterval = .seconds(3)
         /// Optional diagnostics sink (called on the browser's private queue; keep it cheap).
         public var log: (@Sendable (String) -> Void)?
 
@@ -97,6 +103,9 @@ public final class SpeakerBrowser: @unchecked Sendable {
     private var pathMonitor: NWPathMonitor?
     private var lastInterfaceNames: Set<String> = []
     private var lastErrorCode: Int32?
+    /// While set, publishing waits until then (a re-scan is collecting fresh answers).
+    private var holdPublishUntil: DispatchTime?
+    private var rescanTimer: DispatchSourceTimer?
     private let loopbackIndex: UInt32 = if_nametoindex("lo0")
 
     public init(configuration: Configuration = Configuration()) {
@@ -114,6 +123,7 @@ public final class SpeakerBrowser: @unchecked Sendable {
         }
         if DispatchQueue.getSpecific(key: queueKey) != nil { work() } else { queue.sync(execute: work) }
         pathMonitor?.cancel()
+        rescanTimer?.cancel()
     }
 
     // MARK: Public API
@@ -126,7 +136,41 @@ public final class SpeakerBrowser: @unchecked Sendable {
             LocalMachineIdentity.refreshHostNames()
             self.startPathMonitor()
             self.startBrowsing()
+            self.startRescanTimer()
         }
+    }
+
+    /// Browse again from scratch now: every browse and resolve is re-created, so the network is
+    /// asked afresh. Speakers already known stay in the published snapshot until the new answers
+    /// are in (`rescanSettle`); ones that no longer answer then leave it.
+    public func refresh() {
+        onQueue {
+            guard self.running else { return }
+            self.rescan(reason: "refresh")
+        }
+    }
+
+    private func rescan(reason: String) {
+        log("re-scan (\(reason))")
+        LocalMachineIdentity.refreshHostNames()
+        holdPublishUntil = .now() + configuration.rescanSettle
+        tearDown()
+        startBrowsing()
+        schedulePublish()
+    }
+
+    private func startRescanTimer() {
+        rescanTimer?.cancel()
+        rescanTimer = nil
+        guard let interval = configuration.rescanInterval, interval > 0 else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.running else { return }
+            self.rescan(reason: "timer")
+        }
+        timer.resume()
+        rescanTimer = timer
     }
 
     /// Stop browsing and release every DNS-SD operation. Subscribers stay attached and receive an
@@ -137,6 +181,9 @@ public final class SpeakerBrowser: @unchecked Sendable {
             self.running = false
             self.pathMonitor?.cancel()
             self.pathMonitor = nil
+            self.rescanTimer?.cancel()
+            self.rescanTimer = nil
+            self.holdPublishUntil = nil
             self.tearDown()
             self.publishNow()
         }
@@ -317,9 +364,15 @@ public final class SpeakerBrowser: @unchecked Sendable {
     private func schedulePublish() {
         guard !publishScheduled else { return }
         publishScheduled = true
-        queue.asyncAfter(deadline: .now() + configuration.coalescing) { [weak self] in
+        var deadline = DispatchTime.now() + configuration.coalescing
+        if let hold = holdPublishUntil, hold > deadline { deadline = hold }
+        queue.asyncAfter(deadline: deadline) { [weak self] in
             guard let self else { return }
             self.publishScheduled = false
+            if let hold = self.holdPublishUntil {
+                if hold > .now() { self.schedulePublish(); return }
+                self.holdPublishUntil = nil
+            }
             self.publishNow()
         }
     }
@@ -353,9 +406,7 @@ public final class SpeakerBrowser: @unchecked Sendable {
             self.lastInterfaceNames = names
             guard !first else { return }
             self.log("interfaces changed: \(names.sorted())")
-            LocalMachineIdentity.refreshHostNames()
-            for (key, regtype) in self.present { self.startResolve(key, regtype: regtype) }
-            self.schedulePublish()
+            self.rescan(reason: "interfaces changed")
         }
         monitor.start(queue: queue)
         pathMonitor = monitor

@@ -301,6 +301,7 @@ public actor LocalHub: HubBackend {
         case .setSpeakerSyncTrim(let id, let ms): try setSpeakerTrim(id.rawValue, ms)
         case .retrySpeaker(let id): try retrySpeaker(id.rawValue)
         case .setMasterVolume(let v): setMaster(v)
+        case .refreshSpeakers: refreshSpeakers()
         }
     }
 
@@ -412,6 +413,16 @@ public actor LocalHub: HubBackend {
         wantsPlay = false
         let source = activeSource
         enqueue { [self] in await self.pauseMediaApp(source) }
+    }
+
+    /// Browse again; the list shows it is searching until it settles.
+    private func refreshSpeakers() {
+        let now = deps.now()
+        startedAt = now
+        lastSpeakerListChange = now
+        discovering = true
+        deps.session.refreshSpeakers()
+        publish()
     }
 
     private func retrySpeaker(_ id: String) throws {
@@ -1196,7 +1207,9 @@ public actor LocalHub: HubBackend {
     }
 
     private func updateLocalNetworkPermission() {
-        if deps.session.discoveryErrorCode == -65570 {
+        // -65570 PolicyDenied, -65555 NoAuth: both are how mDNSResponder refuses an app that has
+        // Local Network access turned off.
+        if let code = deps.session.discoveryErrorCode, code == -65570 || code == -65555 {
             permissions.localNetwork = .denied
         } else if descriptors.values.contains(where: { $0.transport != .local }) {
             permissions.localNetwork = .granted
@@ -1292,7 +1305,8 @@ public actor LocalHub: HubBackend {
             return SpeakerItem(id: SpeakerID(id), name: d.name, transport: SpeakerPresentation.transport(for: d),
                                glyph: SpeakerPresentation.glyph(for: d, hostIsLaptop: laptop),
                                model: SpeakerPresentation.modelName(for: d), address: SpeakerPresentation.address(for: d),
-                               isEnabled: enabled, volume: p.volume, state: state, syncTrimMs: p.syncTrimMs)
+                               isEnabled: enabled, volume: p.volume, state: state, syncTrimMs: p.syncTrimMs,
+                               notSeenSince: session.notSeenSince[id])
         }
         var extra: [HubIssue] = []
         switch spotifyStatus {
