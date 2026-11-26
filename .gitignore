@@ -1,0 +1,12 @@
+.DS_Store
+.build*/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.claude/worktrees/
+node_modules/
+
+# Third-party agent skills are restored from skills-lock.json (npx skills install), not committed
+.agents/
+.claude/skills/
