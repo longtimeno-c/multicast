@@ -57,23 +57,28 @@ private struct LibraryBrowser: View {
     @State private var query = ""
     @State private var focusSearch = 0
 
+    /// One search field above whatever shows beneath it. (It used to be a safe-area inset on a
+    /// `Group`, which applies modifiers to each branch: every branch had its own field, so the
+    /// first letter, which swaps the grid for the results, put up a new field without focus.)
     var body: some View {
-        Group {
-            if isSearching {
-                LibrarySearchResults(query: query)
-            } else if let playlist = model.openedPlaylist {
-                PlaylistDetail(playlist: playlist)
-                    .transition(.opacity)
-            } else {
-                PlaylistGrid()
-                    .transition(.opacity)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(spacing: 0) {
             SourceHeader {
                 SearchField(text: $query, prompt: "Search songs and playlists", focusRequest: focusSearch)
             }
+            ZStack {
+                if isSearching {
+                    LibrarySearchResults(query: query)
+                } else if let playlist = model.openedPlaylist {
+                    PlaylistDetail(playlist: playlist)
+                        .transition(.opacity)
+                } else {
+                    PlaylistGrid()
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(MC.Surface.canvas)
         .onChange(of: query) { _, new in model.search(new) }
         .background {
             // Command-F reaches the library search, as Music's does.
