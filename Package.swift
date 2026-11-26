@@ -11,13 +11,26 @@ import PackageDescription
 //   MulticastSources      tone, file and (macOS) app/system audio capture sources
 //   MulticastEngine       pacing clock + fan-out from one source to many sinks
 //   MulticastKit          umbrella that wires everything together for the apps
+//
+// App-facing layer (the Mac hub app and the iOS remote):
+//   MulticastHubModel     UI-facing value types, HubState, HubCommand/HubQuery and the HubBackend
+//                         protocol; no dependencies, so the iOS remote shares it
+//   MulticastHub          the Mac hub: HubBackend over MulticastKit, serves remotes
+//   MulticastRemote       the iOS remote: HubBackend as a network client of the hub
+//   MulticastAppleMusic   the hub's own Apple Music player (library, playlists, search, queue)
 let package = Package(
     name: "Multicast",
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "MulticastKit", targets: ["MulticastKit"]),
+        .library(name: "MulticastHubModel", targets: ["MulticastHubModel"]),
+        .library(name: "MulticastHub", targets: ["MulticastHub"]),
+        .library(name: "MulticastRemote", targets: ["MulticastRemote"]),
+        .library(name: "MulticastAppleMusic", targets: ["MulticastAppleMusic"]),
         .executable(name: "multicast-cli", targets: ["multicast-cli"]),
         .executable(name: "raop-probe", targets: ["raop-probe"]),
+        .executable(name: "multicast-remote-cli", targets: ["multicast-remote-cli"]),
+        .executable(name: "multicast-hub", targets: ["multicast-hub"]),
     ],
     targets: [
         .target(name: "MulticastAudio"),
@@ -33,7 +46,13 @@ let package = Package(
                 "MulticastLocalOutput", "MulticastSources", "MulticastEngine",
             ]
         ),
+        .target(name: "MulticastHubModel"),
+        .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic"]),
+        .target(name: "MulticastRemote", dependencies: ["MulticastHubModel"]),
+        .target(name: "MulticastAppleMusic", dependencies: ["MulticastHubModel", "MulticastSources", "MulticastAudio"]),
         .executableTarget(name: "multicast-cli", dependencies: ["MulticastKit"]),
+        .executableTarget(name: "multicast-hub", dependencies: ["MulticastHub", "MulticastRemote", "MulticastAppleMusic", "MulticastHubModel"]),
+        .executableTarget(name: "multicast-remote-cli", dependencies: ["MulticastRemote", "MulticastHubModel"]),
         .executableTarget(name: "raop-probe", dependencies: ["MulticastAudio", "MulticastRAOP"]),
         .testTarget(name: "MulticastDiscoveryTests", dependencies: ["MulticastDiscovery"]),
         .testTarget(name: "MulticastRAOPTests", dependencies: ["MulticastRAOP"]),
@@ -41,6 +60,11 @@ let package = Package(
         .testTarget(name: "MulticastSourcesTests", dependencies: ["MulticastSources"]),
         .testTarget(name: "MulticastEngineTests", dependencies: ["MulticastEngine"]),
         .testTarget(name: "MulticastKitTests", dependencies: ["MulticastKit"]),
+        .testTarget(name: "MulticastAudioTests", dependencies: ["MulticastAudio"]),
+        .testTarget(name: "MulticastHubModelTests", dependencies: ["MulticastHubModel"]),
+        .testTarget(name: "MulticastHubTests", dependencies: ["MulticastHub", "MulticastAppleMusic"]),
+        .testTarget(name: "MulticastRemoteTests", dependencies: ["MulticastRemote"]),
+        .testTarget(name: "MulticastAppleMusicTests", dependencies: ["MulticastAppleMusic"]),
     ],
     swiftLanguageModes: [.v5]
 )
