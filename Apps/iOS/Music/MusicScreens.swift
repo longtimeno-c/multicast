@@ -41,6 +41,8 @@ struct PhoneTrackRow: View {
     var isCurrent: Bool
     var detail: String? = nil
     var showsArtwork = true
+    /// Marks the row with its source (the combined library).
+    var source: SourceKind? = nil
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
@@ -51,9 +53,12 @@ struct PhoneTrackRow: View {
                 Text(track.title)
                     .font(MC.Font.body)
                     .foregroundStyle(isCurrent ? AnyShapeStyle(MC.accent) : AnyShapeStyle(MC.Ink.primary))
-                Text(detail ?? track.artist)
-                    .font(MC.Font.caption)
-                    .foregroundStyle(MC.Ink.secondary)
+                HStack(spacing: MC.Space.xs) {
+                    if let source { PhoneSourceMark(source: source) }
+                    Text(detail ?? track.artist)
+                }
+                .font(MC.Font.caption)
+                .foregroundStyle(MC.Ink.secondary)
             }
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,7 +158,9 @@ private struct SourcesList: View {
             Section {
                 ForEach(SourceKind.allCases) { source in
                     NavigationLink(value: RemoteNavigation.MusicRoute.source(source)) {
-                        SourceRow(source: source, subtitle: subtitle(source), isLive: model.activeSource == source)
+                        SourceRow(source: source, subtitle: subtitle(source), isLive: model.activeSource == source,
+                                  title: source == .appleMusic ? model.libraryTitle : source.title,
+                                  symbol: source == .appleMusic ? model.librarySymbol : source.symbolName)
                     }
                 }
             } footer: {
@@ -175,7 +182,7 @@ private struct SourcesList: View {
         }
         switch source {
         case .appleMusic:
-            return "Playlists, songs and search"
+            return model.libraryIsCombined ? "Apple Music and Spotify" : "Playlists, songs and search"
         case .spotify:
             switch model.spotify {
             case .notInstalled: return "Not installed on the Mac"
@@ -204,16 +211,18 @@ private struct SourceRow: View {
     var source: SourceKind
     var subtitle: String
     var isLive: Bool
+    var title: String
+    var symbol: String
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
-            Image(systemName: source.symbolName)
+            Image(systemName: symbol)
                 .font(.system(size: 17, weight: .regular))
                 .foregroundStyle(MC.Ink.body)
                 .frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
-                Text(source.title)
+                Text(title)
                     .font(MC.Font.body)
                     .foregroundStyle(MC.Ink.primary)
                 Text(subtitle)
@@ -251,7 +260,7 @@ private struct AppleMusicView: View {
                 library
             }
         }
-        .navigationTitle("Apple Music")
+        .navigationTitle(model.libraryTitle)
         .searchable(text: $nav.librarySearch, prompt: "Search your library")
         .onChange(of: nav.librarySearch) { _, q in model.search(q) }
         .onAppear { if !nav.librarySearch.isEmpty { model.search(nav.librarySearch) } }
@@ -279,8 +288,20 @@ private struct AppleMusicView: View {
                 .listRowBackground(Color.clear)
 
                 switch nav.appleMusicSection {
-                case .playlists: playlists(model.playlists.items)
-                case .songs: tracks(model.songs.items, list: .songs, context: .songs)
+                case .playlists:
+                    if combined && !model.spotifyPins.isEmpty {
+                        Section("Spotify") { spotifyPlaylists(model.spotifyPins) }
+                        Section("Apple Music") { playlists(model.playlists.items) }
+                    } else {
+                        playlists(model.playlists.items)
+                    }
+                case .songs:
+                    if combined && !model.spotifySessionSongs.isEmpty {
+                        Section("Spotify this session") { spotifySongs(model.spotifySessionSongs) }
+                        Section("Apple Music") { tracks(model.songs.items, list: .songs, context: .songs) }
+                    } else {
+                        tracks(model.songs.items, list: .songs, context: .songs)
+                    }
                 case .upNext:
                     UpNextSection()
                 }
@@ -298,8 +319,18 @@ private struct AppleMusicView: View {
     @ViewBuilder private var searchResults: some View {
         let q = session.navigation.librarySearch
         let matching = model.playlists.items.filter { $0.name.localizedCaseInsensitiveContains(q) }
-        if !matching.isEmpty {
-            Section("Playlists") { playlists(matching) }
+        let spotifyMatching = combined ? model.spotifyPins.filter { $0.name.localizedCaseInsensitiveContains(q) } : []
+        if !matching.isEmpty || !spotifyMatching.isEmpty {
+            Section("Playlists") {
+                spotifyPlaylists(spotifyMatching)
+                playlists(matching)
+            }
+        }
+        let spotifySongMatches = combined ? model.spotifySessionSongs.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q)
+        } : []
+        if !spotifySongMatches.isEmpty {
+            Section("Spotify this session") { spotifySongs(spotifySongMatches) }
         }
         Section("Songs") {
             if model.searchResults.isLoaded && model.searchResults.items.isEmpty && model.searchQuery == q.trimmingCharacters(in: .whitespaces) {
@@ -308,6 +339,52 @@ private struct AppleMusicView: View {
                     .foregroundStyle(MC.Ink.secondary)
             }
             tracks(model.searchResults.items, list: .search, context: .search(query: model.searchQuery))
+        }
+    }
+
+    private var combined: Bool { model.libraryIsCombined }
+
+    /// Pinned Spotify playlists: Spotify plays them, so a tap plays.
+    private func spotifyPlaylists(_ pins: [PinnedPlaylist]) -> some View {
+        ForEach(pins) { pin in
+            Button { model.playPlaylist(pin.id) } label: {
+                HStack(spacing: MC.Space.m) {
+                    ArtworkView(data: model.artwork(pin.artworkID, maxPixel: 200), size: 56, radius: MC.Radius.medium)
+                    VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                        Text(pin.name)
+                            .font(MC.Font.body)
+                            .foregroundStyle(MC.Ink.primary)
+                        HStack(spacing: MC.Space.xs) {
+                            PhoneSourceMark(source: .spotify)
+                            Text("Plays in Spotify")
+                        }
+                        .font(MC.Font.caption)
+                        .foregroundStyle(MC.Ink.secondary)
+                    }
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                Button { model.playPlaylist(pin.id) } label: { Label("Play", systemImage: "play") }
+                Button { model.playPlaylist(pin.id, shuffled: true) } label: { Label("Shuffle", systemImage: "shuffle") }
+                Button { model.unpin(pin.id) } label: { Label("Unpin", systemImage: "pin.slash") }
+            }
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    private func spotifySongs(_ items: [TrackItem]) -> some View {
+        ForEach(items) { track in
+            Button { model.playTrack(track.id, context: .spotifyHistory) } label: {
+                PhoneTrackRow(track: track, isCurrent: model.activeSource == .spotify && model.nowPlaying?.trackID == track.id,
+                              source: .spotify)
+            }
+            .buttonStyle(.plain)
+            .queueActions(track, source: .spotify, play: { model.playTrack(track.id, context: .spotifyHistory) })
+            .listRowBackground(Color.clear)
         }
     }
 
@@ -324,7 +401,7 @@ private struct AppleMusicView: View {
     private func tracks(_ items: [TrackItem], list: HubModel.ListKey, context: TrackContext) -> some View {
         ForEach(items) { track in
             Button { model.playTrack(track.id, context: context) } label: {
-                PhoneTrackRow(track: track, isCurrent: isCurrent(track))
+                PhoneTrackRow(track: track, isCurrent: isCurrent(track), source: combined ? .appleMusic : nil)
             }
             .buttonStyle(.plain)
             .queueActions(track, source: .appleMusic, play: { model.playTrack(track.id, context: context) })
@@ -468,7 +545,9 @@ private struct SpotifyView: View {
                     header
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
-                    if !model.spotifyHistory.items.isEmpty {
+                    if model.libraryIsCombined {
+                        ListNote("Songs Spotify played this session, and pinned Spotify playlists, are in Library with your Apple Music.")
+                    } else if !model.spotifyHistory.items.isEmpty {
                         Section("This session") {
                             ForEach(model.spotifyHistory.items) { track in
                                 if track.id.hasPrefix("spotify:track:") {
@@ -488,7 +567,9 @@ private struct SpotifyView: View {
                             }
                         }
                     }
-                    ListNote("Swipe a song to queue it, or paste a song link with Add Spotify Song in Up Next.")
+                    if !model.libraryIsCombined {
+                        ListNote("Swipe a song to queue it, or paste a song link with Add Spotify Song in Up Next.")
+                    }
                 }
                 .listStyle(.plain)
                 .remoteList()
@@ -811,5 +892,17 @@ struct PinSpotifyToolbar: ToolbarContent {
                     Button("OK", role: .cancel) {}
                 }
         }
+    }
+}
+
+/// The source of a row in the combined library: a small glyph, named for VoiceOver.
+struct PhoneSourceMark: View {
+    var source: SourceKind
+
+    var body: some View {
+        Image(systemName: source.symbolName)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(MC.Ink.tertiary)
+            .accessibilityLabel(source.title)
     }
 }

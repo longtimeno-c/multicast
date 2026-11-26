@@ -58,10 +58,10 @@ enum MockData {
 
     static var spotifyTracks: [TrackItem] {
         [
-            TrackItem(id: "sp1", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),
-            TrackItem(id: "sp2", title: "Waystation", artist: "Pelle Ash", album: "Waystation", duration: 212, artworkID: MockArtwork.id(.stack)),
-            TrackItem(id: "sp3", title: "Brightwater", artist: "Sola Wren", album: "Coastlines", duration: 255, artworkID: MockArtwork.id(.horizon)),
-            TrackItem(id: "sp4", title: "Second Floor", artist: "Hollis Grey", album: "Rooms", duration: 199, artworkID: MockArtwork.id(.split)),
+            TrackItem(id: "spotify:track:0mockEveningTide00000001", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),
+            TrackItem(id: "spotify:track:0mockWaystation000000002", title: "Waystation", artist: "Pelle Ash", album: "Waystation", duration: 212, artworkID: MockArtwork.id(.stack)),
+            TrackItem(id: "spotify:track:0mockBrightwater00000003", title: "Brightwater", artist: "Sola Wren", album: "Coastlines", duration: 255, artworkID: MockArtwork.id(.horizon)),
+            TrackItem(id: "spotify:track:0mockSecondFloor0000004", title: "Second Floor", artist: "Hollis Grey", album: "Rooms", duration: 199, artworkID: MockArtwork.id(.split)),
         ]
     }
 

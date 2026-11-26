@@ -412,6 +412,18 @@ final class HubModel {
     }
 
     var canPlay: Bool { activeSource != nil && nowPlaying != nil }
+
+    /// Apple Music and Spotify both connected: one library lists both (Spotify contributes what
+    /// it can without a Client ID: this session's songs and pinned playlists).
+    var libraryIsCombined: Bool { health.permission(.appleMusic) == .granted && spotify != .notInstalled }
+
+    /// What the Apple Music entry is called: Library once it lists Spotify too.
+    var libraryTitle: String { libraryIsCombined ? "Library" : SourceKind.appleMusic.title }
+    var librarySymbol: String { libraryIsCombined ? "square.stack" : SourceKind.appleMusic.symbolName }
+
+    /// Spotify songs the hub can play again (Spotify gave their URI), current first.
+    var spotifySessionSongs: [TrackItem] { spotifyHistory.items.filter { $0.id.hasPrefix("spotify:track:") } }
+    var spotifyPins: [PinnedPlaylist] { pins.filter { $0.source == .spotify } }
     var hasPosition: Bool { (activeSource?.hasPosition ?? false) && nowPlaying?.duration != nil }
     var needsLocalNetwork: Bool { health.permission(.localNetwork) == .denied }
 

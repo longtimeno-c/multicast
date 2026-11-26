@@ -205,6 +205,8 @@ struct TrackRow: View {
     var track: TrackItem
     var isCurrent: Bool
     var detail: String? = nil
+    /// Marks the row with its source (the combined library).
+    var source: SourceKind? = nil
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
@@ -214,10 +216,13 @@ struct TrackRow: View {
                     .font(MC.Font.body)
                     .foregroundStyle(MC.Ink.primary)
                     .lineLimit(1)
-                Text(detail ?? track.artist)
-                    .font(MC.Font.caption)
-                    .foregroundStyle(MC.Ink.secondary)
-                    .lineLimit(1)
+                HStack(spacing: MC.Space.xs) {
+                    if let source { SourceMark(source: source) }
+                    Text(detail ?? track.artist)
+                }
+                .font(MC.Font.caption)
+                .foregroundStyle(MC.Ink.secondary)
+                .lineLimit(1)
             }
             Spacer(minLength: MC.Space.s)
             ZStack(alignment: .trailing) {
@@ -267,8 +272,18 @@ struct AppleMusicBrowser: View {
             if section == .upNext {
                 UpNextRows(filter: query, activate: { id in activation.once { model.playQueued(id) } })
             } else if showsPlaylistList {
+                if combined && !spotifyPlaylists.isEmpty {
+                    SourceSectionTitle("Spotify", isFirst: true)
+                    ForEach(spotifyPlaylists) { pin in
+                        SpotifyPlaylistRow(pin: pin)
+                            .rowClick { activation.once { model.playPlaylist(pin.id) } }
+                            .tag(pin.id)
+                            .sourceRow()
+                    }
+                    SourceSectionTitle("Apple Music")
+                }
                 ForEach(playlists) { playlist in
-                    PlaylistRow(playlist: playlist)
+                    PlaylistRow(playlist: playlist, source: combined ? .appleMusic : nil)
                         .rowClick { activate(playlist.id) }
                         .tag(playlist.id)
                         .sourceRow()
@@ -280,8 +295,20 @@ struct AppleMusicBrowser: View {
                         .sourceRow()
                 }
             } else {
+                if combined && section == .songs && !spotifySongs.isEmpty {
+                    SourceSectionTitle("Spotify this session", isFirst: true)
+                    ForEach(spotifySongs) { track in
+                        TrackRow(track: track, isCurrent: model.activeSource == .spotify && model.nowPlaying?.trackID == track.id,
+                                 source: .spotify)
+                            .rowClick { activation.once { model.playTrack(track.id, context: .spotifyHistory) } }
+                            .tag(track.id)
+                            .sourceRow()
+                    }
+                    SourceSectionTitle("Apple Music")
+                }
                 ForEach(tracks) { track in
-                    TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id)
+                    TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id,
+                             source: combined ? .appleMusic : nil)
                         .rowClick { activate(track.id) }
                         .tag(track.id)
                         .sourceRow()
@@ -295,12 +322,20 @@ struct AppleMusicBrowser: View {
                 Button("Play") { ids.first.map { model.playQueued($0) } }
                 Divider()
                 Button("Remove from Up Next") { model.removeFromQueue(Array(ids)) }
+            } else if showsPlaylistList, let id = ids.first, id.hasPrefix("spotify:") {
+                Button("Play") { model.playPlaylist(id) }
+                Button("Shuffle") { model.playPlaylist(id, shuffled: true) }
+                Divider()
+                Button("Unpin") { model.unpin(id) }
             } else if showsPlaylistList {
                 Button("Open") { ids.first.map(open) }
                 Button("Play") { ids.first.map { model.playPlaylist($0) } }
                 Button("Shuffle") { ids.first.map { model.playPlaylist($0, shuffled: true) } }
                 Divider()
                 PinButton(playlistID: ids.first)
+            } else if let id = ids.first, id.hasPrefix("spotify:track:") {
+                Button("Play") { model.playTrack(id, context: .spotifyHistory) }
+                QueueMenuItems(tracks: spotifySongs.filter { ids.contains($0.id) }, source: .spotify)
             } else {
                 Button("Play") { ids.first.map(playTrack) }
                 QueueMenuItems(tracks: tracks.filter { ids.contains($0.id) }, source: .appleMusic)
@@ -378,6 +413,15 @@ struct AppleMusicBrowser: View {
 
     private var isSearching: Bool { !query.isEmpty }
     private var isInPlaylist: Bool { section == .playlists && openedPlaylist != nil }
+    private var combined: Bool { model.libraryIsCombined }
+
+    /// Spotify's share of the combined library: this session's songs and pinned playlists,
+    /// filtered by the search like the rest.
+    private var spotifySongs: [TrackItem] { filtered(model.spotifySessionSongs) }
+    private var spotifyPlaylists: [PinnedPlaylist] {
+        guard isSearching else { return model.spotifyPins }
+        return model.spotifyPins.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
     private var showsPlaylistList: Bool { section == .playlists && openedPlaylist == nil }
 
     /// Songs show the library search's results while there is a query; the queue and an open
@@ -420,7 +464,9 @@ struct AppleMusicBrowser: View {
     /// A click, a double click or Return on a row: a playlist opens, a song plays.
     private func activate(_ id: String) {
         activation.once {
-            if showsPlaylistList { open(id) } else { playTrack(id) }
+            if id.hasPrefix("spotify:playlist:") { model.playPlaylist(id) }
+            else if id.hasPrefix("spotify:track:") { model.playTrack(id, context: .spotifyHistory) }
+            else if showsPlaylistList { open(id) } else { playTrack(id) }
         }
     }
 
@@ -491,12 +537,17 @@ private struct OpenPlaylistBar: View {
 private struct PlaylistRow: View {
     @Environment(HubModel.self) private var model
     var playlist: PlaylistItem
+    var source: SourceKind? = nil
     var body: some View {
         HStack(spacing: MC.Space.m) {
             ArtworkView(data: model.artwork(playlist.artworkID), size: 32, radius: MC.Radius.small)
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(playlist.name).font(MC.Font.body).foregroundStyle(MC.Ink.primary)
-                Text("\(playlist.trackCount) songs").font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
+                HStack(spacing: MC.Space.xs) {
+                    if let source { SourceMark(source: source) }
+                    Text("\(playlist.trackCount) songs").monospacedDigit()
+                }
+                .font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
             }
             Spacer(minLength: MC.Space.s)
             Image(systemName: "chevron.right")
@@ -554,7 +605,14 @@ struct SpotifySourceView: View {
             .selectionDisabled()
             .sourceRow()
 
-            if !model.spotifyHistory.items.isEmpty {
+            if model.libraryIsCombined {
+                Text("Songs Spotify played this session, and pinned Spotify playlists, are in Library with your Apple Music.")
+                    .font(MC.Font.caption)
+                    .foregroundStyle(MC.Ink.secondary)
+                    .lineLimit(nil)
+                    .selectionDisabled()
+                    .sourceRow()
+            } else if !model.spotifyHistory.items.isEmpty {
                 SourceSectionTitle("This session")
                 ForEach(model.spotifyHistory.items) { track in
                     TrackRow(track: track, isCurrent: isLive && model.nowPlaying?.trackID == track.id)
@@ -875,5 +933,44 @@ struct SpotifyLinkField: View {
     private func add() {
         let ok = kind == .song ? model.addSpotifyLink(text) : model.pinSpotifyLink(text)
         if ok { text = "" } else { invalid = true }
+    }
+}
+
+// MARK: - Combined library
+
+/// The source of a row in the combined library: a small glyph, named for VoiceOver.
+struct SourceMark: View {
+    var source: SourceKind
+
+    var body: some View {
+        Image(systemName: source.symbolName)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(MC.Ink.tertiary)
+            .accessibilityLabel(source.title)
+            .help(source.title)
+    }
+}
+
+/// A pinned Spotify playlist in the library's Playlists: Spotify plays it, so a click plays.
+private struct SpotifyPlaylistRow: View {
+    @Environment(HubModel.self) private var model
+    var pin: PinnedPlaylist
+
+    var body: some View {
+        HStack(spacing: MC.Space.m) {
+            ArtworkView(data: model.artwork(pin.artworkID), size: 32, radius: MC.Radius.small)
+            VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                Text(pin.name).font(MC.Font.body).foregroundStyle(MC.Ink.primary).lineLimit(1)
+                HStack(spacing: MC.Space.xs) {
+                    SourceMark(source: .spotify)
+                    Text("Plays in Spotify")
+                }
+                .font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
+            }
+            Spacer(minLength: MC.Space.s)
+        }
+        .padding(.vertical, MC.Space.xxs)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Plays the playlist")
     }
 }
