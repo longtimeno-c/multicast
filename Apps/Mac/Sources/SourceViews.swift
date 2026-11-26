@@ -19,6 +19,29 @@ extension View {
     func sourceRow() -> some View {
         listRowSeparator(.hidden)
     }
+
+    /// One click on the row acts (plays the song, opens the playlist). The list still selects
+    /// the row, so the keyboard carries on from it and Return does the same thing.
+    func rowClick(_ action: @escaping () -> Void) -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded(action))
+    }
+}
+
+/// Swallows the repeat when one gesture reaches a list twice: a double click is two clicks and
+/// then the list's own primary action. None of them should restart the song, and the second
+/// click must not play whatever row slid under the pointer when a playlist opened.
+@MainActor
+final class RowActivation {
+    private var last = Date.distantPast
+
+    func once(_ action: () -> Void) {
+        let now = Date()
+        guard now.timeIntervalSince(last) > NSEvent.doubleClickInterval else { return }
+        last = now
+        action()
+    }
 }
 
 /// Header pinned above a source list (search, a source's own controls). Every source starts
@@ -229,6 +252,9 @@ struct AppleMusicBrowser: View {
     @State private var query = ""
     @State private var selection: String?
     @State private var focusSearch = 0
+    /// The playlist whose songs are showing, inside the Playlists section.
+    @State private var openedPlaylist: PlaylistItem?
+    @State private var activation = RowActivation()
 
     var body: some View {
         switch model.health.permission(.appleMusic) {
@@ -241,26 +267,34 @@ struct AppleMusicBrowser: View {
     private var library: some View {
         List(selection: $selection) {
             SourceIssueNotice(source: .appleMusic)
-            switch section {
-            case .songs, .upNext:
+            if showsPlaylistList {
+                ForEach(playlists) { playlist in
+                    PlaylistRow(playlist: playlist)
+                        .rowClick { activate(playlist.id) }
+                        .tag(playlist.id)
+                        .sourceRow()
+                        .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
+                }
+            } else {
                 ForEach(tracks) { track in
                     TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id)
+                        .rowClick { activate(track.id) }
                         .tag(track.id)
                         .sourceRow()
                         .onAppear { model.loadMoreIfNeeded(trackList, after: track.id) }
-                }
-            case .playlists:
-                ForEach(playlists) { playlist in
-                    PlaylistRow(playlist: playlist).tag(playlist.id).sourceRow()
-                        .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
                 }
             }
         }
         .sourceList()
         .contextMenu(forSelectionType: String.self) { ids in
-            Button("Play") { play(ids) }
+            if showsPlaylistList {
+                Button("Open") { ids.first.map(open) }
+                Button("Play") { ids.first.map { model.playPlaylist($0) } }
+            } else {
+                Button("Play") { ids.first.map(playTrack) }
+            }
         } primaryAction: { ids in
-            play(ids)
+            ids.first.map(activate)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             SourceHeader {
@@ -271,9 +305,15 @@ struct AppleMusicBrowser: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(maxWidth: .infinity)
+                if section == .playlists, let playlist = openedPlaylist {
+                    OpenPlaylistBar(playlist: playlist,
+                                    back: { close() },
+                                    play: { model.playPlaylist(playlist.id) })
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
-        .onChange(of: query) { _, new in model.search(new) }
+        .onChange(of: query) { _, new in if !isInPlaylist { model.search(new) } }
         .background {
             // Command-F reaches the library search, as Music's does.
             Button("Find") { focusSearch += 1 }
@@ -317,22 +357,30 @@ struct AppleMusicBrowser: View {
     private var usesMusicApp: Bool { backend != "musicKit" }
 
     private var isSearching: Bool { !query.isEmpty }
+    private var isInPlaylist: Bool { section == .playlists && openedPlaylist != nil }
+    private var showsPlaylistList: Bool { section == .playlists && openedPlaylist == nil }
 
-    /// Songs and Up Next show the library search's results while there is a query; the queue
-    /// is short, so it is filtered here.
+    /// Songs show the library search's results while there is a query; the queue and an open
+    /// playlist are filtered here.
     private var tracks: [TrackItem] {
         switch section {
-        case .upNext:
-            let base = model.upNext.items
-            guard isSearching else { return base }
-            return base.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
-        default:
-            return isSearching ? model.searchResults.items : model.songs.items
+        case .upNext: return filtered(model.upNext.items)
+        case .playlists: return filtered(model.playlistTracks.items)
+        case .songs: return isSearching ? model.searchResults.items : model.songs.items
         }
     }
 
+    private func filtered(_ base: [TrackItem]) -> [TrackItem] {
+        guard isSearching else { return base }
+        return base.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
+    }
+
     private var trackList: HubModel.ListKey {
-        section == .upNext ? .upNext : (isSearching ? .search : .songs)
+        switch section {
+        case .upNext: .upNext
+        case .playlists: .playlist
+        case .songs: isSearching ? .search : .songs
+        }
     }
 
     private var playlists: [PlaylistItem] {
@@ -344,13 +392,69 @@ struct AppleMusicBrowser: View {
     private var trackContext: TrackContext {
         switch section {
         case .upNext: .upNext
-        default: isSearching ? .search(query: model.searchQuery) : .songs
+        case .playlists: .playlist(id: openedPlaylist?.id ?? "")
+        case .songs: isSearching ? .search(query: model.searchQuery) : .songs
         }
     }
 
-    private func play(_ ids: Set<String>) {
-        guard let id = ids.first else { return }
-        if section == .playlists { model.playPlaylist(id) } else { model.playTrack(id, context: trackContext) }
+    /// A click, a double click or Return on a row: a playlist opens, a song plays.
+    private func activate(_ id: String) {
+        activation.once {
+            if showsPlaylistList { open(id) } else { playTrack(id) }
+        }
+    }
+
+    private func playTrack(_ id: String) { model.playTrack(id, context: trackContext) }
+
+    private func open(_ id: String) {
+        guard let playlist = model.playlists.items.first(where: { $0.id == id }) else { return }
+        model.openPlaylist(id)
+        query = ""
+        selection = nil
+        withAnimation(MC.Motion.feedback) { openedPlaylist = playlist }
+    }
+
+    private func close() {
+        selection = openedPlaylist?.id
+        withAnimation(MC.Motion.feedback) { openedPlaylist = nil }
+    }
+}
+
+/// What is open above a playlist's songs: the way back, the playlist, and Play.
+private struct OpenPlaylistBar: View {
+    @Environment(HubModel.self) private var model
+    var playlist: PlaylistItem
+    var back: () -> Void
+    var play: () -> Void
+
+    var body: some View {
+        HStack(spacing: MC.Space.m) {
+            Button(action: back) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 20, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Back to playlists")
+            .accessibilityLabel("Back to playlists")
+            .keyboardShortcut("[", modifiers: .command)
+            ArtworkView(data: model.artwork(playlist.artworkID), size: 32, radius: MC.Radius.small)
+            VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                Text(playlist.name)
+                    .font(MC.Font.bodyEmphasis)
+                    .foregroundStyle(MC.Ink.primary)
+                    .lineLimit(1)
+                Text("\(playlist.trackCount) songs")
+                    .font(MC.Font.caption)
+                    .foregroundStyle(MC.Ink.secondary)
+            }
+            Spacer(minLength: MC.Space.s)
+            Button(action: play) { Label("Play", systemImage: "play.fill") }
+                .buttonStyle(.borderedProminent)
+                .help("Play this playlist from the top")
+        }
+        .padding(.top, MC.Space.xs)
     }
 }
 
@@ -364,10 +468,15 @@ private struct PlaylistRow: View {
                 Text(playlist.name).font(MC.Font.body).foregroundStyle(MC.Ink.primary)
                 Text("\(playlist.trackCount) songs").font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: MC.Space.s)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(MC.Ink.tertiary)
+                .accessibilityHidden(true)
         }
         .padding(.vertical, MC.Space.xxs)
         .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the playlist")
     }
 }
 
@@ -505,6 +614,7 @@ struct FilesBrowser: View {
     @Environment(HubModel.self) private var model
     @State private var selection: String?
     @State private var importing = false
+    @State private var activation = RowActivation()
 
     var body: some View {
         Group {
@@ -524,6 +634,7 @@ struct FilesBrowser: View {
                         TrackRow(track: file,
                                  isCurrent: model.activeSource == .files && model.nowPlaying?.trackID == file.id,
                                  detail: [file.artist, file.format].compactMap { $0 }.joined(separator: " \u{00B7} "))
+                            .rowClick { play(file.id) }
                             .tag(file.id)
                             .sourceRow()
                             .onAppear { model.loadMoreIfNeeded(.files, after: file.id) }
@@ -534,7 +645,7 @@ struct FilesBrowser: View {
                     Button("Play") { ids.first.map { model.playTrack($0, context: .files) } }
                     Button("Remove from Files") { model.removeFiles(Array(ids)) }
                 } primaryAction: { ids in
-                    ids.first.map { model.playTrack($0, context: .files) }
+                    ids.first.map(play)
                 }
             }
         }
@@ -551,5 +662,9 @@ struct FilesBrowser: View {
                     .help("Add audio files")
             }
         }
+    }
+
+    private func play(_ id: String) {
+        activation.once { model.playTrack(id, context: .files) }
     }
 }
