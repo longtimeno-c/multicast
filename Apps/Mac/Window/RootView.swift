@@ -122,6 +122,7 @@ struct SourceBrowser: View {
             case .spotify: SpotifySourceView()
             case .app: AppPickerView()
             case .files: FilesBrowser()
+            case .macOutput: MacOutputView()
             }
         }
         .navigationTitle(model.browsingSource == .appleMusic ? model.libraryTitle : model.browsingSource.title)

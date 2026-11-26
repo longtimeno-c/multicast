@@ -175,6 +175,11 @@ public struct LiveSourceMaker: HubSourceMaking {
     public func inspect(_ url: URL) async -> InspectedFile? {
         await FileInspector.inspect(url)
     }
+
+    public var macOutputIsInstalled: Bool { OutputDeviceSource.isInstalled }
+    public var macOutputIsDefault: Bool { OutputDeviceSource.isDefaultOutput }
+    public func makeMacOutputCapture() throws -> any AudioSource { OutputDeviceSource(displayName: "Mac output") }
+    public func reportMacOutputLatency(seconds: TimeInterval) { OutputDeviceSource.reportLatency(seconds: seconds) }
 }
 
 /// Reads what the Files list shows about a file. DRM-protected files are refused.

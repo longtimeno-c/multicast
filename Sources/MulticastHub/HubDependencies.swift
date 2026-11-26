@@ -93,6 +93,23 @@ public protocol HubSourceMaking: Sendable {
     func makeCapture(bundleID: String, name: String) throws -> any HubCaptureSource
     /// Reads tags, duration, cover and format. nil = not a playable, DRM-free audio file.
     func inspect(_ url: URL) async -> InspectedFile?
+
+    /// The "Multicast" output device (Drivers/MulticastDevice): whether it's installed, whether
+    /// it's the Mac's output now, a source reading what's played to it, and the playout delay
+    /// it reports to apps. Defaults: not installed.
+    var macOutputIsInstalled: Bool { get }
+    var macOutputIsDefault: Bool { get }
+    func makeMacOutputCapture() throws -> any AudioSource
+    func reportMacOutputLatency(seconds: TimeInterval)
+}
+
+public struct MacOutputUnavailable: Error {}
+
+extension HubSourceMaking {
+    public var macOutputIsInstalled: Bool { false }
+    public var macOutputIsDefault: Bool { false }
+    public func makeMacOutputCapture() throws -> any AudioSource { throw MacOutputUnavailable() }
+    public func reportMacOutputLatency(seconds: TimeInterval) {}
 }
 
 // MARK: - Apps

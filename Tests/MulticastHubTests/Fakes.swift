@@ -269,6 +269,15 @@ final class FakeSources: HubSourceMaking, @unchecked Sendable {
     }
 
     func inspect(_ url: URL) async -> InspectedFile? { files.get()[url.lastPathComponent] }
+
+    // The Mac output device (Drivers/MulticastDevice).
+    let macOutputInstalled = Locked(false)
+    let macOutputRouted = Locked(false)
+    let macOutputLatencies = Locked<[TimeInterval]>([])
+    var macOutputIsInstalled: Bool { macOutputInstalled.get() }
+    var macOutputIsDefault: Bool { macOutputRouted.get() }
+    func makeMacOutputCapture() throws -> any AudioSource { FakeCaptureSource(bundleID: "mac-output", name: "Mac output") }
+    func reportMacOutputLatency(seconds: TimeInterval) { macOutputLatencies.update { $0.append(seconds) } }
 }
 
 final class FakeApps: AppPresenceMonitoring, @unchecked Sendable {
