@@ -14,6 +14,9 @@ What: after linking (Xcode code-signs afterwards), for a Debug stub only:
 2. set LC_UUID to a name-based UUID made from the bundle id and what Xcode builds the stub from
    (Xcode build, architectures, deployment target, configuration). Same in every checkout; new
    when the stub really changes.
+3. if the stub was not relinked this build but already signed by Xcode (the first build after
+   adding this phase), re-sign the bundle with the same identity, keeping its entitlements and
+   flags, because Xcode won't sign it again.
 
 Usage: stable-debug-uuid.py <path to main executable> <bundle id>
 """
@@ -71,9 +74,29 @@ def main():
         if cmd == LC_UUID:
             data[off + 8: off + 24] = stable.bytes
     if bytes(data) != original:
+        already_signed = signed_by_xcode(exe)
         with open(exe, "r+b") as f:
             f.write(data)
+        if already_signed:
+            # The stub wasn't relinked this build (e.g. the first build with this phase), so
+            # Xcode signed it earlier and won't sign it again: re-sign the bundle the same way.
+            resign()
     print(f"stable-debug-uuid: {str(stable).upper()}")
+
+
+def resign():
+    bundle = os.environ["CODESIGNING_FOLDER_PATH"]
+    identity = os.environ.get("EXPANDED_CODE_SIGN_IDENTITY") or "-"
+    subprocess.run(["codesign", "--force", "--sign", identity, "--timestamp=none",
+                    "--preserve-metadata=identifier,entitlements,flags,runtime", bundle], check=True)
+    print(f"stable-debug-uuid: re-signed {os.path.basename(bundle)}")
+
+
+def signed_by_xcode(exe):
+    """Whether the executable already carries a real signature (Xcode signed it in an earlier
+    build), rather than none or the linker's ad hoc one."""
+    r = subprocess.run(["codesign", "-dv", exe], capture_output=True, text=True)
+    return r.returncode == 0 and "linker-signed" not in r.stderr
 
 
 def fingerprint(data, bundle_id):
