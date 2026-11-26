@@ -151,6 +151,17 @@ The Mac app is signed "to run locally" (ad hoc). macOS treats every rebuild as a
 for these permissions and for Keychain access to the pairing keys. Signing with your own team avoids that (see
 `Apps/Config/Mac.xcconfig`).
 
+Local Network access also follows the main executable's Mach-O UUID (Apple's TN3179). A Debug build's main
+executable is a small stub (the app's code is in `Multicast.debug.dylib`), so its UUID survives rebuilds, but Xcode
+links into it an absolute rpath to the checkout's own build folder, which gave every checkout and worktree a
+different UUID and so a separate Local Network grant. The Mac target's "Stable Debug UUID" build phase
+(`Apps/Scripts/stable-debug-uuid.py`) removes that rpath and gives the Debug stub a UUID made from the bundle id
+and the Xcode build, architectures, deployment target and configuration: the same in every checkout, new only
+when Xcode or those settings change (then allow Local Network once more). Release builds are left as linked.
+
+If iPhones can't find the Mac because Local Network is off, the Mac retries its server for remotes after 10 s,
+then 20, 40 … up to every 5 minutes, and at once when you switch back to Multicast (from System Settings, say).
+
 ### Finding and keeping speakers
 
 - The speaker list is browsed again every 45 s, whenever the Mac's network interfaces change, and on

@@ -52,6 +52,11 @@ final class HubRuntime {
     @ObservationIgnored private var pairingPanel: NSPanel?
     @ObservationIgnored private let codeLog: URL?
     @ObservationIgnored private var serverRetry: Task<Void, Never>?
+    /// Failed starts in a row; the wait before the next one doubles with each (see `serverFailed`).
+    @ObservationIgnored private var serverFailures = 0
+    @ObservationIgnored private var servingSince: Date?
+    @ObservationIgnored private var lastServerAttempt = Date.distantPast
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
 
     @ObservationIgnored private let log = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "hub")
 
@@ -120,11 +125,15 @@ final class HubRuntime {
     }
 
     private func startListening(_ server: HubServer) async {
+        lastServerAttempt = Date()
         do {
             let port = try await server.start()
             log.info("serving remotes on port \(port, privacy: .public)")
-            remoteProblem = nil
-            localNetworkBlocked = false
+            servingSince = Date()
+            tasks.append(Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                self?.noteServing()
+            })
         } catch {
             log.error("remote server failed: \(String(describing: error), privacy: .public)")
             serverFailed(String(describing: error))
@@ -133,20 +142,58 @@ final class HubRuntime {
 
     /// Says why remotes can't connect, and tries again shortly: a refusal by Local Network
     /// privacy clears as soon as access is turned on, and a network that was down comes back.
+    ///
+    /// The listener can report ready and be refused moments later (NoAuth arrives after the
+    /// Bonjour registration), so a start counts as good only once it has served for 30 s. Until
+    /// then each retry waits twice as long as the last: 10 s, 20 s, 40 s … up to 5 minutes, so a
+    /// refused app doesn't re-register its service over and over. Coming back to the app (from
+    /// System Settings, say) retries at once.
     private func serverFailed(_ reason: String) {
+        if let since = servingSince, Date().timeIntervalSince(since) >= 30 { serverFailures = 0 }
+        servingSince = nil
+        serverFailures += 1
         let blocked = reason.contains("Local Network") || reason.contains("NoAuth")
         localNetworkBlocked = blocked
         remoteProblem = blocked
             ? "iPhones can\u{2019}t find this Mac: Local Network access is off for Multicast. Turn it on in Privacy & Security."
             : "iPhone remotes can\u{2019}t connect: \(reason)"
-        guard serverRetry == nil, let server else { return }
+        let delay = min(300, 10 * pow(2, Double(min(serverFailures - 1, 5))))
+        scheduleServerRetry(after: delay)
+        watchForReturnToApp()
+    }
+
+    private func scheduleServerRetry(after seconds: TimeInterval) {
+        guard let server else { return }
+        serverRetry?.cancel()
+        log.info("remote server retry in \(Int(seconds), privacy: .public) s (failure \(self.serverFailures, privacy: .public))")
         serverRetry = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
             guard let self, !Task.isCancelled else { return }
             self.serverRetry = nil
             self.log.info("restarting remote server")
             await self.startListening(server)
         }
+    }
+
+    /// While remotes can't connect, returning to the app retries at once (at most every 5 s).
+    private func watchForReturnToApp() {
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.serverRetry != nil, Date().timeIntervalSince(self.lastServerAttempt) >= 5 else { return }
+                self.scheduleServerRetry(after: 0)
+            }
+        }
+    }
+
+    /// Clears the warning once the server has stayed up, so a refusal that follows "ready"
+    /// doesn't flash the warning away and back.
+    private func noteServing() {
+        guard let since = servingSince, Date().timeIntervalSince(since) >= 5 else { return }
+        remoteProblem = nil
+        localNetworkBlocked = false
     }
 
     /// A random id, made once and kept, so remotes recognise this Mac across launches and
