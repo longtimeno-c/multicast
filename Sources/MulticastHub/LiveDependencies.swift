@@ -10,6 +10,7 @@ import MulticastHubModel
 import MulticastKit
 import MulticastRAOP
 import MulticastSources
+import os
 import UniformTypeIdentifiers
 
 // The real implementations of the protocols in HubDependencies.swift, on macOS.
@@ -49,7 +50,11 @@ public extension LocalHub {
 public final class KitSession: HubSessionControlling, @unchecked Sendable {
     public let session: MulticastSession
 
+    private var diagnosticsTask: Task<Void, Never>?
+
     public init(_ session: MulticastSession) { self.session = session }
+
+    deinit { diagnosticsTask?.cancel() }
 
     public var state: SessionState { session.state }
     public func stateUpdates() -> AsyncStream<SessionState> { session.updates }
@@ -59,8 +64,42 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
     public var latencySeconds: TimeInterval { Double(session.engine.snapshot.latencyMillis) / 1000 }
     public var currentSource: AudioSource? { session.currentSource }
 
-    public func start() { session.start() }
-    public func shutdown() async { await session.shutdown() }
+    public func start() {
+        session.start()
+        diagnosticsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                self?.logDiagnostics()
+            }
+        }
+    }
+
+    public func shutdown() async {
+        diagnosticsTask?.cancel()
+        await session.shutdown()
+    }
+
+    private static let diagnosticsLog = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "diagnostics")
+
+    /// While the engine plays, every 5 s: each sink's counters and the capture's (debug level, so
+    /// it costs nothing unless someone streams the log). Counters are cumulative since the sink
+    /// or capture started; names are never logged.
+    private func logDiagnostics() {
+        guard session.state.engine.transport == .playing else { return }
+        let log = Self.diagnosticsLog
+        for (i, d) in session.diagnostics().enumerated() {
+            switch d.kind {
+            case .raop:
+                log.debug("sink\(i) raop sent=\(d.packetsSent ?? 0) sendErrors=\(d.sendErrors ?? 0) resendRequests=\(d.resendRequests ?? 0) resent=\(d.packetsResent ?? 0) resendMisses=\(d.resendMisses ?? 0) timing=\(d.timingRequestsAnswered ?? 0) sync=\(d.syncPacketsSent ?? 0) receiverLatency=\(d.receiverAudioLatencyFrames ?? -1)")
+            default:
+                log.debug("sink\(i) local callbacks=\(d.renderCallbacks ?? 0) syncErrorMs=\(String(format: "%.2f", d.syncErrorMillis ?? 0), privacy: .public) ratePPM=\(String(format: "%.1f", d.rateCorrectionPPM ?? 0), privacy: .public) underrunFrames=\(d.underrunFrames ?? 0) outputLatencyMs=\(String(format: "%.1f", d.outputLatencyMillis ?? 0), privacy: .public)")
+            }
+        }
+        if #available(macOS 14.2, *), let tap = session.currentSource as? AppAudioTapSource {
+            let s = tap.statistics
+            log.debug("capture cycles=\(s.ioCycles) frames=\(s.capturedFrames) nonSilent=\(s.nonSilentCycles) inOverflow=\(s.inputOverflowFrames) outOverflow=\(s.outputOverflowFrames) underruns=\(s.underruns) driftDrops=\(s.driftDrops) driftDups=\(s.driftDuplicates) resyncs=\(s.resyncs) rebuilds=\(s.rebuilds)")
+        }
+    }
 
     public func select(_ speaker: SpeakerDescriptor, volume: Float, offsetMillis: Int) async throws {
         try await session.select(speaker, volume: volume, offsetMillis: offsetMillis)
