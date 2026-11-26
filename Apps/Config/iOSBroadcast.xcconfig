@@ -1,0 +1,20 @@
+// Per-target settings for "Multicast Broadcast", the ReplayKit broadcast upload extension
+// embedded in the iOS app. It is what captures the iPhone's sound in iPhone Only mode.
+// Paths are relative to Apps/ (the project directory).
+
+// Must be the app's bundle id plus one component, and must match
+// `PhoneBroadcast.extensionBundleID` in Sources/MulticastKit/PhoneBroadcast.swift.
+PRODUCT_BUNDLE_IDENTIFIER = io.github.longtimeno-c.multicast.remote.broadcast
+INFOPLIST_FILE = iOSBroadcast/Info.plist
+// The same App Group as the app (`PhoneBroadcast.appGroup`).
+CODE_SIGN_ENTITLEMENTS = iOSBroadcast/MulticastBroadcast.entitlements
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+
+// Signing: as the app (see iOS.xcconfig).
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"
+
+CODE_SIGN_IDENTITY = Apple Development
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] = -

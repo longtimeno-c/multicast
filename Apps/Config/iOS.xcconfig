@@ -4,12 +4,21 @@
 
 PRODUCT_BUNDLE_IDENTIFIER = io.github.longtimeno-c.multicast.remote
 INFOPLIST_FILE = iOS/Info.plist
-CODE_SIGN_ENTITLEMENTS =
+// App Groups: shares the chosen speakers and the broadcast's status with the broadcast
+// extension (iPhone Only mode; see iOSBroadcast.xcconfig).
+CODE_SIGN_ENTITLEMENTS = iOS/MulticastRemote.entitlements
 IPHONEOS_DEPLOYMENT_TARGET = 17.0
 
-// Signing: simulator only for now (ad hoc, no team). A device build needs DEVELOPMENT_TEAM and
-// an Apple Development identity set here.
+// Signing: the simulator needs none (ad hoc). A device build needs a team: create
+// Apps/Config/Local.xcconfig (git-ignored, so no team id is ever committed) with
+//   DEVELOPMENT_TEAM = <your team id>
+// and build with `xcodebuild … -destination 'generic/platform=iOS' -allowProvisioningUpdates`,
+// which lets Xcode register the two bundle ids and the App Group under that team.
 CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"
+
+// After Local.xcconfig, which may set an identity meant for the Mac app.
 CODE_SIGN_IDENTITY = Apple Development
 CODE_SIGN_IDENTITY[sdk=iphonesimulator*] = -
-DEVELOPMENT_TEAM =
