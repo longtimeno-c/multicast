@@ -11,6 +11,9 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable, Identifiable {
     case app
     /// DRM-free files played directly.
     case files
+    /// Whatever the Mac plays to the "Multicast" output device (Drivers/MulticastDevice): any app
+    /// or System Settings › Sound can choose "Multicast" as its output.
+    case macOutput
 
     public var id: String { rawValue }
 
@@ -20,6 +23,7 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable, Identifiable {
         case .spotify: "Spotify"
         case .app: "Other app"
         case .files: "Files"
+        case .macOutput: "Mac output"
         }
     }
 
@@ -30,13 +34,16 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable, Identifiable {
         case .spotify: "music.note.list"
         case .app: "macwindow"
         case .files: "folder.fill"
+        case .macOutput: "hifispeaker.fill"
         }
     }
 
     /// Whether the source exposes a playback position the hub can show and seek.
-    public var hasPosition: Bool { self != .app }
+    public var hasPosition: Bool { !isLiveCapture }
     /// Whether next / previous make sense.
-    public var canSkip: Bool { self != .app }
+    public var canSkip: Bool { !isLiveCapture }
+    /// A live capture the hub can't pause, skip or seek at the source (an app, the Mac output).
+    public var isLiveCapture: Bool { self == .app || self == .macOutput }
 }
 
 /// A running app that the hub could capture.

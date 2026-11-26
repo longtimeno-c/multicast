@@ -303,7 +303,7 @@ actor MockHubBackend: HubBackend {
             guard !list.isEmpty else { return }
             let i = list.firstIndex { $0.id == state.nowPlaying?.trackID } ?? 0
             load(MockData.nowPlaying(list[(i + delta + list.count) % list.count]))
-        case .app, nil:
+        case .app, .macOutput, nil:
             return
         }
     }
@@ -335,6 +335,8 @@ actor MockHubBackend: HubBackend {
         case .app:
             // Choosing the app is a separate step; keep playing what we have until then.
             return
+        case .macOutput:
+            load(NowPlayingInfo(title: "Mac output", artist: "Playing what the Mac plays", artworkID: nil), source: .macOutput)
         }
     }
 

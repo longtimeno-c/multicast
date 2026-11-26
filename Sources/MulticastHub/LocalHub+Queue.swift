@@ -231,7 +231,7 @@ extension LocalHub {
             }
         case .files:
             accepted = tracks.compactMap { queue.entry(id: $0.id)?.track }
-        case .app:
+        case .app, .macOutput:
             throw HubCommandError(.unsupported, "A captured app can\u{2019}t be queued.")
         }
         guard !accepted.isEmpty else { return }
@@ -360,7 +360,7 @@ extension LocalHub {
                 activeSource = .files
                 wantsPlay = speakers
                 try await loadCurrentFile()
-            case .app:
+            case .app, .macOutput:
                 throw HubCommandError(.unsupported, "A captured app can\u{2019}t be queued.")
             }
         } catch {

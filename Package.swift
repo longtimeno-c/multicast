@@ -47,6 +47,8 @@ let package = Package(
             ]
         ),
         .target(name: "MulticastHubModel"),
+        // The pure parts of the output device driver (Drivers/MulticastDevice), for the tests.
+        .target(name: "MulticastDeviceCore", path: "Drivers/MulticastDevice/Core"),
         .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic"]),
         .target(name: "MulticastRemote", dependencies: ["MulticastHubModel"]),
         .target(name: "MulticastAppleMusic", dependencies: ["MulticastHubModel", "MulticastSources", "MulticastAudio"]),
@@ -64,6 +66,7 @@ let package = Package(
         .testTarget(name: "MulticastHubModelTests", dependencies: ["MulticastHubModel"]),
         .testTarget(name: "MulticastHubTests", dependencies: ["MulticastHub", "MulticastAppleMusic"]),
         .testTarget(name: "MulticastRemoteTests", dependencies: ["MulticastRemote"]),
+        .testTarget(name: "MulticastDeviceCoreTests", dependencies: ["MulticastDeviceCore"]),
         .testTarget(name: "MulticastAppleMusicTests", dependencies: ["MulticastAppleMusic"]),
     ],
     swiftLanguageModes: [.v5]

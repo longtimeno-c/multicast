@@ -625,7 +625,7 @@ public actor LocalHub: HubBackend {
         }
         do {
             try await deps.session.play()
-            if activeSource == .files || activeSource == .app {
+            if activeSource == .files || activeSource == .app || activeSource == .macOutput {
                 // Resumed audio is heard one group latency from now.
                 positionAsOf = deps.now().addingTimeInterval(deps.session.latencySeconds)
             }
@@ -680,7 +680,7 @@ public actor LocalHub: HubBackend {
         }
         // A media app plays on the Mac meanwhile and is captured once a speaker is on; the hub's
         // own sources have nowhere else to play.
-        if activeSource == .files || activeSource == .app, !hasPlayableSpeaker {
+        if activeSource == .files || activeSource == .app || activeSource == .macOutput, !hasPlayableSpeaker {
             throw HubCommandError(.unavailable, Self.needsSpeaker)
         }
         switch activeSource {
@@ -700,7 +700,7 @@ public actor LocalHub: HubBackend {
             wantsPlay = true
             publish()
             enqueue { [self] in await self.reconcileAndPublish() }
-        case .app:
+        case .app, .macOutput:
             wantsPlay = true
             setPosition(0)
             publish()
@@ -802,7 +802,7 @@ public actor LocalHub: HubBackend {
                 await self.reanchor()
                 await self.publish()
             }
-        case .app:
+        case .app, .macOutput:
             throw HubCommandError(.unsupported, "A captured app can\u{2019}t skip from here.")
         case nil:
             throw HubCommandError(.unavailable, "Nothing is playing.")
@@ -847,7 +847,7 @@ public actor LocalHub: HubBackend {
                 await self.reanchor()
                 await self.publish()
             }
-        case .app:
+        case .app, .macOutput:
             throw HubCommandError(.unsupported, "A live source can\u{2019}t seek.")
         case nil:
             throw HubCommandError(.unavailable, "Nothing is playing.")
@@ -865,6 +865,8 @@ public actor LocalHub: HubBackend {
         switch kind {
         case .app:
             return  // `captureApp` picks the app.
+        case .macOutput:
+            try selectMacOutput()
         case .files:
             guard !queue.isEmpty else { throw HubCommandError(.unavailable, "Add some files first.") }
             let keepPlaying = wantsPlay && hasPlayableSpeaker
@@ -935,7 +937,7 @@ public actor LocalHub: HubBackend {
     func leaveActiveSource() {
         let old = activeSource
         let oldPlaying = (old == .spotify && spotifyNow?.state == .playing) || (old == .appleMusic && musicStatus.isPlaying)
-        if old == .files || old == .app { freezePosition() }
+        if old == .files || old == .app || old == .macOutput { freezePosition() }
         captureEvidence?.cancel()
         captureEvidence = nil
         if old != .app { capturedApp = nil }
@@ -946,7 +948,7 @@ public actor LocalHub: HubBackend {
         if oldPlaying { Task { [weak self] in await self?.pauseMediaApp(old) } }
     }
 
-    private func setEngineSource(_ source: AudioSource, kind: SourceKind) {
+    func setEngineSource(_ source: AudioSource, kind: SourceKind) {
         enqueue { [self] in await self.applyEngineSource(source, kind: kind) }
     }
 
@@ -1461,6 +1463,8 @@ public actor LocalHub: HubBackend {
             let t = spotifyTrack(np)
             return NowPlayingInfo(title: t.title, artist: t.artist, album: np.album, artworkID: t.artworkID,
                                   duration: np.duration, trackID: t.id)
+        case .macOutput:
+            return macOutputNowPlaying()
         case .app:
             guard let app = capturedApp else { return nil }
             return NowPlayingInfo(title: app.name, artist: "Capturing app audio", artworkID: "hub.icon:\(app.id)",
@@ -1478,7 +1482,7 @@ public actor LocalHub: HubBackend {
         case .files:
             return TransportState(isPlaying: wantsPlay, position: position, positionAsOf: positionAsOf,
                                   canSkip: !queue.isEmpty, canSeek: queue.current != nil)
-        case .app:
+        case .app, .macOutput:
             return TransportState(isPlaying: wantsPlay, position: 0, positionAsOf: positionAsOf, canSkip: false, canSeek: false)
         case .spotify:
             let np = spotifyNow

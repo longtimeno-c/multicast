@@ -16,6 +16,7 @@ struct MusicScreen: View {
                     case .source(.spotify): SpotifyView()
                     case .source(.app): OtherAppView()
                     case .source(.files): FilesView()
+                    case .source(.macOutput): MacOutputScreen()
                     case .playlist(let p): PlaylistView(playlist: p)
                     case .folder(let f): FolderView(folder: f)
                     }
@@ -204,6 +205,8 @@ private struct SourcesList: View {
         case .files:
             let n = model.files.totalCount ?? model.files.items.count
             return n == 1 ? "1 file on the Mac" : "\(n) files on the Mac"
+        case .macOutput:
+            return model.activeSource == .macOutput ? "Playing what the Mac plays" : "Whatever the Mac plays to \u{201C}Multicast\u{201D}"
         }
     }
 }
