@@ -767,7 +767,17 @@ public actor LocalHub: HubBackend {
                 await self.reanchor()
                 await self.publish()
             }
-        case .spotify, .app:
+        case .spotify:
+            guard spotifyStatus == .running, spotifyNow?.duration != nil else {
+                throw HubCommandError(.unsupported, "This item can\u{2019}t seek.")
+            }
+            let spotify = deps.spotify
+            try await mediaCommand { try await spotify.seek(to: max(0, target)) }
+            enqueue { [self] in
+                await self.reanchor()
+                await self.publish()
+            }
+        case .app:
             throw HubCommandError(.unsupported, "A live source can\u{2019}t seek.")
         case nil:
             throw HubCommandError(.unavailable, "Nothing is playing.")
@@ -1367,7 +1377,8 @@ public actor LocalHub: HubBackend {
             let np = spotifyNow
             return TransportState(isPlaying: np?.state == .playing, position: np?.position ?? 0,
                                   positionAsOf: (np?.sampledAt ?? .distantPast).addingTimeInterval(latency),
-                                  canSkip: spotifyStatus == .running, canSeek: false)
+                                  canSkip: spotifyStatus == .running,
+                                  canSeek: spotifyStatus == .running && (np?.duration ?? 0) > 0)
         case .appleMusic:
             let s = musicStatus
             return TransportState(isPlaying: s.isPlaying, position: s.position,

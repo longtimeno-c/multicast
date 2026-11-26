@@ -369,11 +369,14 @@ struct LocalHubSourceTests {
         try await rig.waitFor("spotify playing") { $0.nowPlaying?.title == "Song A" && $0.transport.isPlaying }
         await rig.hub.settle()
         let t = rig.state.transport
-        #expect(!t.canSeek && t.canSkip)
+        #expect(t.canSeek && t.canSkip)
         #expect(t.position == 10 && t.positionAsOf == sampled.addingTimeInterval(2))  // heard after the latency
         #expect(rig.state.nowPlaying?.artworkID == "hub.url:https://img.example/a.jpg")
         #expect(rig.session.transport == .playing)
-        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.seek(position: 5)) }
+        // Seeking goes to Spotify and flushes the speakers.
+        try await rig.hub.perform(.seek(position: 170))
+        await rig.hub.settle()
+        #expect(rig.spotify.commands.get().last == "seek 170")
 
         // Transport goes to Spotify; skip flushes and re-anchors the speakers.
         let before = rig.session.calls.filter { $0 == "pause" }.count

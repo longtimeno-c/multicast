@@ -27,6 +27,13 @@ import MulticastRemote
 //   expect-playing / expect-paused
 //   sleep=SECONDS
 //   files / health       print the Files list / the health flags
+//   play-song=TEXT       search the library for TEXT and play the first hit (Up Next: the other hits)
+//   queue-song=TEXT      search the library for TEXT and add the first hit to the queue
+//   queue-spotify=LINK   add a Spotify song link or spotify:track: URI to the queue
+//   upnext               print the hub's Up Next
+//   clear-queue          empty Up Next
+//   expect-title=TEXT    wait (up to 45 s) until the song playing has TEXT in its title
+//   seek-end=SECONDS     seek to SECONDS before the end of the song playing
 //
 // Exit codes: 0 every step done, 1 a step failed, 2 usage.
 
@@ -106,6 +113,10 @@ actor StateLog {
         if old?.transport.isPlaying != new.transport.isPlaying { out.append(new.transport.isPlaying ? "transport playing" : "transport paused") }
         if old?.nowPlaying?.identity != new.nowPlaying?.identity {
             out.append("now playing \(new.nowPlaying.map { "\"\($0.title)\" by \($0.artist)" } ?? "nothing")")
+        }
+        if old?.queue != new.queue {
+            let q = new.queue
+            out.append("queue current=\(q.currentID ?? "none") from=\(q.currentSource?.rawValue ?? "-") upNext=\(q.upcomingCount) held=\(q.isHeld)")
         }
         if old?.isDiscovering != new.isDiscovering { out.append("discovering \(new.isDiscovering)") }
         if old?.health != new.health { out.append("health \(healthLine(new.health))") }
@@ -308,6 +319,33 @@ func run(hubQuery: String, store: PairingKeyStore, codeFile: URL?, remoteName: S
         case "sleep":
             guard let s = Double(arg) else { throw2() }
             try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000))
+        case "play-song", "queue-song":
+            let hits = (try? await backend.search(arg, PageRequest(limit: 50)))?.items ?? []
+            guard let t = hits.first else { fail("no library song matching \"\(arg)\"") }
+            say("  \"\(t.title)\" by \(t.artist) (\(Int(t.duration)) s)")
+            if verb == "play-song" {
+                await send(.playTrack(id: t.id, context: .search(query: arg)))
+            } else {
+                await send(.addToQueue(tracks: [t], source: .appleMusic, placement: .last))
+            }
+        case "queue-spotify":
+            await send(.addSpotifyLink(link: arg, placement: .last))
+        case "upnext":
+            let page = (try? await backend.upNext(PageRequest(limit: 50)))?.items ?? []
+            for q in page { say("  \(q.id) [\(q.source.rawValue)] \"\(q.track.title)\" by \(q.track.artist)") }
+            if page.isEmpty { say("  (empty)") }
+        case "clear-queue":
+            await send(.clearQueue)
+        case "expect-title":
+            let started = Date()
+            if !(await log.wait(timeout: 45) { $0.nowPlaying?.title.localizedCaseInsensitiveContains(arg) ?? false }) {
+                fail("\"\(arg)\" never started")
+            }
+            say(String(format: "  started after %.1f s", Date().timeIntervalSince(started)))
+        case "seek-end":
+            guard let before = Double(arg) else { throw2() }
+            guard let d = await current().nowPlaying?.duration, d > before else { fail("the song playing has no known length") }
+            await send(.seek(position: d - before))
         case "health":
             let h = await current().health
             say("  \(StateLog.healthLine(h))")

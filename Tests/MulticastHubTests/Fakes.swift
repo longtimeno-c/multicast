@@ -319,6 +319,7 @@ final class FakeSpotify: MediaAppControlling, @unchecked Sendable {
     func pause() async throws { try run("pause") }
     func next() async throws { try run("next") }
     func previous() async throws { try run("previous") }
+    func seek(to seconds: TimeInterval) async throws { try run("seek \(Int(seconds))") }
     func play(uri: String, shuffled: Bool?) async throws {
         try run(shuffled.map { "play \(uri) shuffled \($0)" } ?? "play \(uri)")
     }

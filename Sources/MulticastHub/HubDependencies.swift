@@ -124,6 +124,8 @@ public protocol MediaAppControlling: Sendable {
     func previous() async throws
     /// Plays a Spotify URI (track, playlist); `shuffled` sets shuffle first when given.
     func play(uri: String, shuffled: Bool?) async throws
+    /// Seconds into the current track.
+    func seek(to seconds: TimeInterval) async throws
     /// Automation permission for the app. `ask: true` shows the system prompt (and waits for
     /// the answer). nil when it cannot be known now (app not running).
     func automationStatus(ask: Bool) async -> PermissionStatus?
@@ -134,6 +136,10 @@ public extension MediaAppControlling {
     /// when given. The default can't.
     func play(uri: String, shuffled: Bool?) async throws {
         throw HubCommandError(.unsupported, "This player can\u{2019}t play a link.")
+    }
+
+    func seek(to seconds: TimeInterval) async throws {
+        throw HubCommandError(.unsupported, "This player can\u{2019}t seek.")
     }
 }
 

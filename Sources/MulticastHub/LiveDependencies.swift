@@ -296,6 +296,10 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
     public func next() async throws { try await map { try await self.controller.nextTrack() } }
     public func previous() async throws { try await map { try await self.controller.previousTrack() } }
 
+    public func seek(to seconds: TimeInterval) async throws {
+        try await map { try await self.controller.setPosition(seconds) }
+    }
+
     public func play(uri: String, shuffled: Bool?) async throws {
         try await map {
             if let shuffled { try await self.controller.setShuffling(shuffled) }
