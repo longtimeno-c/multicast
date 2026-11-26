@@ -135,7 +135,7 @@ public enum AppleMusicProviderFactory {
     public static func make(_ kind: AppleMusicBackendKind) -> AppleMusicProviding {
         switch kind {
         case .musicApp: return MusicAppPlayer()
-        case .musicKit: return MusicKitPlayer()
+        case .musicKit: return MusicKitPlayer(renderer: .apps(bundleIDs: [MusicKitPlayer.remotePlayerServiceBundleID]))
         }
     }
     #endif
