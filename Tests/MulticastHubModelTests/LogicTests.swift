@@ -160,6 +160,8 @@ private struct Item: Identifiable, Codable, Equatable, Sendable {
         #expect(HubCommand.play.category == .transport)
         #expect(HubCommand.captureApp(bundleID: "x").category == .source)
         #expect(HubCommand.setMasterVolume(volume: 1).category == .speaker)
+        #expect(HubCommand.clearQueue.category == .queue)
+        #expect(HubCommand.pinPlaylist(id: "p").category == .queue)
         #expect(HubCommand.setSpeakerVolume(id: "a", volume: 0.1).coalescingKey
                 == HubCommand.setSpeakerVolume(id: "a", volume: 0.9).coalescingKey)
         #expect(HubCommand.setSpeakerVolume(id: "a", volume: 0.1).coalescingKey
@@ -185,7 +187,7 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
     }
     func songs(_ page: PageRequest) async throws -> Page<TrackItem> { .slice(songsList, page) }
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> { .empty }
-    func upNext(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+    func upNext(_ page: PageRequest) async throws -> Page<QueueItem> { .empty }
     func files(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
     func spotifyHistory(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
     func perform(_ command: HubCommand) async throws {

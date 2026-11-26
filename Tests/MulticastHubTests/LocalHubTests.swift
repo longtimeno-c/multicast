@@ -383,8 +383,9 @@ struct LocalHubSourceTests {
         #expect(rig.session.calls.filter { $0 == "pause" }.count == before + 1)
         rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song B", artist: "Band",
                                            trackID: "spotify:track:b", sampledAt: rig.clock.now))
-        try await rig.waitFor("history") { $0.content.spotifyHistory == 1 }
-        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:a"])
+        try await rig.waitFor("history") { $0.content.spotifyHistory >= 1 }
+        // The current song first, then the earlier ones.
+        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:b", "spotify:track:a"])
 
         try await rig.hub.perform(.pause)
         await rig.hub.settle()
@@ -514,7 +515,7 @@ struct LocalHubSourceTests {
 
         try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
         try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
-        #expect(player.commands.get() == ["play s1"])
+        #expect(player.commands.get() == ["once s1"])
         player.publish {
             $0.isPlaying = true
             $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", duration: 200, trackID: "s1")

@@ -49,7 +49,8 @@ public protocol HubBackend: AnyObject, Sendable {
     func tracks(inPlaylist playlistID: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func songs(_ page: PageRequest) async throws -> Page<TrackItem>
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
-    func upNext(_ page: PageRequest) async throws -> Page<TrackItem>
+    /// The hub's Up Next: the songs after the current one, in play order.
+    func upNext(_ page: PageRequest) async throws -> Page<QueueItem>
     func files(_ page: PageRequest) async throws -> Page<TrackItem>
     func spotifyHistory(_ page: PageRequest) async throws -> Page<TrackItem>
 
@@ -73,7 +74,7 @@ public extension HubBackend {
         case .playlistTracks(let id, let page): .tracks(page: try await tracks(inPlaylist: id, page))
         case .songs(let page): .tracks(page: try await songs(page))
         case .search(let q, let page): .tracks(page: try await search(q, page))
-        case .upNext(let page): .tracks(page: try await upNext(page))
+        case .upNext(let page): .queue(page: try await upNext(page))
         case .files(let page): .tracks(page: try await files(page))
         case .spotifyHistory(let page): .tracks(page: try await spotifyHistory(page))
         case .artwork(let id, let maxPixel): .artwork(data: await artwork(id: id, maxPixel: maxPixel))
@@ -90,7 +91,9 @@ public extension HubBackend {
 
     func selectSource(_ source: SourceKind) async throws { try await perform(.selectSource(source: source)) }
     func playTrack(id: String, context: TrackContext) async throws { try await perform(.playTrack(id: id, context: context)) }
-    func playPlaylist(id: String) async throws { try await perform(.playPlaylist(id: id)) }
+    func playPlaylist(id: String, shuffled: Bool = false) async throws {
+        try await perform(.playPlaylist(id: id, shuffled: shuffled))
+    }
     func captureApp(bundleID: String) async throws { try await perform(.captureApp(bundleID: bundleID)) }
     func addFiles(_ urls: [URL]) async throws { try await perform(.addFiles(urls: urls)) }
     func removeFiles(ids: [String]) async throws { try await perform(.removeFiles(ids: ids)) }

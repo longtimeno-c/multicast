@@ -22,9 +22,13 @@ import MulticastHubModel
 
 public enum RemoteProtocol {
     /// The newest protocol version this build speaks.
-    public static let currentVersion = 1
+    ///
+    /// 2: the hub's play queue (`QueueItem`, `HubState.queue`, queue commands, Up Next answered
+    /// with `.queue`), pinned playlists and `playPlaylist(id:shuffled:)`. Version 1 builds can't
+    /// decode version 2 states and vice versa, so neither is spoken across.
+    public static let currentVersion = 2
     /// The oldest protocol version this build still speaks.
-    public static let oldestVersion = 1
+    public static let oldestVersion = 2
     public static var supportedVersions: ClosedRange<Int> { oldestVersion...currentVersion }
 
     static let magic = "multicast-hub-link"

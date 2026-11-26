@@ -122,9 +122,34 @@ public protocol MediaAppControlling: Sendable {
     func pause() async throws
     func next() async throws
     func previous() async throws
+    /// Plays a Spotify URI (track, playlist); `shuffled` sets shuffle first when given.
+    func play(uri: String, shuffled: Bool?) async throws
     /// Automation permission for the app. `ask: true` shows the system prompt (and waits for
     /// the answer). nil when it cannot be known now (app not running).
     func automationStatus(ask: Bool) async -> PermissionStatus?
+}
+
+public extension MediaAppControlling {
+    /// Plays a Spotify URI (track, playlist, album); `shuffled` sets Spotify's shuffle first
+    /// when given. The default can't.
+    func play(uri: String, shuffled: Bool?) async throws {
+        throw HubCommandError(.unsupported, "This player can\u{2019}t play a link.")
+    }
+}
+
+/// What Spotify's public oEmbed endpoint says about a share link.
+public struct SpotifyEmbedInfo: Equatable, Sendable {
+    public var title: String
+    public var thumbnailURL: URL?
+    public init(title: String, thumbnailURL: URL?) {
+        self.title = title
+        self.thumbnailURL = thumbnailURL
+    }
+}
+
+public extension HubSystemServices {
+    /// `https://open.spotify.com/oembed?url=…` (no key). nil on any failure; the default knows nothing.
+    func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo? { nil }
 }
 
 // MARK: - Misc system services
@@ -138,6 +163,8 @@ public protocol HubSystemServices: Sendable {
     func fetchImage(_ url: URL) async -> Data?
     /// Whether this Mac is a laptop (built-in output glyph).
     var hostIsLaptop: Bool { get }
+    /// What Spotify's public oEmbed endpoint says about an `open.spotify.com` page.
+    func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo?
 }
 
 /// Everything `LocalHub` is built from.

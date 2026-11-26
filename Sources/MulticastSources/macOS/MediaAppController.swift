@@ -100,6 +100,22 @@ public final class MediaAppController: @unchecked Sendable {
     public func nextTrack() async throws { try await command("next track") }
     public func previousTrack() async throws { try await command("previous track") }
 
+    /// Spotify only: plays a `spotify:track:`, `spotify:playlist:` or `spotify:album:` URI.
+    /// Only letters, digits and colons are accepted (the URI goes into script text).
+    public func play(uri: String) async throws {
+        guard app == .spotify, uri.hasPrefix("spotify:"), uri.count <= 80,
+              uri.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == ":") }) else {
+            throw MediaControlError.unexpectedResult("invalid uri")
+        }
+        try await command("play track \"\(uri)\"")
+    }
+
+    /// Spotify only.
+    public func setShuffling(_ on: Bool) async throws {
+        guard app == .spotify else { return }
+        try await command("set shuffling to \(on)")
+    }
+
     public func setPosition(_ seconds: TimeInterval) async throws {
         let s = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0, seconds))
         try await command("set player position to \(s)")

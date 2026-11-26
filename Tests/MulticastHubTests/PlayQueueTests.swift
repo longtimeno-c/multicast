@@ -90,6 +90,10 @@ import MulticastHubModel
         #expect(P.decide(expectedTrackID: "x", observation: other, lastPosition: 199, lastDuration: 200, sinceStart: 200) == .ended)
         #expect(P.decide(expectedTrackID: "x", observation: other, lastPosition: 60, lastDuration: 200, sinceStart: 70) == .externalTakeover)
         #expect(P.decide(expectedTrackID: "x", observation: other, lastPosition: nil, lastDuration: nil, sinceStart: 1) == .wait)
+        // A stale report from before the song started is not its end, until the start times out.
+        let stale = QueuePlayerObservation(state: .stopped, trackID: nil, position: 0, duration: nil)
+        #expect(P.decide(expectedTrackID: "x", observation: stale, lastPosition: nil, lastDuration: nil, sinceStart: 6, hasStarted: false) == .wait)
+        #expect(P.decide(expectedTrackID: "x", observation: stale, lastPosition: nil, lastDuration: nil, sinceStart: 20, hasStarted: false) == .ended)
         let now = Date()
         #expect(P.remaining(position: 190, duration: 200, sampledAt: now.addingTimeInterval(-4), isPlaying: true, now: now) == 6)
     }
@@ -102,5 +106,8 @@ import MulticastHubModel
         #expect(SpotifyLink.trackURI(from: "https://open.spotify.com/album/\(id)") == nil)
         #expect(SpotifyLink.trackURI(from: "https://example.com/track/\(id)") == nil)
         #expect(SpotifyLink.trackURI(from: "spotify:track:bad id!") == nil)
+        #expect(SpotifyLink.playlistURI(from: "https://open.spotify.com/playlist/\(id)?si=x") == "spotify:playlist:\(id)")
+        #expect(SpotifyLink.playlistURI(from: "https://open.spotify.com/track/\(id)") == nil)
+        #expect(SpotifyLink.webURL(forURI: "spotify:playlist:\(id)")?.absoluteString == "https://open.spotify.com/playlist/\(id)")
     }
 }

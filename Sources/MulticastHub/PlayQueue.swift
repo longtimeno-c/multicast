@@ -1,27 +1,9 @@
 import Foundation
 import MulticastHubModel
 
-/// One entry in the hub's play queue. `id` is unique within the queue (the same song can be
-/// queued twice); `source` says which app plays it (`.appleMusic`, `.spotify` or `.files`).
-public struct PlayQueueEntry: Identifiable, Equatable, Hashable, Sendable {
-    public let id: String
-    public var source: SourceKind
-    public var track: TrackItem
-
-    public init(id: String, source: SourceKind, track: TrackItem) {
-        self.id = id
-        self.source = source
-        self.track = track
-    }
-}
-
-/// Where queued items go.
-public enum PlayQueuePlacement: String, Sendable, Equatable {
-    /// Right after the current item ("Play Next").
-    case next
-    /// At the end ("Add to Queue").
-    case last
-}
+/// An entry of the hub's play queue (the wire type, `MulticastHubModel.QueueItem`).
+public typealias PlayQueueEntry = QueueItem
+public typealias PlayQueuePlacement = QueuePlacement
 
 /// The hub's play queue: played history, the current entry and what is up next. Pure value
 /// type; the hub (`LocalHub`) drives the players from it.
@@ -183,10 +165,16 @@ public enum QueueAdvancePolicy {
     public static let endTolerance: TimeInterval = 2
     /// How long after starting an item the app may still report the previous track.
     public static let startGrace: TimeInterval = 4
+    /// A song the app never reported playing counts as failed (and is passed over) after this.
+    public static let startTimeout: TimeInterval = 15
 
     public static func decide(expectedTrackID: String, observation o: QueuePlayerObservation,
                               lastPosition: TimeInterval?, lastDuration: TimeInterval?,
-                              sinceStart: TimeInterval) -> Decision {
+                              sinceStart: TimeInterval, hasStarted: Bool = true) -> Decision {
+        // Until the app has reported this song at all, any other report is the song before.
+        if !hasStarted, o.trackID != expectedTrackID {
+            return sinceStart < startTimeout ? .wait : .ended
+        }
         if o.trackID == expectedTrackID {
             switch o.state {
             case .playing: return .wait
@@ -216,18 +204,32 @@ public enum QueueAdvancePolicy {
 // MARK: - Spotify links
 
 public enum SpotifyLink {
-    /// `https://open.spotify.com/track/<id>?si=…`, `open.spotify.com/intl-xx/track/<id>` or
-    /// `spotify:track:<id>` → `spotify:track:<id>`; nil for anything else.
-    public static func trackURI(from text: String) -> String? {
+    public enum Kind: String, Sendable { case track, playlist, album }
+
+    /// `https://open.spotify.com/<kind>/<id>?si=…`, `open.spotify.com/intl-xx/<kind>/<id>` or
+    /// `spotify:<kind>:<id>` → `spotify:<kind>:<id>`, when the kind is `kind`; nil otherwise.
+    public static func uri(from text: String, kind: Kind) -> String? {
         let s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let k = kind.rawValue
         func valid(_ id: Substring) -> String? {
             guard (16...32).contains(id.count), id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
-            return "spotify:track:\(id)"
+            return "spotify:\(k):\(id)"
         }
-        if s.hasPrefix("spotify:track:") { return valid(s.dropFirst("spotify:track:".count)) }
-        guard let url = URL(string: s.hasPrefix("http") ? s : "https://\(s)"), url.host == "open.spotify.com" else { return nil }
+        if s.hasPrefix("spotify:\(k):") { return valid(s.dropFirst("spotify:\(k):".count)) }
+        guard !s.contains(" "), let url = URL(string: s.hasPrefix("http") ? s : "https://\(s)"),
+              url.host == "open.spotify.com" else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
-        guard let i = parts.firstIndex(of: "track"), i + 1 < parts.count else { return nil }
+        guard let i = parts.firstIndex(of: k), i + 1 < parts.count else { return nil }
         return valid(Substring(parts[i + 1]))
+    }
+
+    public static func trackURI(from text: String) -> String? { uri(from: text, kind: .track) }
+    public static func playlistURI(from text: String) -> String? { uri(from: text, kind: .playlist) }
+
+    /// The `open.spotify.com` page of a URI (what the oEmbed endpoint takes).
+    public static func webURL(forURI uri: String) -> URL? {
+        let parts = uri.split(separator: ":")
+        guard parts.count == 3, parts[0] == "spotify" else { return nil }
+        return URL(string: "https://open.spotify.com/\(parts[1])/\(parts[2])")
     }
 }

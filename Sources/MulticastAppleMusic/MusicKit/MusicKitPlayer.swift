@@ -191,8 +191,8 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
                 return true
             }
             guard found else { throw HubCommandError(.notFound, "That song is no longer in Up Next.") }
-        case .files:
-            throw HubCommandError(.unsupported, "Files aren't played through Apple Music.")
+        case .files, .spotifyHistory:
+            throw HubCommandError(.unsupported, "That isn't played through Apple Music.")
         }
         try await wrap { try await self.player.play() }
         bumpUpNext()
