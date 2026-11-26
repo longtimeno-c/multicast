@@ -94,6 +94,9 @@ public actor LocalHub: HubBackend {
     /// (the system asks Spotify itself, and a Spotify that stopped handling its scripting only
     /// answers when that times out), so nothing ever waits for it.
     private var spotifyAutomationCheck: Task<Void, Never>?
+    /// Bumped whenever the Automation status is learned some other way (a refused command, an
+    /// answered prompt); a background check started before that is stale and is ignored.
+    private var automationEvidence = 0
 
     // Captured app
     private var capturable: [CapturableApp] = []
@@ -1137,7 +1140,10 @@ public actor LocalHub: HubBackend {
     private func spotifyChanged(_ np: NowPlaying?) {
         let previous = spotifyNow
         spotifyNow = np
-        if np != nil { permissions.automation = .granted }
+        if np != nil, permissions.automation != .granted {
+            permissions.automation = .granted
+            automationEvidence += 1
+        }
         if let previous, previous.hasTrack, spotifyTrackKey(previous) != np.map(spotifyTrackKey) {
             let item = spotifyTrack(previous)
             spotifyHistory.removeAll { $0.id == item.id }
@@ -1173,7 +1179,11 @@ public actor LocalHub: HubBackend {
 
     private func mediaCommand(_ body: @escaping @Sendable () async throws -> Void) async throws {
         do { try await body() } catch let e as HubCommandError {
-            if e.code == .permissionMissing { permissions.automation = .denied; publish() }
+            if e.code == .permissionMissing {
+                permissions.automation = .denied
+                automationEvidence += 1
+                publish()
+            }
             if e.code == .unavailable { refreshApps() }
             throw e
         }
@@ -1241,9 +1251,10 @@ public actor LocalHub: HubBackend {
         if spotifyStatus == .running, permissions.automation != .granted || spotifyObserver == nil,
            spotifyAutomationCheck == nil {
             let spotify = deps.spotify
+            let evidence = automationEvidence
             spotifyAutomationCheck = Task { [weak self] in
                 let status = await spotify.automationStatus(ask: false)
-                await self?.spotifyAutomationChecked(status)
+                await self?.spotifyAutomationChecked(status, evidence: evidence)
             }
         }
         // Access granted in System Settings while the hub runs: pick it up without prompting.
@@ -1260,9 +1271,9 @@ public actor LocalHub: HubBackend {
         publish()
     }
 
-    private func spotifyAutomationChecked(_ status: PermissionStatus?) {
+    private func spotifyAutomationChecked(_ status: PermissionStatus?, evidence: Int) {
         spotifyAutomationCheck = nil
-        guard let status, spotifyStatus == .running else { return }
+        guard let status, spotifyStatus == .running, evidence == automationEvidence else { return }
         permissions.automation = status
         // Observing sends Apple Events; start it unprompted only once it is allowed.
         if status == .granted { startSpotifyObserver() }
@@ -1328,6 +1339,7 @@ public actor LocalHub: HubBackend {
     private func automationAnswered(_ status: PermissionStatus?) {
         guard let status else { return }
         permissions.automation = status
+        automationEvidence += 1
         if status == .granted, spotifyStatus == .running { startSpotifyObserver() }
         publish()
     }
