@@ -1,7 +1,8 @@
 import SwiftUI
 import MulticastHubModel
 
-/// The detail column: what's playing, then every speaker under one master volume.
+/// The detail column: every speaker under one master volume (what's playing is in the player
+/// bar across the top of the window).
 struct SpeakersPanel: View {
     @Environment(HubModel.self) private var model
     @Environment(HubRuntime.self) private var runtime: HubRuntime?
@@ -11,19 +12,6 @@ struct SpeakersPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MC.Space.xxl) {
-                NowPlayingStrip(
-                    info: model.nowPlaying,
-                    artwork: model.artwork(model.nowPlaying?.artworkID),
-                    transport: model.transport,
-                    showsPosition: model.hasPosition,
-                    liveCaption: liveCaption,
-                    emptySubtitle: "Choose something to play, then pick speakers",
-                    onPlayPause: model.togglePlayPause,
-                    onNext: model.next,
-                    onPrevious: model.previous,
-                    onSeek: model.seek(to:)
-                )
-
                 VStack(alignment: .leading, spacing: MC.Space.l) {
                     HStack(alignment: .firstTextBaseline, spacing: MC.Space.s) {
                         Text("Speakers")

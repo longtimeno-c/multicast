@@ -188,16 +188,12 @@ final class RemoteSession {
 final class RemoteNavigation {
     enum Tab: Hashable { case speakers, music }
     enum MusicRoute: Hashable { case source(SourceKind), playlist(PlaylistItem) }
-    enum AppleMusicSection: String, CaseIterable, Identifiable {
-        // The Mac's order and names.
-        case songs = "Songs", playlists = "Playlists", upNext = "Up Next"
-        var id: String { rawValue }
-    }
 
     var tab: Tab = .speakers
     var musicPath: [MusicRoute] = []
-    var appleMusicSection: AppleMusicSection = .playlists
     var showsNowPlaying = false
+    /// Up Next, as a sheet over the tabs (the full player opens its own).
+    var showsUpNext = false
     /// The speaker whose detail sheet is open.
     var speakerDetail: SpeakerTarget?
 
@@ -211,6 +207,7 @@ final class RemoteNavigation {
         tab = .speakers
         musicPath = []
         showsNowPlaying = false
+        showsUpNext = false
         speakerDetail = nil
         librarySearch = ""
     }

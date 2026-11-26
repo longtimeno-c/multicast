@@ -23,6 +23,10 @@ public struct PlayQueue: Equatable, Sendable {
     /// Largest Up Next the hub keeps (a whole library can be tens of thousands of songs).
     public static let upcomingLimit = 2000
     private var nextSerial = 1
+    /// Up Next is in a random order; `setShuffle(false, …)` puts it back.
+    public private(set) var isShuffled = false
+    /// Entry ids in the order they had before shuffling (only while shuffled).
+    private var unshuffled: [String] = []
 
     public init() {}
 
@@ -42,14 +46,18 @@ public struct PlayQueue: Equatable, Sendable {
         guard let i = tracks.firstIndex(where: { $0.id == startID }) else { return false }
         let made = entries(Array(tracks[i...].prefix(Self.upcomingLimit + 1)), source: source)
         replace(with: made)
+        isShuffled = false
+        unshuffled = []
         return true
     }
 
     /// Plays a whole list from the top, in order or shuffled.
     public mutating func play<G: RandomNumberGenerator>(_ tracks: [TrackItem], source: SourceKind, shuffled: Bool,
                                                         using rng: inout G) {
-        let ordered = shuffled ? tracks.shuffled(using: &rng) : tracks
-        replace(with: entries(Array(ordered.prefix(Self.upcomingLimit + 1)), source: source))
+        let inOrder = entries(Array(tracks.prefix(Self.upcomingLimit + 1)), source: source)
+        replace(with: shuffled ? inOrder.shuffled(using: &rng) : inOrder)
+        isShuffled = shuffled
+        unshuffled = shuffled ? inOrder.map(\.id) : []
     }
 
     private mutating func replace(with made: [PlayQueueEntry]) {
@@ -64,10 +72,31 @@ public struct PlayQueue: Equatable, Sendable {
         let room = max(0, Self.upcomingLimit - upcoming.count)
         let made = entries(Array(tracks.prefix(room)), source: source)
         switch placement {
-        case .next: upcoming.insert(contentsOf: made, at: 0)
-        case .last: upcoming.append(contentsOf: made)
+        case .next:
+            upcoming.insert(contentsOf: made, at: 0)
+            if isShuffled { unshuffled.insert(contentsOf: made.map(\.id), at: 0) }
+        case .last:
+            upcoming.append(contentsOf: made)
+            if isShuffled { unshuffled.append(contentsOf: made.map(\.id)) }
         }
         return made
+    }
+
+    /// Shuffles Up Next, or puts it back in the order it had (songs queued meanwhile keep
+    /// their place: Play Next at the front, Add to Queue at the end).
+    public mutating func setShuffle<G: RandomNumberGenerator>(_ on: Bool, using rng: inout G) {
+        guard on != isShuffled else { return }
+        if on {
+            unshuffled = upcoming.map(\.id)
+            upcoming.shuffle(using: &rng)
+        } else {
+            let rank = Dictionary(unshuffled.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+            upcoming = upcoming.enumerated()
+                .sorted { (rank[$0.element.id] ?? Int.max, $0.offset) < (rank[$1.element.id] ?? Int.max, $1.offset) }
+                .map(\.element)
+            unshuffled = []
+        }
+        isShuffled = on
     }
 
     /// Moves to the next entry. Returns it, or nil at the end of the queue (nothing current then).

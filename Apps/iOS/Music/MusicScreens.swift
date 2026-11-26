@@ -182,7 +182,7 @@ private struct SourcesList: View {
         }
         switch source {
         case .appleMusic:
-            return model.libraryIsCombined ? "Apple Music and Spotify" : "Playlists, songs and search"
+            return model.libraryIsCombined ? "Apple Music and Spotify" : "Playlists and search"
         case .spotify:
             switch model.spotify {
             case .notInstalled: return "Not installed on the Mac"
@@ -268,51 +268,40 @@ private struct AppleMusicView: View {
 
     private var isSearching: Bool { !session.navigation.librarySearch.isEmpty }
 
+    /// The library is playlists: pinned ones in a shelf, then every playlist. Search finds
+    /// songs and playlists and shows them only while there is a query.
     private var library: some View {
-        @Bindable var nav = session.navigation
-        return List {
+        List {
             if isSearching {
                 searchResults
             } else {
                 if !model.pins.isEmpty {
-                    PinnedShelf(artworkSize: 96)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-                Picker("Show", selection: $nav.appleMusicSection) {
-                    ForEach(RemoteNavigation.AppleMusicSection.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-
-                switch nav.appleMusicSection {
-                case .playlists:
-                    if combined && !model.spotifyPins.isEmpty {
-                        Section("Spotify") { spotifyPlaylists(model.spotifyPins) }
-                        Section("Apple Music") { playlists(model.playlists.items) }
-                    } else {
-                        playlists(model.playlists.items)
+                    Section {
+                        PinnedShelf(artworkSize: 132)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    } header: {
+                        LibraryHeader("Pinned")
                     }
-                case .songs:
-                    if combined && !model.spotifySessionSongs.isEmpty {
-                        Section("Spotify this session") { spotifySongs(model.spotifySessionSongs) }
-                        Section("Apple Music") { tracks(model.songs.items, list: .songs, context: .songs) }
-                    } else {
-                        tracks(model.songs.items, list: .songs, context: .songs)
+                }
+                Section {
+                    playlists(model.playlists.items)
+                    if model.playlists.isLoaded && model.playlists.items.isEmpty {
+                        Text("No playlists in your library yet.")
+                            .font(MC.Font.body)
+                            .foregroundStyle(MC.Ink.secondary)
+                            .listRowBackground(Color.clear)
                     }
-                case .upNext:
-                    UpNextSection()
+                } header: {
+                    LibraryHeader("Playlists")
                 }
             }
         }
         .listStyle(.plain)
         .remoteList()
-        .animation(MC.Motion.feedback, value: nav.appleMusicSection)
         .toolbar {
-            if nav.appleMusicSection == .upNext && !isSearching { UpNextToolbar() }
-            if nav.appleMusicSection == .playlists && !isSearching && model.spotify != .notInstalled { PinSpotifyToolbar() }
+            if !isSearching && model.spotify != .notInstalled { PinSpotifyToolbar() }
+            ToolbarItem(placement: .topBarTrailing) { UpNextButton() }
         }
     }
 
@@ -904,5 +893,90 @@ struct PhoneSourceMark: View {
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(MC.Ink.tertiary)
             .accessibilityLabel(source.title)
+    }
+}
+
+/// A library section title, quiet and in the list's own type.
+private struct LibraryHeader: View {
+    var title: String
+    init(_ title: String) { self.title = title }
+    var body: some View {
+        Text(title)
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(MC.Ink.primary)
+            .textCase(nil)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Opens Up Next from anywhere.
+struct UpNextButton: View {
+    @Environment(RemoteSession.self) private var session
+    var body: some View {
+        Button { session.navigation.showsUpNext = true } label: {
+            Image(systemName: "list.bullet")
+        }
+        .accessibilityLabel("Up Next")
+    }
+}
+
+/// What is playing, then the hub's queue: tap plays a song, swipe removes, Edit reorders,
+/// Shuffle and Clear act on the whole list.
+struct UpNextSheet: View {
+    @Environment(HubModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let info = model.nowPlaying {
+                    Section {
+                        HStack(spacing: MC.Space.m) {
+                            ArtworkView(data: model.artwork(info.artworkID, maxPixel: 200), size: 56, radius: MC.Radius.medium,
+                                        isIcon: info.artworkIsIcon)
+                            VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                                Text(info.title).font(MC.Font.bodyEmphasis).foregroundStyle(MC.Ink.primary)
+                                Text(info.artist).font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
+                            }
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .listRowBackground(Color.clear)
+                    } header: {
+                        LibraryHeader("Now Playing")
+                    }
+                }
+                Section {
+                    UpNextSection()
+                } header: {
+                    HStack(alignment: .firstTextBaseline) {
+                        LibraryHeader("Up Next")
+                        Spacer(minLength: MC.Space.s)
+                        let on = model.queue.isShuffled
+                        Button(action: model.toggleShuffle) {
+                            Label("Shuffle", systemImage: "shuffle")
+                                .font(MC.Font.captionEmphasis)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(on ? MC.accent : .gray)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
+                        .disabled(model.upNext.items.isEmpty && !on)
+                        .accessibilityValue(on ? "On" : "Off")
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .remoteList()
+            .navigationTitle("Up Next")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+                UpNextToolbar()
+            }
+        }
+        .presentationDragIndicator(.visible)
+        .presentationBackground(MC.Surface.canvas)
     }
 }

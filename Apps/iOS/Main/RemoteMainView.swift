@@ -37,6 +37,11 @@ struct RemoteMainView: View {
                 .environment(model)
                 .environment(session)
         }
+        .sheet(isPresented: $nav.showsUpNext) {
+            UpNextSheet()
+                .environment(model)
+                .environment(session)
+        }
         .sheet(item: $nav.speakerDetail) { target in
             SpeakerDetailSheet(speakerID: target.id)
                 .environment(model)

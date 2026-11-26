@@ -34,7 +34,7 @@ struct QueueSample: Equatable, Sendable {
 // stops.
 extension LocalHub {
     /// How long before a song's extrapolated end the next one is started.
-    static let queueEndLead: TimeInterval = 0.3
+    static let queueEndLead: TimeInterval = 0.15
 
     var queueDriving: Bool { playQueue.current != nil && !queueHeld }
 
@@ -49,7 +49,8 @@ extension LocalHub {
         QueueStatus(currentID: queueHeld ? nil : playQueue.current?.id,
                     currentSource: queueHeld ? nil : playQueue.current?.source,
                     upcomingCount: playQueue.upcoming.count,
-                    isHeld: queueHeld && !playQueue.upcoming.isEmpty)
+                    isHeld: queueHeld && !playQueue.upcoming.isEmpty,
+                    isShuffled: playQueue.isShuffled)
     }
 
     func queuePage(_ page: PageRequest) -> Page<QueueItem> { .slice(playQueue.upcoming, page) }
@@ -240,6 +241,12 @@ extension LocalHub {
     func clearQueue() {
         playQueue.clearUpcoming()
         queueHeld = false
+        queueChanged()
+    }
+
+    func setShuffle(_ on: Bool) {
+        var rng = SystemRandomNumberGenerator()
+        playQueue.setShuffle(on, using: &rng)
         queueChanged()
     }
 

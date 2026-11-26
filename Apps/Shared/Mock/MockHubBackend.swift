@@ -173,6 +173,10 @@ actor MockHubBackend: HubBackend {
             content.upNext.removeAll { set.contains($0.id) }
             content.upNext.insert(contentsOf: moving, at: target - before)
             queueChanged()
+        case .setShuffle(let on):
+            if on { content.upNext.shuffle() }
+            update { $0.queue.isShuffled = on }
+            queueChanged()
         case .clearQueue:
             content.upNext.removeAll()
             queueChanged()
