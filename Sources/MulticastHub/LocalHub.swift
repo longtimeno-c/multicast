@@ -860,6 +860,9 @@ public actor LocalHub: HubBackend {
                 throw HubCommandError(.failed, "Apple Music couldn\u{2019}t start: \(error.localizedDescription)")
             }
             leaveActiveSource()
+            // The Music tap reports the System Audio Recording permission like any capture (a
+            // silent tap on another app must not leave a stale "turned off" behind).
+            if let capture = source as? HubCaptureSource { observeCapture(capture) }
             activeSource = .appleMusic
             wantsPlay = musicStatus.isPlaying && hasPlayableSpeaker
             publish()

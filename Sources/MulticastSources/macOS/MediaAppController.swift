@@ -2,6 +2,7 @@
 import AppKit
 import Carbon
 import Foundation
+import os
 
 /// Queries and controls Spotify / Music through Apple Events (NSAppleScript).
 ///
@@ -236,11 +237,20 @@ public final class MediaAppController: @unchecked Sendable {
         }
     }
 
+    static let log = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "media-app")
+
     private func script(_ source: String) throws -> NSAppleScript {
         if let s = compiled[source] { return s }
         guard let s = NSAppleScript(source: source) else { throw MediaControlError.scriptCompileFailed("init") }
         var err: NSDictionary?
-        if !s.compileAndReturnError(&err) {
+        let started = Date()
+        // Compiling can take tens of seconds the first time in an app process (the system scans
+        // the script before compiling it), and the script's own timeout does not cover it.
+        let ok = s.compileAndReturnError(&err)
+        Self.log.debug("compile \(self.app.displayName, privacy: .public) ok=\(ok) \(Int(Date().timeIntervalSince(started) * 1000))ms")
+        if !ok {
+            let code = (err?[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
+            Self.log.error("compile \(self.app.displayName, privacy: .public) failed: \(code)")
             throw MediaControlError.scriptCompileFailed(Self.mapScriptError(err).localizedDescription)
         }
         compiled[source] = s
@@ -344,7 +354,9 @@ private final class ChangeObserver: @unchecked Sendable {
             // because the controller dispatches synchronously onto its own queue.
             current = try controller.syncNowPlayingForObserver()
         } catch {
-            return // permission errors etc.: keep last value; callers can query directly for the error
+            // Permission errors etc.: keep last value; callers can query directly for the error.
+            MediaAppController.log.debug("\(self.app.displayName, privacy: .public) status failed: \(String(describing: error), privacy: .public)")
+            return
         }
         switch last {
         case .none:

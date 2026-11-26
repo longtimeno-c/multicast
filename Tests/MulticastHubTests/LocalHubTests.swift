@@ -796,4 +796,28 @@ struct LocalHubResponsivenessTests {
         #expect(rig.state.spotify == .running)
         #expect(rig.sources.captures.get().map(\.bundleID) == [spotifyID])
     }
+
+    @Test func theMusicTapClearsAStaleCaptureDenial() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        // A Spotify tap that only ever heard silence reads as denied…
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        await rig.hub.settle()
+        let spotifyTap = try #require(rig.sources.captures.get().first)
+        spotifyTap.evidence.send(.denied)
+        try await rig.waitFor("denied") { $0.health.permission(.audioCapture) == .denied }
+        // …and the Music tap hearing sound puts it right.
+        try await rig.hub.perform(.selectSource(source: .appleMusic))
+        await rig.hub.settle()
+        let musicTap = try #require(rig.session.currentSource as? FakeCaptureSource)
+        #expect(musicTap.bundleID == "music")
+        musicTap.evidence.send(.granted)
+        try await rig.waitFor("granted") { $0.health.permission(.audioCapture) == .granted }
+    }
 }
+
