@@ -98,7 +98,7 @@ on the network answering with its id) shows as unreachable and the iPhone keeps 
 
 | Permission | Needed for | Without it |
 |---|---|---|
-| Local Network | finding AirPlay speakers, and letting iPhones find the Mac | only this Mac's own outputs; remotes can't connect (shown in Settings and the speakers list) |
+| Local Network | finding AirPlay speakers, and letting iPhones find the Mac | only this Mac's own outputs; remotes can't connect (shown in the speakers list, the menu bar panel and Settings, with a button to the right pane; once it is turned on the Mac picks it up within about 10 s) |
 | System Audio Recording | Spotify, other apps and Apple Music (all captured) | those sources play silence; shown on the source |
 | Automation (Spotify, Music) | now playing and play/pause/skip; the Music app player | Spotify plays but can't be controlled; Apple Music unavailable |
 
@@ -108,6 +108,17 @@ right pane of Privacy & Security.
 The Mac app is signed "to run locally" (ad hoc). macOS treats every rebuild as a new app, so it may ask again
 for these permissions and for Keychain access to the pairing keys. Signing with your own team avoids that (see
 `Apps/Config/Mac.xcconfig`).
+
+### Finding and keeping speakers
+
+- The speaker list is browsed again every 45 s, whenever the Mac's network interfaces change, and on
+  **Refresh speakers** (the ↻ button in the speakers panel and the menu bar panel; pull down, or the Mac menu, on
+  the iPhone). Speakers already known stay listed while the fresh answers come in.
+- A speaker that stops answering stays in the list; after 20 s its row says "Not seen on the network", and after
+  3 minutes it is removed (a speaker that is on stays listed regardless).
+- While playing, a network speaker that fails is retried by itself after 2, 5, 10, 20 and then every 30 s, and at
+  once when it reappears on the network or on Refresh. A wrong password, or picking the same receiver twice, is
+  not retried. "Try again" retries at once.
 
 ## Command line
 
@@ -158,8 +169,12 @@ swift run multicast-remote-cli run --hub "Test Hub" --store /tmp/remote-keys.jso
 
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
-- **AirPlay 1 bridges (AirConnect and similar) need a sync trim.** They add their own delay; set it per speaker
-  (speaker details → Sync trim).
+- **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand.** The bridge itself plays to our
+  timing: it reports its buffer in `Audio-Latency` from RECORD (22050 frames, 0.5 s, for AirConnect 1.12.4), and
+  that is the receiver's minimum buffer, already covered by the 2 s group latency. The extra delay comes from the
+  device behind the bridge (a Sonos or UPnP renderer buffering the bridge's HTTP stream), which nothing on the
+  network reports, and it has not been measured here. So Multicast applies no default offset to bridges; set
+  speaker details → Sync trim per bridge. The trim range is −500…500 ms; positive plays later.
 - **Apple Music** plays through the Music app (Apple Events plus a capture of Music's audio). It needs Automation
   and System Audio Recording; neither has been granted on a test machine yet, so library, play and capture are
   unverified live. Music doesn't expose Up Next to Apple Events: Up Next is approximated, and queue editing is not
