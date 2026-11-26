@@ -28,6 +28,7 @@ struct MulticastApp: App {
         Window("Multicast", id: "main") {
             RootView()
                 .environment(model)
+                .environment(runtime)
                 .frame(minWidth: RootView.minWidth, minHeight: 600)
                 .task { runtime.start() }
         }
@@ -40,6 +41,7 @@ struct MulticastApp: App {
         MenuBarExtra("Multicast", systemImage: "hifispeaker.2.fill", isInserted: $showMenuBarExtra) {
             MenuBarPanel()
                 .environment(model)
+                .environment(runtime)
                 .task { runtime.start() }
         }
         .menuBarExtraStyle(.window)
