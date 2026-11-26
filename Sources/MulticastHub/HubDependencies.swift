@@ -45,6 +45,8 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func select(_ speaker: SpeakerDescriptor, volume: Float, offsetMillis: Int) async throws
     func deselect(speakerID: String) async
     func retry(speakerID: String) async
+    /// Browse for speakers again and retry failed ones (default: nothing).
+    func refreshSpeakers()
 
     func setSource(_ source: AudioSource) async throws
     func play() async throws
@@ -164,4 +166,8 @@ public struct HubDependencies: Sendable {
         self.settings = settings
         self.now = now
     }
+}
+
+extension HubSessionControlling {
+    public func refreshSpeakers() {}
 }

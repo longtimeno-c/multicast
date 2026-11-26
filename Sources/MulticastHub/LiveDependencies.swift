@@ -67,6 +67,7 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
     }
     public func deselect(speakerID: String) async { await session.deselect(speakerID: speakerID) }
     public func retry(speakerID: String) async { await session.retry(speakerID: speakerID) }
+    public func refreshSpeakers() { session.refreshSpeakers() }
 
     public func setSource(_ source: AudioSource) async throws { try await session.setSource(.custom(source)) }
     public func play() async throws { try await session.play() }

@@ -42,6 +42,9 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     case retrySpeaker(id: SpeakerID)
     /// 0…1.
     case setMasterVolume(volume: Double)
+    /// Look for speakers on the network again now (known ones stay listed meanwhile), and retry
+    /// any speaker that is on but failed.
+    case refreshSpeakers
 
     public enum Category: String, Sendable, Codable {
         case transport, source, speaker
@@ -54,7 +57,8 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
         case .play, .pause, .next, .previous, .seek: .transport
         case .selectSource, .playTrack, .playPlaylist, .captureApp, .addFiles, .removeFiles, .openSpotify,
              .requestPermission: .source
-        case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume: .speaker
+        case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume,
+             .refreshSpeakers: .speaker
         }
     }
 
