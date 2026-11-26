@@ -74,6 +74,13 @@ import Testing
                               duration: 252, artworkID: "cover.sun")
         try roundTrip(HubQueryResult.tracks(page: Page(items: [track], nextCursor: "1", totalCount: 2)))
         try roundTrip(HubQueryResult.playlists(page: Page(items: [PlaylistItem(id: "p", name: "Garden", trackCount: 3)])))
+        // Folders: two optional keys, omitted for a plain playlist, so older builds read and write it unchanged.
+        #expect(try json(PlaylistItem(id: "p", name: "Garden", trackCount: 3)) == #"{"id":"p","name":"Garden","trackCount":3}"#)
+        let folder = PlaylistItem(id: "f", name: "Evenings", trackCount: 9, isFolder: true, parentID: "top")
+        #expect(try json(folder) == #"{"id":"f","isFolder":true,"name":"Evenings","parentID":"top","trackCount":9}"#)
+        try roundTrip(folder)
+        let old = try JSONDecoder().decode(PlaylistItem.self, from: Data(#"{"id":"p","name":"Garden","trackCount":3,"artworkID":"a"}"#.utf8))
+        #expect(!old.isFolder && old.parentID == nil && old.artworkID == "a")
         try roundTrip(HubQueryResult.artwork(data: Data([1, 2, 3])))
         let item = QueueItem(id: "q7", source: .spotify, track: track)
         try roundTrip(HubQueryResult.queue(page: Page(items: [item], totalCount: 1)))

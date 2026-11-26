@@ -36,6 +36,7 @@ import MulticastRemote
 //   seek-end=SECONDS     seek to SECONDS before the end of the song playing
 //   keep-upnext=N        remove all but the first N songs of Up Next
 //   queue-spotify=current  queue the song Spotify played most recently this session
+//   playlists            print the hub's playlists as a tree (folders indented)
 //   request=automation   show the hub's permission prompt and wait for the answer
 //   expect-advance       wait (up to 60 s) until the queue moves to another song, or ends
 //
@@ -385,6 +386,25 @@ func run(hubQuery: String, store: PairingKeyStore, codeFile: URL?, remoteName: S
             say("  waiting up to 90 s for someone at the Mac to answer")
             if !(await log.wait(timeout: 90) { $0.health.permission(perm) != .notDetermined }) { say("  still not answered") }
             say("  \(arg) is \(await current().health.permission(perm).rawValue)")
+        case "playlists":
+            // The hub's playlist tree: folders, then what is in them, indented.
+            var all: [PlaylistItem] = []
+            var request = PageRequest(limit: 500)
+            while let page = try? await backend.playlists(request) {
+                all += page.items
+                guard let next = page.nextCursor else { break }
+                request = PageRequest(cursor: next, limit: 500)
+            }
+            let tree = PlaylistTree(all)
+            func show(_ folder: String?, _ depth: Int) {
+                for p in tree.items(in: folder) {
+                    let pad = String(repeating: "  ", count: depth + 1)
+                    say("\(pad)\(p.isFolder ? "[folder] " : "")\"\(p.name)\" \(p.trackCount) songs")
+                    if p.isFolder { show(p.id, depth + 1) }
+                }
+            }
+            say("  \(all.count) items, \(all.filter(\.isFolder).count) folders")
+            show(nil, 0)
         case "health":
             let h = await current().health
             say("  \(StateLog.healthLine(h))")

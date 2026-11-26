@@ -290,3 +290,32 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
         #expect(l.items.map(\.id) == ["a"] && l.totalCount == 1)
     }
 }
+
+@Suite struct PlaylistTreeTests {
+    let items = [
+        PlaylistItem(id: "p1", name: "Top", trackCount: 2, artworkID: "a1"),
+        PlaylistItem(id: "f1", name: "Evenings", trackCount: 9, isFolder: true),
+        PlaylistItem(id: "p2", name: "Dinner", trackCount: 4, artworkID: "a2", parentID: "f1"),
+        PlaylistItem(id: "f2", name: "Weekends", trackCount: 5, isFolder: true, parentID: "f1"),
+        PlaylistItem(id: "p3", name: "Sunday", trackCount: 5, artworkID: "a3", parentID: "f2"),
+        PlaylistItem(id: "p4", name: "Lost", trackCount: 1, parentID: "gone"),
+    ]
+
+    @Test func buildsTheTree() {
+        let t = PlaylistTree(items)
+        #expect(t.items(in: nil).map(\.id) == ["f1", "p1", "p4"])   // folders first; an orphan shows at the top
+        #expect(t.items(in: "f1").map(\.id) == ["f2", "p2"])
+        #expect(t.path(to: "p3").map(\.id) == ["f1", "f2"])
+        #expect(t.path(to: "p1").isEmpty)
+        #expect(t.mosaic(for: "f1") == ["a2", "a3"])
+        #expect(t.playlistCount(in: "f1") == 2)
+    }
+
+    @Test func survivesACycle() {
+        let loop = [PlaylistItem(id: "a", name: "A", trackCount: 0, isFolder: true, parentID: "b"),
+                    PlaylistItem(id: "b", name: "B", trackCount: 0, isFolder: true, parentID: "a")]
+        let t = PlaylistTree(loop)
+        #expect(t.path(to: "a").count <= 1)
+        #expect(t.playlistCount(in: "a") == 0)
+    }
+}

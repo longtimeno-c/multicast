@@ -71,7 +71,8 @@ enum Snapshotter {
                         preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing,
                         openPlaylist: scene == .playlist ? openPlaylist : nil,
                         playlistTracks: scene == .playlist ? content.playlistTracks[openPlaylist.id] ?? [] : [],
-                        showsUpNext: scene == .upNext)
+                        showsUpNext: scene == .upNext,
+                        openFolderID: scene == .folder ? "f1" : nil)
     }
 
     /// The playlist the playlist scene opens.
@@ -83,6 +84,7 @@ enum Snapshotter {
         switch scene {
         case .idle: "idle-no-speakers"
         case .appleMusic: "apple-music-playing"
+        case .folder: "folder-open"
         case .playlist: "playlist-open"
         case .upNext: "up-next"
         case .spotify: "spotify-capture"

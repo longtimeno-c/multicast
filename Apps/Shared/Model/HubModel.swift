@@ -54,6 +54,8 @@ final class HubModel {
     var showsUpNext = false
     /// The playlist open in the library, if any (Mac). `openPlaylist(_:)` loads its songs.
     var openedPlaylist: PlaylistItem?
+    /// The playlist folder open in the library (Mac); nil at the top of the library.
+    var openFolderID: String?
     /// A refused transport or source command. Speaker failures show in the speaker's row.
     var alert: HubAlert?
     /// Set by the root views from the environment; structural changes animate with it.
@@ -115,7 +117,8 @@ final class HubModel {
     /// For snapshots and previews: start from a fixed state without subscribing.
     convenience init(backend: HubBackend, state: HubState, preload: Preload = Preload(),
                      artwork: [ArtworkID: Data] = [:], levels: StereoLevels = .silent, browsing: SourceKind? = nil,
-                     openPlaylist: PlaylistItem? = nil, playlistTracks: [TrackItem] = [], showsUpNext: Bool = false) {
+                     openPlaylist: PlaylistItem? = nil, playlistTracks: [TrackItem] = [], showsUpNext: Bool = false,
+                     openFolderID: String? = nil) {
         self.init(backend: backend)
         apply(state)
         let r = state.content
@@ -135,6 +138,7 @@ final class HubModel {
             self.playlistTracks = PagedList(items: playlistTracks, revision: r.library)
         }
         self.showsUpNext = showsUpNext
+        self.openFolderID = openFolderID ?? openPlaylist?.parentID
     }
 
     func start() {
@@ -385,6 +389,9 @@ final class HubModel {
             } else {
                 self[keyPath: list] = updated
             }
+            // Playlists come whole: folders are built from the full list, and a folder's
+            // contents can sit on any page.
+            if key == .playlists, updated.canLoadMore { self.loadNextPage(.playlists) }
         }
     }
 
@@ -570,6 +577,28 @@ final class HubModel {
 
     func closePlaylist() {
         withAnimation(MC.Motion.feedback) { openedPlaylist = nil }
+    }
+
+    /// The playlist tree (folders and the playlists in them) from the loaded playlists.
+    var playlistTree: PlaylistTree { PlaylistTree(playlists.items) }
+
+    /// Opens a folder (nil: the top of the library), closing any open playlist.
+    func openFolder(_ id: String?) {
+        withAnimation(MC.Motion.feedback) {
+            openedPlaylist = nil
+            openFolderID = id
+        }
+    }
+
+    /// A folder opens to its contents; a playlist to its songs.
+    func open(_ item: PlaylistItem) {
+        if item.isFolder { openFolder(item.id) } else { showPlaylist(item) }
+    }
+
+    /// "1 playlist", "3 playlists" (anywhere inside the folder).
+    func folderDetail(_ folder: PlaylistItem) -> String {
+        let n = playlistTree.playlistCount(in: folder.id)
+        return n == 1 ? "1 playlist" : "\(n) playlists"
     }
 
     func playQueued(_ entryID: String) {
