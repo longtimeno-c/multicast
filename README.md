@@ -200,7 +200,7 @@ swift run multicast-remote-cli run --hub "Test Hub" --store /tmp/remote-keys.jso
   Music one track at a time. The MusicKit player is built but unproven (which process renders its audio is unknown).
 - **The play queue** has been run live from Apple Music to Apple Music: the next song started about 8 s after a seek
   to 8 s before the end, with no foreign track in between. Apple Music to Spotify is verified only as far as the
-  switch: on the test Mac, Spotify didn't answer Apple Events, so the queued Spotify song never played (the
-  playback-speed work bounds those events). Track-end detection for Spotify is covered by unit tests only.
+  switch: the queued Spotify song didn't start while the first AppleScript compile in the Multicast process was
+  held for tens of seconds by the system's security scan (not by Spotify). Track-end detection for Spotify is covered by unit tests only.
 - **iPhone-only mode** (playing to speakers from the phone without a Mac) is not built yet.
 - The remote link has not been reviewed by a third party; its threat model and gaps are in `Crypto.swift`.

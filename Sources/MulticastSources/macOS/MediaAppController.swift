@@ -100,20 +100,67 @@ public final class MediaAppController: @unchecked Sendable {
     public func nextTrack() async throws { try await command("next track") }
     public func previousTrack() async throws { try await command("previous track") }
 
-    /// Spotify only: plays a `spotify:track:`, `spotify:playlist:` or `spotify:album:` URI.
-    /// Only letters, digits and colons are accepted (the URI goes into script text).
-    public func play(uri: String) async throws {
-        guard app == .spotify, uri.hasPrefix("spotify:"), uri.count <= 80,
-              uri.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == ":") }) else {
+    /// Spotify only: plays a `spotify:track:`, `spotify:playlist:` or `spotify:album:` URI,
+    /// setting shuffle first when `shuffled` is given. The URI travels as an Apple Event
+    /// parameter to one script compiled once (`spotifyHandlers`): a script per URI would be
+    /// compiled, and security-scanned, again for every song.
+    public func play(uri: String, shuffled: Bool? = nil) async throws {
+        guard app == .spotify, uri.hasPrefix("spotify:"), uri.utf8.count <= 200 else {
             throw MediaControlError.unexpectedResult("invalid uri")
         }
-        try await command("play track \"\(uri)\"")
+        let shuffle = shuffled.map { $0 ? "on" : "off" } ?? ""
+        try await handler("playuri", [NSAppleEventDescriptor(string: uri), NSAppleEventDescriptor(string: shuffle)])
     }
 
-    /// Spotify only.
-    public func setShuffling(_ on: Bool) async throws {
-        guard app == .spotify else { return }
-        try await command("set shuffling to \(on)")
+    /// Spotify only: seconds into the current track, through the same compiled script.
+    public func seek(to seconds: TimeInterval) async throws {
+        guard app == .spotify else { return try await setPosition(seconds) }
+        try await handler("seekto", [NSAppleEventDescriptor(double: max(0, seconds))])
+    }
+
+    static let spotifyHandlers = """
+    on playuri(u, shuf)
+        if application id "\(MediaApp.spotify.bundleID)" is running then
+            tell application id "\(MediaApp.spotify.bundleID)"
+                if shuf is "on" then set shuffling to true
+                if shuf is "off" then set shuffling to false
+                play track u
+            end tell
+            return "\(AppleScriptNowPlayingParser.okMarker)"
+        end if
+        return "\(AppleScriptNowPlayingParser.notRunningMarker)"
+    end playuri
+
+    on seekto(p)
+        if application id "\(MediaApp.spotify.bundleID)" is running then
+            tell application id "\(MediaApp.spotify.bundleID)" to set player position to p
+            return "\(AppleScriptNowPlayingParser.okMarker)"
+        end if
+        return "\(AppleScriptNowPlayingParser.notRunningMarker)"
+    end seekto
+    """
+
+    /// Calls one handler of `spotifyHandlers` with descriptor parameters.
+    private func handler(_ name: String, _ params: [NSAppleEventDescriptor]) async throws {
+        guard isRunning else { throw MediaControlError.notRunning }
+        let box = HandlerParams(params)
+        let out: String = try await onQueue {
+            let s = try self.script(Self.spotifyHandlers)
+            let event = NSAppleEventDescriptor(
+                eventClass: AEEventClass(kASAppleScriptSuite), eventID: AEEventID(kASSubroutineEvent),
+                targetDescriptor: .currentProcess(), returnID: AEReturnID(kAutoGenerateReturnID),
+                transactionID: AETransactionID(kAnyTransactionID))
+            event.setDescriptor(NSAppleEventDescriptor(string: name), forKeyword: AEKeyword(keyASSubroutineName))
+            let list = NSAppleEventDescriptor.list()
+            for (i, p) in box.items.enumerated() { list.insert(p, at: i + 1) }
+            event.setDescriptor(list, forKeyword: AEKeyword(keyDirectObject))
+            var err: NSDictionary?
+            let result = s.executeAppleEvent(event, error: &err)
+            if let err { throw Self.mapScriptError(err) }
+            return result.stringValue ?? ""
+        }
+        if out == AppleScriptNowPlayingParser.notRunningMarker { throw MediaControlError.notRunning }
+        guard out == AppleScriptNowPlayingParser.okMarker else { throw MediaControlError.unexpectedResult(out) }
     }
 
     public func setPosition(_ seconds: TimeInterval) async throws {
@@ -298,6 +345,12 @@ public final class MediaAppController: @unchecked Sendable {
         if out == AppleScriptNowPlayingParser.notRunningMarker { throw MediaControlError.notRunning }
         guard out == AppleScriptNowPlayingParser.okMarker else { throw MediaControlError.unexpectedResult(out) }
     }
+}
+
+/// Descriptors built by the caller and used only on the controller's queue.
+private struct HandlerParams: @unchecked Sendable {
+    let items: [NSAppleEventDescriptor]
+    init(_ items: [NSAppleEventDescriptor]) { self.items = items }
 }
 
 /// Drives `MediaAppController.changes`.
