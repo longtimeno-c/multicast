@@ -65,9 +65,9 @@ iPhone app, with Xcode.
 swift build
 swift test
 
-# The Mac hub app
-xcodebuild -project Apps/Multicast.xcodeproj -scheme Multicast -derivedDataPath .build-xcode build
-open .build-xcode/Build/Products/Debug/Multicast.app
+# The Mac hub app: build it, install it in /Applications and open it from there.
+# (macOS ties Local Network access to where the app lives, so always run the installed copy.)
+Apps/Scripts/run-mac.sh
 
 # The iPhone remote (simulator)
 xcodebuild -project Apps/Multicast.xcodeproj -scheme "Multicast Remote" \
