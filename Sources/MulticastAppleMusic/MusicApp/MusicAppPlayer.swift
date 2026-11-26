@@ -261,6 +261,8 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
             _ = try await call("playtrack", .init(string: trackID), .init(string: pid))
         case .upNext:
             _ = try await call("playincurrent", .init(string: trackID))
+        case .catalog:
+            throw HubCommandError(.unsupported, "The Music app can only be told to play songs in your library.")
         case .files, .spotifyHistory:
             throw HubCommandError(.unsupported, "That isn't played through Apple Music.")
         }

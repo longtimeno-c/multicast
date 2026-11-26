@@ -44,6 +44,9 @@ final class HubModel {
     /// Library search results for `searchQuery`.
     private(set) var searchResults = PagedList<TrackItem>()
     private(set) var searchQuery = ""
+    /// Apple Music catalog songs matching `searchQuery`: the top results, shown under the
+    /// library's. Empty when the hub can't search the catalog.
+    private(set) var catalogResults: [TrackItem] = []
     /// The contents of the playlist last opened with `openPlaylist(_:)`.
     private(set) var openPlaylistID: String?
     private(set) var playlistTracks = PagedList<TrackItem>()
@@ -76,6 +79,11 @@ final class HubModel {
 
     @ObservationIgnored private var loadsInFlight: Set<ListKey> = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// A search already in hand when the model was made (snapshots): the Mac's search field
+    /// takes it once, so the render shows results without anyone typing.
+    @ObservationIgnored var searchSeed: String?
+    /// The backend said it has no catalog: it isn't asked again.
+    @ObservationIgnored private var catalogUnsupported = false
 
     // Optimistic values held until the backend echoes them (or they go stale).
     @ObservationIgnored private var pendingVolume: [SpeakerID: Pending<Double>] = [:]
@@ -101,11 +109,15 @@ final class HubModel {
         var upNext: [QueueItem] = []
         var files: [TrackItem] = []
         var spotifyHistory: [TrackItem] = []
+        /// A search with its answers: the query, the library's songs and the catalog's.
+        var search: (query: String, songs: [TrackItem], catalog: [TrackItem])?
     }
 
     nonisolated static let throttle: Duration = .milliseconds(50)
     nonisolated static let echoWindow: TimeInterval = 0.5
     nonisolated static let searchDebounce: Duration = .milliseconds(250)
+    /// How many catalog songs a search shows.
+    nonisolated static let catalogResultCount = 25
     /// Artwork is requested at this size unless a view asks for another.
     nonisolated static let defaultArtworkPixels = 600
 
@@ -127,6 +139,12 @@ final class HubModel {
         upNext = PagedList(items: preload.upNext, revision: r.upNext)
         files = PagedList(items: preload.files, revision: r.files)
         spotifyHistory = PagedList(items: preload.spotifyHistory, revision: r.spotifyHistory)
+        if let search = preload.search {
+            searchQuery = search.query
+            searchSeed = search.query
+            searchResults = PagedList(items: search.songs, revision: r.library)
+            catalogResults = search.catalog
+        }
         for (id, data) in artwork {
             artworkCache.insert(data, for: .init(id: id, maxPixel: Self.defaultArtworkPixels))
         }
@@ -327,7 +345,27 @@ final class HubModel {
             guard !Task.isCancelled, let self else { return }
             self.searchQuery = q
             self.searchResults = PagedList(revision: self.content.library)
-            if !q.isEmpty { self.loadFirstPage(.search) }
+            if !self.catalogResults.isEmpty { self.catalogResults = [] }
+            if !q.isEmpty {
+                self.loadFirstPage(.search)
+                self.loadCatalogResults(q)
+            }
+        }
+    }
+
+    /// The catalog's answer for `q`, if the hub has one. Any error means no catalog results:
+    /// the catalog is an extra under the library, never something to explain.
+    private func loadCatalogResults(_ q: String) {
+        guard !catalogUnsupported else { return }
+        let backend = backend
+        Task { [weak self] in
+            do {
+                let page = try await backend.searchCatalog(q, PageRequest(limit: Self.catalogResultCount))
+                guard let self, self.searchQuery == q else { return }
+                withAnimation(self.structural) { self.catalogResults = page.items }
+            } catch {
+                if (error as? HubCommandError)?.code == .unsupported { self?.catalogUnsupported = true }
+            }
         }
     }
 

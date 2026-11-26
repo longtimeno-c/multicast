@@ -2,6 +2,9 @@ import AppKit
 import CoreAudio
 import Foundation
 import MulticastAppleMusic
+import MulticastHub
+import MulticastHubModel
+import MulticastKit
 import MulticastSources
 
 /// Debug experiments that must run inside the signed app bundle (MusicKit's developer token and
@@ -24,6 +27,15 @@ import MulticastSources
 ///   open -W -n Multicast.app --args --applescript-experiment <file.applescript> --experiment-log <file>
 ///       Runs one AppleScript with the app's own Automation grants (Music, Spotify) and logs the
 ///       result. For reading an app's scripting model, e.g. how Music reports playlist folders.
+///
+///   open -W -n Multicast.app --args --catalog-experiment "<search term>" [--no-play] --experiment-log <file>
+///       Apple Music catalog, end to end through a real hub with the Music app as the backend
+///       (never prompts): search the catalog, say whether the first result is in the library,
+///       then play it through the hub's queue on this Mac's built-in speakers only (device
+///       volume capped at 0.10, about 6 s), logging now playing, the speaker and the capture
+///       counters each second. Tears everything down and restores the volume. `--no-play`
+///       stops after the search; `--to-end` seeks to 4 s before the end after the first second,
+///       to watch the queue start the next result.
 ///
 /// Launch with `open` so the app (not the terminal) is the process TCC asks about. The log goes
 /// to `--experiment-log` (stdout is lost under `open`) and to stdout.
@@ -49,6 +61,8 @@ func multicastExperimentsMain() {
         kind = .musicKit(preferCatalog: args.contains("--catalog"), prompt: !args.contains("--no-prompt"))
     } else if args.contains("--music-app-experiment") {
         kind = .musicApp(prompt: !args.contains("--no-prompt"))
+    } else if let i = args.firstIndex(of: "--catalog-experiment"), args.indices.contains(i + 1) {
+        kind = .catalog(term: args[i + 1], play: !args.contains("--no-play"), toEnd: args.contains("--to-end"))
     } else if args.contains("--spotify-experiment") {
         kind = .spotify
     } else {
@@ -73,9 +87,11 @@ private enum ExperimentKind: CustomStringConvertible {
     case musicKit(preferCatalog: Bool, prompt: Bool)
     case musicApp(prompt: Bool)
     case spotify
+    case catalog(term: String, play: Bool, toEnd: Bool)
 
     var description: String {
         switch self {
+        case .catalog(_, let play, let toEnd): return "catalog(play: \(play), toEnd: \(toEnd))"
         case .spotify: return "spotify"
         case .musicKit(let catalog, let prompt): return "musicKit(preferCatalog: \(catalog), prompt: \(prompt))"
         case .musicApp(let prompt): return "musicApp(prompt: \(prompt))"
@@ -99,6 +115,8 @@ private enum ExperimentKind: CustomStringConvertible {
             log("OUTCOME\n\(outcome)")
         case .spotify:
             await SpotifyCaptureExperiment.run(log: log)
+        case .catalog(let term, let play, let toEnd):
+            await CatalogPlaybackExperiment.run(term: term, play: play, toEnd: toEnd, log: log)
         }
     }
 }
@@ -179,5 +197,107 @@ private enum CAProbe {
         var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(process, &a, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap(uid(of:))
+    }
+}
+
+/// A catalog song through the product's own path: `LocalHub` with the Music app backend
+/// (`CatalogRoutingProvider`), the hub's queue, the tap on both renderers, the local speaker.
+@available(macOS 14.2, *)
+private enum CatalogPlaybackExperiment {
+    static let volumeCap: Float32 = 0.10
+    static let playSeconds = 6
+
+    static func run(term: String, play: Bool, toEnd: Bool = false, log: @escaping @Sendable (String) -> Void) async {
+        let provider = AppleMusicProviderFactory.make(.musicApp)
+        let catalog: Page<TrackItem>
+        do {
+            catalog = try await provider.searchCatalog(term, PageRequest(limit: 5))
+        } catch {
+            log("catalog search failed: \(error)")
+            return
+        }
+        log("catalog search ok: \(catalog.items.count) song(s)")
+        guard let song = catalog.items.first else { return }
+        log("first result: \(song.title) / \(song.artist) id=\(song.id) duration=\(Int(song.duration))s")
+        // Is it in the library? (MusicKit's library search: no Apple Events.)
+        let mine = (try? await MusicKitPlayer().search(song.title, PageRequest(limit: 50)))?.items ?? []
+        let owned = mine.contains { $0.title.caseInsensitiveCompare(song.title) == .orderedSame && $0.artist.caseInsensitiveCompare(song.artist) == .orderedSame }
+        log("in the library: \(owned) (\(mine.count) library song(s) match the title text)")
+        guard play else { return }
+
+        guard let device = DefaultOutputDevice.current(), device.isBuiltIn else {
+            log("default output is not the built-in device; refusing to play")
+            return
+        }
+        let savedVolume = device.volume
+        if let savedVolume, savedVolume > volumeCap, !device.setVolume(volumeCap) {
+            log("could not cap the output volume; refusing to play")
+            return
+        }
+        log("output builtIn=\(device.isBuiltIn) volume \(savedVolume.map { String($0) } ?? "n/a") -> \(device.volume.map { String($0) } ?? "n/a")")
+
+        // A hub of its own, with settings in memory so nothing of the installed app's changes.
+        let session = MulticastSession(configuration: LocalHub.defaultSessionConfiguration())
+        let deps = HubDependencies(session: KitSession(session), sources: LiveSourceMaker(), apps: WorkspaceAppPresence(),
+                                   capturableApps: ProcessTapApps(), spotify: SpotifyAppleEvents(), system: LiveSystemServices(),
+                                   settings: InMemorySettingsStore(HubSettings(masterVolume: 1)))
+        let hub = LocalHub(dependencies: deps)
+        let player = AppleMusicHubPlayer(provider: provider)
+        await hub.start()
+        await hub.setMusicPlayer(player)
+        _ = await player.refreshAuthorization()
+        defer { if let savedVolume, savedVolume > volumeCap { _ = device.setVolume(savedVolume) } }
+
+        var speaker: SpeakerItem?
+        for _ in 0..<30 where speaker == nil {
+            speaker = hub.currentState.speakers.first { $0.transport == .builtIn }
+            if speaker == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+        }
+        guard let speaker else {
+            log("no built-in speaker in the hub's list; stopping")
+            await hub.shutdown()
+            return
+        }
+        do {
+            try await hub.perform(.setSpeakerVolume(id: speaker.id, volume: 1))
+            try await hub.perform(.setSpeakerEnabled(id: speaker.id, enabled: true))
+            _ = try await hub.searchCatalog(term, PageRequest(limit: 5))
+            try await hub.perform(.playTrack(id: song.id, context: .catalog(query: term)))
+            log("playTrack accepted")
+        } catch {
+            log("could not start: \(error)")
+        }
+        let levels = Task { () -> Float in
+            var peak: Float = 0
+            for await l in await hub.levels() { peak = max(peak, l.left, l.right) }
+            return peak
+        }
+        for second in 1...playSeconds {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            let s = hub.currentState
+            let sp = s.speakers.first { $0.id == speaker.id }
+            var line = "t=\(second)s source=\(s.activeSource.map { "\($0)" } ?? "none") playing=\(s.transport.isPlaying) trackID=\(s.nowPlaying?.trackID ?? "-") "
+                + "queueCurrent=\(s.queue.currentID ?? "-") upNext=\(s.queue.upcomingCount) speaker=\(sp.map { "\($0.state)" } ?? "-")"
+            if let tap = session.currentSource as? AppAudioTapSource {
+                let st = tap.statistics
+                line += " capture[\(tap.target.description)] state=\(tap.status.state) cycles=\(st.ioCycles) frames=\(st.capturedFrames) nonSilent=\(st.nonSilentCycles) rebuilds=\(st.rebuilds)"
+            } else {
+                line += " capture=none"
+            }
+            log(line)
+            if toEnd, second == 1, song.duration > 10 {
+                do {
+                    try await hub.perform(.seek(position: song.duration - 4))
+                    log("seeked to 4 s before the end")
+                } catch { log("seek failed: \(error)") }
+            }
+        }
+        try? await hub.perform(.pause)
+        try? await hub.perform(.setSpeakerEnabled(id: speaker.id, enabled: false))
+        try? await provider.pause()
+        await hub.shutdown()
+        levels.cancel()
+        log("outgoing mix peak level=\(await levels.value)")
+        log("stopped; output volume restored to \(savedVolume.map { String($0) } ?? "n/a")")
     }
 }

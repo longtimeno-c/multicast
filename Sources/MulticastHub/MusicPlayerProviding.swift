@@ -62,6 +62,9 @@ public protocol MusicPlayerProviding: AnyObject, Sendable {
     func tracks(inPlaylist playlistID: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func upNext(_ page: PageRequest) async throws -> Page<TrackItem>
+    /// Apple Music catalog search; ids are `CatalogTrackID`s that `playOnce` accepts. The
+    /// default says this player has no catalog.
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func artwork(id: ArtworkID, maxPixel: Int) async -> Data?
 
     /// Starts `trackID` with `context` deciding what follows (never `.files`).
@@ -87,6 +90,12 @@ public extension MusicPlayerProviding {
     /// Plays one library track and then stops (the hub's queue decides what follows). Players
     /// that can't stop after one track start it as a library song.
     func playOnce(trackID: String) async throws { try await play(trackID: trackID, context: .songs) }
+}
+
+public extension MusicPlayerProviding {
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        throw HubCommandError(.unsupported, "This Apple Music player can\u{2019}t search the catalog.")
+    }
 }
 
 public extension MusicPlayerProviding {

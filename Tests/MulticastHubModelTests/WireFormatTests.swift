@@ -38,6 +38,7 @@ import Testing
         #expect(try json(HubCommand.pinSpotifyLink(link: "https://open.spotify.com/playlist/x"))
                 == #"{"pinSpotifyLink":{"link":"https:\/\/open.spotify.com\/playlist\/x"}}"#)
         #expect(try json(TrackContext.spotifyHistory) == #"{"spotifyHistory":{}}"#)
+        #expect(try json(TrackContext.catalog(query: "tide")) == #"{"catalog":{"query":"tide"}}"#)
         #expect(try json(HubCommand.selectSource(source: .appleMusic)) == #"{"selectSource":{"source":"appleMusic"}}"#)
         #expect(try json(HubCommand.requestPermission(permission: .audioCapture))
                 == #"{"requestPermission":{"permission":"audioCapture"}}"#)
@@ -49,6 +50,7 @@ import Testing
             .selectSource(source: .spotify), .playTrack(id: "t", context: .songs), .playTrack(id: "t", context: .upNext),
             .playTrack(id: "t", context: .search(query: "tide")), .playTrack(id: "f1", context: .files),
             .playPlaylist(id: "p", shuffled: false), .playTrack(id: "spotify:track:x", context: .spotifyHistory),
+            .playTrack(id: "catalog:1234", context: .catalog(query: "tide")),
             .addToQueue(tracks: [TrackItem(id: "s", title: "S", artist: "", album: "", duration: 1)], source: .appleMusic, placement: .last),
             .addSpotifyLink(link: "spotify:track:x", placement: .next), .removeFromQueue(ids: ["q1"]),
             .moveInQueue(ids: ["q1", "q3"], toOffset: 4), .clearQueue, .setShuffle(enabled: false), .pinPlaylist(id: "p"),
@@ -66,7 +68,10 @@ import Testing
         #expect(try json(HubQuery.playlistTracks(playlistID: "p1", page: PageRequest(cursor: "100", limit: 50)))
                 == #"{"playlistTracks":{"page":{"cursor":"100","limit":50},"playlistID":"p1"}}"#)
         #expect(try json(HubQuery.artwork(id: "cover.ring", maxPixel: 300)) == #"{"artwork":{"id":"cover.ring","maxPixel":300}}"#)
+        #expect(try json(HubQuery.catalogSearch(query: "tide", page: PageRequest(limit: 25)))
+                == #"{"catalogSearch":{"page":{"limit":25},"query":"tide"}}"#)
         let queries: [HubQuery] = [.playlists(page: .first), .search(query: "a", page: .first), .upNext(page: .first),
+                                   .catalogSearch(query: "a", page: PageRequest(cursor: "25", limit: 25)),
                                    .files(page: .first), .spotifyHistory(page: .first)]
         for q in queries { try roundTrip(q) }
 
@@ -134,5 +139,38 @@ import Testing
         try roundTrip(HubCommandError(.unavailable, "Spotify isn\u{2019}t open"))
         let e: Error = HubCommandError(.notFound, "That speaker is gone")
         #expect(e.localizedDescription == "That speaker is gone")
+    }
+
+    @Test func catalogTrackIDsAreTellableFromLibraryIDs() {
+        #expect(CatalogTrackID.make("1440857781") == "catalog:1440857781")
+        #expect(CatalogTrackID.catalogID(from: "catalog:1440857781") == "1440857781")
+        #expect(CatalogTrackID.isCatalog("catalog:i.AbC-12"))
+        for other in ["1440857781", "0A1B2C3D4E5F6071", "spotify:track:x", "catalog:", "catalog:a b", "catalog:\"quit", "Catalog:1",
+                      "catalog:" + String(repeating: "9", count: 65)] {
+            #expect(!CatalogTrackID.isCatalog(other), "\(other)")
+        }
+    }
+
+    /// A backend without a catalog says so, and the query maps onto the method.
+    @Test func catalogSearchDefaultsToUnsupported() async {
+        final class Plain: HubBackend, @unchecked Sendable {
+            func states() async -> AsyncStream<HubState> { AsyncStream { $0.finish() } }
+            func levels() async -> AsyncStream<StereoLevels> { AsyncStream { $0.finish() } }
+            func artwork(id: ArtworkID, maxPixel: Int) async -> Data? { nil }
+            func playlists(_ page: PageRequest) async throws -> Page<PlaylistItem> { .empty }
+            func tracks(inPlaylist playlistID: String, _ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+            func songs(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+            func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+            func upNext(_ page: PageRequest) async throws -> Page<QueueItem> { .empty }
+            func files(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+            func spotifyHistory(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+            func perform(_ command: HubCommand) async throws {}
+        }
+        do {
+            _ = try await Plain().answer(.catalogSearch(query: "tide", page: .first))
+            Issue.record("answered")
+        } catch {
+            #expect((error as? HubCommandError)?.code == .unsupported)
+        }
     }
 }

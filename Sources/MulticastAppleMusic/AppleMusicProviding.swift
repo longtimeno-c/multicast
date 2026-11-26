@@ -91,6 +91,12 @@ public protocol AppleMusicProviding: AnyObject, Sendable {
     func tracks(inPlaylist playlistID: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func upNext(_ page: PageRequest) async throws -> Page<TrackItem>
+    /// Apple Music catalog search: songs that need not be in the library, with `CatalogTrackID`
+    /// ids that `play(trackID:context:)`, `playOnce`, `insertNext` and `append` accept. Throws
+    /// `.unsupported` on a backend without the catalog (the default), `.permissionMissing`
+    /// without the Media & Apple Music permission, and `.unavailable` when the app can't get a
+    /// developer token (it isn't registered for MusicKit).
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
     /// Image bytes for an `ArtworkID` this provider handed out, scaled so neither side exceeds
     /// `maxPixel` (0 = original size). nil when the item has no artwork.
     func artwork(id: ArtworkID, maxPixel: Int) async -> Data?
@@ -136,7 +142,13 @@ public enum AppleMusicProviderFactory {
     @available(macOS 14.2, *)
     public static func make(_ kind: AppleMusicBackendKind) -> AppleMusicProviding {
         switch kind {
-        case .musicApp: return MusicAppPlayer()
+        // The Music app plays the library; catalog songs, which it can't be told to play, go
+        // through MusicKit, and one tap hears both.
+        case .musicApp:
+            return CatalogRoutingProvider(
+                library: MusicAppPlayer(),
+                catalog: MusicKitPlayer(renderer: .apps(bundleIDs: [MusicKitPlayer.remotePlayerServiceBundleID])),
+                captureBundleIDs: [MusicAppPlayer.bundleID, MusicKitPlayer.remotePlayerServiceBundleID])
         case .musicKit: return MusicKitPlayer(renderer: .apps(bundleIDs: [MusicKitPlayer.remotePlayerServiceBundleID]))
         }
     }
@@ -146,6 +158,12 @@ public enum AppleMusicProviderFactory {
 public extension AppleMusicProviding {
     /// Plays one track and stops after it. The default starts it as a library song.
     func playOnce(trackID: String) async throws { try await play(trackID: trackID, context: .songs) }
+}
+
+public extension AppleMusicProviding {
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        throw HubCommandError(.unsupported, "This Apple Music player can\u{2019}t search the catalog.")
+    }
 }
 
 public extension AppleMusicProviding {

@@ -141,6 +141,15 @@ extension LocalHub {
             guard playQueue.play(list, source: .spotify, startingAt: id) else {
                 throw HubCommandError(.notFound, "Spotify didn\u{2019}t say which song that was, so it can\u{2019}t be played again.")
             }
+        case .catalog(let q):
+            let player = try requireMusicPlayer()
+            var list = catalogResults.query == Self.catalogKey(q) ? catalogResults.items : []
+            if !list.contains(where: { $0.id == id }) {
+                list = try await Self.collect(limit: Self.catalogQueueLimit) { try await player.searchCatalog(q, $0) }
+            }
+            guard playQueue.play(list, source: .appleMusic, startingAt: id) else {
+                throw HubCommandError(.notFound, "That song is no longer on Apple Music.")
+            }
         case .songs, .playlist, .search:
             let player = try requireMusicPlayer()
             let listed = MulticastTiming.now
@@ -190,6 +199,23 @@ extension LocalHub {
             await self.reconcileAndPublish()
         }
         // No speaker on: Spotify plays on the Mac, and the hub captures it once one is.
+    }
+
+    /// How many catalog results follow a catalog song into Up Next.
+    static let catalogQueueLimit = 100
+
+    static func catalogKey(_ query: String) -> String { query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+
+    /// Keeps the pages of the latest catalog search together, in order.
+    func rememberCatalogResults(_ items: [TrackItem], query: String, isFirstPage: Bool) {
+        let key = Self.catalogKey(query)
+        if isFirstPage || catalogResults.query != key {
+            catalogResults = (key, items)
+        } else {
+            let known = Set(catalogResults.items.map(\.id))
+            catalogResults.items += items.filter { !known.contains($0.id) }
+            if catalogResults.items.count > Self.catalogQueueLimit { catalogResults.items.removeLast(catalogResults.items.count - Self.catalogQueueLimit) }
+        }
     }
 
     func addToQueue(_ tracks: [TrackItem], source: SourceKind, placement: QueuePlacement) throws {

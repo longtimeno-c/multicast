@@ -49,6 +49,9 @@ public protocol HubBackend: AnyObject, Sendable {
     func tracks(inPlaylist playlistID: String, _ page: PageRequest) async throws -> Page<TrackItem>
     func songs(_ page: PageRequest) async throws -> Page<TrackItem>
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
+    /// Apple Music catalog search (songs that need not be in the library). The default says
+    /// this backend has no catalog.
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem>
     /// The hub's Up Next: the songs after the current one, in play order.
     func upNext(_ page: PageRequest) async throws -> Page<QueueItem>
     func files(_ page: PageRequest) async throws -> Page<TrackItem>
@@ -67,6 +70,10 @@ public extension HubBackend {
         }
     }
 
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        throw HubCommandError(.unsupported, "Apple Music catalog search isn\u{2019}t available here.")
+    }
+
     /// Answers any `HubQuery` with this backend's methods.
     func answer(_ query: HubQuery) async throws -> HubQueryResult {
         switch query {
@@ -74,6 +81,7 @@ public extension HubBackend {
         case .playlistTracks(let id, let page): .tracks(page: try await tracks(inPlaylist: id, page))
         case .songs(let page): .tracks(page: try await songs(page))
         case .search(let q, let page): .tracks(page: try await search(q, page))
+        case .catalogSearch(let q, let page): .tracks(page: try await searchCatalog(q, page))
         case .upNext(let page): .queue(page: try await upNext(page))
         case .files(let page): .tracks(page: try await files(page))
         case .spotifyHistory(let page): .tracks(page: try await spotifyHistory(page))

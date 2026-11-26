@@ -324,11 +324,19 @@ private struct AppleMusicView: View {
         }
         Section("Songs") {
             if model.searchResults.isLoaded && model.searchResults.items.isEmpty && model.searchQuery == q.trimmingCharacters(in: .whitespaces) {
-                Text("No songs match \u{201C}\(q)\u{201D}.")
+                Text(model.catalogResults.isEmpty ? "No songs match \u{201C}\(q)\u{201D}."
+                     : "No songs in your library match \u{201C}\(q)\u{201D}.")
                     .font(MC.Font.body)
                     .foregroundStyle(MC.Ink.secondary)
             }
             tracks(model.searchResults.items, list: .search, context: .search(query: model.searchQuery))
+        }
+        // The Apple Music catalog: songs that needn't be in the library. Shown only when the
+        // hub found some.
+        if !model.catalogResults.isEmpty {
+            Section("Apple Music") {
+                tracks(model.catalogResults, list: nil, context: .catalog(query: model.searchQuery))
+            }
         }
     }
 
@@ -382,7 +390,7 @@ private struct AppleMusicView: View {
         PlaylistRows(items: items, showsLocation: showsLocation)
     }
 
-    private func tracks(_ items: [TrackItem], list: HubModel.ListKey, context: TrackContext) -> some View {
+    private func tracks(_ items: [TrackItem], list: HubModel.ListKey?, context: TrackContext) -> some View {
         ForEach(items) { track in
             Button { model.playTrack(track.id, context: context) } label: {
                 PhoneTrackRow(track: track, isCurrent: isCurrent(track), source: combined ? .appleMusic : nil)
@@ -390,7 +398,7 @@ private struct AppleMusicView: View {
             .buttonStyle(.plain)
             .queueActions(track, source: .appleMusic, play: { model.playTrack(track.id, context: context) })
             .listRowBackground(Color.clear)
-            .onAppear { model.loadMoreIfNeeded(list, after: track.id) }
+            .onAppear { if let list { model.loadMoreIfNeeded(list, after: track.id) } }
         }
     }
 

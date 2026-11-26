@@ -117,6 +117,9 @@ public actor LocalHub: HubBackend {
     private var musicPlayer: MusicPlayerProviding?
     var musicStatus = MusicPlayerStatus()
     private var musicObserver: Task<Void, Never>?
+    /// The catalog search results last handed out, in order: playing one of them queues the
+    /// rest after it without asking Apple Music again.
+    var catalogResults: (query: String, items: [TrackItem]) = ("", [])
     /// When the last play-a-track command arrived (timing logs).
     private var playRequestedAt: UInt64?
 
@@ -287,6 +290,12 @@ public actor LocalHub: HubBackend {
 
     public func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
         try await requireMusicPlayer().search(query, page)
+    }
+
+    public func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        let found = try await requireMusicPlayer().searchCatalog(query, page)
+        rememberCatalogResults(found.items, query: query, isFirstPage: page.cursor == nil)
+        return found
     }
 
     public func upNext(_ page: PageRequest) async throws -> Page<QueueItem> { queuePage(page) }

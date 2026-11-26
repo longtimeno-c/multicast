@@ -11,6 +11,25 @@ public enum MusicKitMapping {
                   artworkID: hasArtwork ? AppleMusicArtworkRef.musicKitItem(id: id).artworkID : nil)
     }
 
+    /// A catalog song: the same fields under a `CatalogTrackID`, artwork keyed by the catalog id.
+    public static func catalogTrack(catalogID: String, title: String, artist: String, album: String?,
+                                    duration: TimeInterval?, hasArtwork: Bool) -> TrackItem {
+        let t = track(id: catalogID, title: title, artist: artist, album: album, duration: duration, hasArtwork: hasArtwork)
+        return TrackItem(id: CatalogTrackID.make(catalogID), title: t.title, artist: t.artist, album: t.album,
+                         duration: t.duration, artworkID: t.artworkID)
+    }
+
+    /// Apple Music API returns at most this many search results per request.
+    public static let catalogPageLimit = 25
+    /// How deep a catalog search is paged before it stops offering more.
+    public static let catalogResultLimit = 100
+
+    /// The cursor after a catalog page that started at `offset` and returned `count` songs.
+    public static func catalogNextCursor(offset: Int, count: Int, hasMore: Bool) -> String? {
+        let next = offset + count
+        return hasMore && count > 0 && next < catalogResultLimit ? String(next) : nil
+    }
+
     public static func playlist(id: String, name: String, trackCount: Int, hasArtwork: Bool) -> PlaylistItem {
         PlaylistItem(id: id, name: name.isEmpty ? "Untitled Playlist" : name, trackCount: max(0, trackCount),
                      artworkID: hasArtwork ? AppleMusicArtworkRef.musicKitItem(id: id).artworkID : nil)

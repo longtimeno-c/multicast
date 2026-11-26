@@ -61,6 +61,9 @@ final class TestBackend: HubBackend, @unchecked Sendable {
         if let searchError { throw searchError }
         return .slice(songsList.filter { $0.title.contains(query) }, page)
     }
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        .slice([TrackItem(id: CatalogTrackID.make("900"), title: "Catalog \(query)", artist: "Far Shore", album: "", duration: 180)], page)
+    }
     func upNext(_ page: PageRequest) async throws -> Page<QueueItem> {
         .slice(songsList.prefix(5).enumerated().map { QueueItem(id: "q\($0.offset)", source: .appleMusic, track: $0.element) }, page)
     }

@@ -62,6 +62,17 @@ enum MockData {
         ]
     }
 
+    /// What a catalog search finds: songs by the library's artists that aren't in the library.
+    static var catalogSongs: [TrackItem] {
+        [
+            TrackItem(id: CatalogTrackID.make("9001"), title: "Harbour Lights", artist: "Juniper Hale", album: "Saltmarsh", duration: 241, artworkID: MockArtwork.id(.ring)),
+            TrackItem(id: CatalogTrackID.make("9002"), title: "Tidewater (Live)", artist: "Juniper Hale", album: "At the Boathouse", duration: 312, artworkID: MockArtwork.id(.sunOverWater)),
+            TrackItem(id: CatalogTrackID.make("9003"), title: "Night Market Reprise", artist: "The Ostrava Set", album: "Afterhours", duration: 187, artworkID: MockArtwork.id(.dots)),
+            TrackItem(id: CatalogTrackID.make("9004"), title: "Halcyon (Demo)", artist: "Mara Quell", album: "Sketches", duration: 174, artworkID: MockArtwork.id(.arcs)),
+            TrackItem(id: CatalogTrackID.make("9005"), title: "Greenhouse", artist: "Kito Marr", album: "Seedlings", duration: 229, artworkID: MockArtwork.id(.bands)),
+        ]
+    }
+
     static var spotifyTracks: [TrackItem] {
         [
             TrackItem(id: "spotify:track:0mockEveningTide00000001", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),
@@ -186,11 +197,14 @@ struct MockContent: Equatable, Sendable {
 // MARK: - Fixed scenes for snapshots and previews
 
 enum MockScene: String, CaseIterable, Sendable {
-    case idle, appleMusic, folder, playlist, upNext, spotify, appPicker, firstRun, localNetworkDenied
+    case idle, appleMusic, folder, playlist, upNext, search, spotify, appPicker, firstRun, localNetworkDenied
+
+    /// What the search scene looks for.
+    static let searchQuery = "Juniper"
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .folder, .playlist, .upNext, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .folder, .playlist, .upNext, .search, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -198,7 +212,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .folder, .playlist, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .folder, .playlist, .upNext, .search, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -221,7 +235,7 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic, .folder, .playlist, .upNext:
+        case .appleMusic, .folder, .playlist, .upNext, .search:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)

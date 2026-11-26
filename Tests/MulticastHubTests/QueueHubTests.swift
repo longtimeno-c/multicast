@@ -226,4 +226,63 @@ struct QueueHubTests {
         let old = Data(#"{"masterVolume":0.4,"speakers":{}}"#.utf8)
         #expect(try JSONDecoder().decode(HubSettings.self, from: old).pins.isEmpty)
     }
+
+    // MARK: Apple Music catalog
+
+    static let catalogHits = ["catalog:901", "catalog:902", "catalog:903"].map { t($0) }
+
+    @Test func catalogSearchIsItsOwnQueryAndUnsupportedWithoutACatalog() async throws {
+        let (rig, player) = try await rig()
+        do {
+            _ = try await rig.hub.answer(.catalogSearch(query: "tide", page: .first))
+            Issue.record("answered without a catalog")
+        } catch {
+            #expect((error as? HubCommandError)?.code == .unsupported)
+        }
+        player.catalog.set(["tide": Self.catalogHits])
+        let page = try #require(try await rig.hub.answer(.catalogSearch(query: "tide", page: .first)).tracks)
+        #expect(page.items.map(\.id) == Self.catalogHits.map(\.id))
+        // The library search stays the library's.
+        #expect(try await rig.hub.search("tide", .first).items.isEmpty)
+    }
+
+    @Test func playingACatalogSongQueuesTheResultsAfterItWithoutSearchingAgain() async throws {
+        let (rig, player) = try await rig()
+        player.catalog.set(["tide": Self.catalogHits])
+        _ = try await rig.hub.searchCatalog("tide", .first)
+        try await rig.hub.perform(.playTrack(id: "catalog:902", context: .catalog(query: "Tide ")))
+        await rig.hub.settle()
+        #expect(player.commands.get() == ["once catalog:902"])
+        #expect(player.catalogSearches.get() == ["tide"])
+        #expect(try await upNextIDs(rig) == ["catalog:903"])
+        #expect(rig.state.queue.currentSource == .appleMusic && rig.state.activeSource == .appleMusic)
+    }
+
+    @Test func aCatalogSongNotInTheRememberedResultsIsSearchedFor() async throws {
+        let (rig, player) = try await rig()
+        player.catalog.set(["tide": Self.catalogHits, "shore": [Self.t("catalog:77")]])
+        _ = try await rig.hub.searchCatalog("shore", .first)
+        try await rig.hub.perform(.playTrack(id: "catalog:901", context: .catalog(query: "tide")))
+        await rig.hub.settle()
+        #expect(player.commands.get() == ["once catalog:901"])
+        #expect(player.catalogSearches.get() == ["shore", "tide"])
+        await #expect(throws: HubCommandError.self) {
+            try await rig.hub.perform(.playTrack(id: "catalog:5", context: .catalog(query: "tide")))
+        }
+    }
+
+    @Test func catalogAndLibrarySongsShareUpNextAndAdvance() async throws {
+        let (rig, player) = try await rig()
+        player.catalog.set(["tide": Self.catalogHits])
+        try await rig.hub.perform(.playTrack(id: "a4", context: .playlist(id: "p1")))
+        try await rig.hub.perform(.addToQueue(tracks: [Self.catalogHits[0]], source: .appleMusic, placement: .next))
+        await rig.hub.settle()
+        #expect(try await upNextIDs(rig) == ["catalog:901"])
+        try await rig.hub.perform(.next)
+        await rig.hub.settle()
+        #expect(player.commands.get().suffix(1) == ["once catalog:901"])
+        musicPlays(player, rig, "catalog:901")
+        try await rig.waitFor("the catalog song as now playing") { $0.nowPlaying?.trackID == "catalog:901" }
+        #expect(rig.state.queue.currentID != nil && !rig.state.queue.isHeld)
+    }
 }

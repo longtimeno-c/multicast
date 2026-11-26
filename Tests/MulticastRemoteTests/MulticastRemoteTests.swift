@@ -95,6 +95,9 @@ import Testing
             try await remote.search("Song", .first)
         }
 
+        // Catalog search is its own query (protocol version 3).
+        #expect(try await remote.searchCatalog("tide", .first).items.map(\.id) == ["catalog:900"])
+
         // Artwork travels as binary; unknown ids are nil; sizes are capped.
         #expect(await remote.artwork(id: "cover.0", maxPixel: 300) == backend.artworkStore["cover.0"])
         #expect(await remote.artwork(id: "cover.1", maxPixel: 0) == Data([1, 2, 3]))
@@ -417,10 +420,33 @@ import Testing
         #expect(backend1.commands.isEmpty)
     }
 
+    /// A hub from before catalog search can't decode the query and would drop the link, so the
+    /// remote answers it itself and the link stays up.
+    @Test func catalogSearchIsNeverSentToAVersion2Hub() async throws {
+        let stores = Fixture.pairedStores()
+        let (server, port) = try await startServer(TestBackend(), store: stores.hub) { $0.supportedVersions = 2...2 }
+        defer { Task { await server.stop() } }
+        let remote = RemoteHubBackend(configuration: Fixture.remoteConfig(port: port), keyStore: stores.remote)
+        defer { Task { await remote.stop() } }
+        remote.start()
+        try await connected(remote)
+        do {
+            _ = try await remote.searchCatalog("tide", .first)
+            Issue.record("asked a version 2 hub")
+        } catch {
+            #expect((error as? HubCommandError)?.code == .unsupported)
+        }
+        await #expect(throws: HubCommandError.self) {
+            try await remote.perform(.playTrack(id: "catalog:900", context: .catalog(query: "tide")))
+        }
+        #expect(remote.connectionState.isConnected)
+        #expect(try await remote.playlists(.first).items.count == 3)
+    }
+
     @Test func refusesIncompatibleVersionsWithAClearMessage() async throws {
         let stores = Fixture.pairedStores()
         // A hub newer than this remote.
-        let (server, port) = try await startServer(TestBackend(), store: stores.hub) { $0.supportedVersions = 3...4 }
+        let (server, port) = try await startServer(TestBackend(), store: stores.hub) { $0.supportedVersions = (RemoteProtocol.currentVersion + 1)...(RemoteProtocol.currentVersion + 2) }
         defer { Task { await server.stop() } }
         let remote = RemoteHubBackend(configuration: Fixture.remoteConfig(port: port), keyStore: stores.remote)
         defer { Task { await remote.stop() } }
@@ -435,7 +461,7 @@ import Testing
         let (server1, port1) = try await startServer(TestBackend(), store: stores.hub)
         defer { Task { await server1.stop() } }
         let link = try await rawLink(port: port1)
-        try await link.send(Data(#"{"magic":"multicast-hub-link","minVersion":5,"maxVersion":6,"future":true}"#.utf8))
+        try await link.send(Data(#"{"magic":"multicast-hub-link","minVersion":50,"maxVersion":60,"future":true}"#.utf8))
         guard case .refused(let refusal) = try await link.receiveHandshake(timeout: 2, "refusal") else {
             Issue.record("not refused")
             return
