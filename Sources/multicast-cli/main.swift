@@ -6,7 +6,7 @@ import MulticastKit
 let usage = """
 usage:
   multicast-cli list [--wait S] [--show-self]
-  multicast-cli play (--tone [--freq HZ] | --file PATH | --capture [--app BUNDLE_ID])
+  multicast-cli play (--tone [--freq HZ] | --file PATH | --capture [--app BUNDLE_ID] | --mac-output)
                      --to NAME [--to NAME ...] [--volume 0.12] [--seconds 8]
                      [--offset NAME=MS ...] [--add-at SEC:NAME ...] [--remove-at SEC:NAME ...]
                      [--latency-ms MS] [--verbose]
@@ -15,7 +15,8 @@ usage:
   "local:BuiltInSpeakerDevice"). --volume is per speaker, 0...1 (default 0.12), and reaches
   every speaker before any audio. --seconds counts audible seconds (default 8); Ctrl-C fades out
   and tears down cleanly (a second Ctrl-C skips the fade). --add-at/--remove-at add or remove a
-  speaker that many seconds after audio starts.
+  speaker that many seconds after audio starts. --mac-output plays what the Mac sends to the
+  "Multicast" output device (Drivers/MulticastDevice must be installed).
 """
 
 let processStart = Date()
@@ -167,6 +168,12 @@ func statusLine(_ session: MulticastSession, elapsed: Double, level: Float? = ni
         let st = tap.status, stats = tap.statistics
         parts.append("capture: \(st.state) permission=\(st.permission) cycles=\(stats.ioCycles) nonSilent=\(stats.nonSilentCycles)")
     }
+    if let dev = session.currentSource as? OutputDeviceSource {
+        let st = dev.statistics
+        parts.append(String(format: "mac output: %.0f Hz cycles=%lld frames=%lld nonSilent=%lld under=%lld drift=-%lld/+%lld",
+                            st.sampleRate, st.ioCycles, st.capturedFrames, st.nonSilentCycles, st.underruns,
+                            st.driftDrops, st.driftDuplicates))
+    }
     #endif
     let p = session.engine.pacerStatistics
     parts.append("pacer: emitted=\(p.packetsEmitted) backfilled=\(p.packetsBackfilled) skipped=\(p.packetsSkipped) padded=\(p.framesPadded)")
@@ -206,8 +213,15 @@ func runPlay(_ args: Args) async -> Int32 {
         #else
         fail("--capture is macOS only")
         #endif
+    } else if args.flags.contains("--mac-output") {
+        #if os(macOS)
+        guard OutputDeviceSource.isInstalled else { fail("the Multicast output device isn't installed (Drivers/MulticastDevice)") }
+        source = .custom(OutputDeviceSource())
+        #else
+        fail("--mac-output is macOS only")
+        #endif
     } else {
-        fail("choose a source: --tone, --file PATH or --capture\n\(usage)")
+        fail("choose a source: --tone, --file PATH, --capture or --mac-output\n\(usage)")
     }
 
     let interrupts = Interrupts()
@@ -238,6 +252,12 @@ func runPlay(_ args: Args) async -> Int32 {
     do {
         let made = try await session.setSource(source)
         say("source: \(made.displayName)\(made.isLive ? " (live)" : "")")
+        #if os(macOS)
+        if made is OutputDeviceSource {
+            let ok = OutputDeviceSource.reportLatency(seconds: Double(config.engine.latencyNanos) / 1e9)
+            say("mac output: latency reported \(ok ? "" : "NOT ")set; device reports \(OutputDeviceSource.reportedLatencySeconds().map { String(format: "%.3f s", $0) } ?? "nothing")")
+        }
+        #endif
         for q in targets {
             let d = resolved[q]!
             try await session.select(d, volume: volume, offsetMillis: offsets[d.id] ?? 0)
