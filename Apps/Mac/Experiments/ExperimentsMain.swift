@@ -21,11 +21,29 @@ import MulticastSources
 ///       output devices, then tap each Spotify process, the app as the hub taps it (muted and
 ///       unmuted) and the whole system minus Multicast, and report peak/RMS for each.
 ///
+///   open -W -n Multicast.app --args --applescript-experiment <file.applescript> --experiment-log <file>
+///       Runs one AppleScript with the app's own Automation grants (Music, Spotify) and logs the
+///       result. For reading an app's scripting model, e.g. how Music reports playlist folders.
+///
 /// Launch with `open` so the app (not the terminal) is the process TCC asks about. The log goes
 /// to `--experiment-log` (stdout is lost under `open`) and to stdout.
 @_cdecl("MulticastExperimentsMain")
 func multicastExperimentsMain() {
     let args = CommandLine.arguments
+    if let i = args.firstIndex(of: "--applescript-experiment"), args.indices.contains(i + 1) {
+        let logPath = args.firstIndex(of: "--experiment-log").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+        let log = ExperimentLog(path: logPath)
+        guard let source = try? String(contentsOfFile: args[i + 1], encoding: .utf8),
+              let script = NSAppleScript(source: source) else {
+            log.write("could not read the script")
+            exit(1)
+        }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if let error { log.write("error: \(error)") } else { log.write("result: \(result)") }
+        log.write("experiment finished")
+        exit(0)
+    }
     let kind: ExperimentKind
     if args.contains("--music-experiment") {
         kind = .musicKit(preferCatalog: args.contains("--catalog"), prompt: !args.contains("--no-prompt"))

@@ -28,22 +28,34 @@ enum MusicAppScript {
         end tell
     end librarytracks
 
+    on playlistrow(p, isFolder)
+        tell application id "com.apple.Music"
+            set c to count of tracks of p
+            set f to ""
+            if c > 0 then set f to persistent ID of track 1 of p
+            set par to ""
+            try
+                set par to persistent ID of parent of p
+            end try
+            return {persistent ID of p, name of p, c, f, isFolder, par}
+        end tell
+    end playlistrow
+
+    -- Music lists folders only as folder playlists: `every user playlist` leaves them out
+    -- (its special kinds are none, or Music for the built-in list), while the playlists in a
+    -- folder are user playlists whose parent is that folder.
     on playlistlist()
         tell application id "com.apple.Music"
             set out to {}
             repeat with p in (get every user playlist)
                 try
-                    set k to special kind of p
-                    if k is none or k is folder then
-                        set c to count of tracks of p
-                        set f to ""
-                        if c > 0 then set f to persistent ID of track 1 of p
-                        set par to ""
-                        try
-                            set par to persistent ID of parent of p
-                        end try
-                        set end of out to {persistent ID of p, name of p, c, f, (k is folder), par}
-                    end if
+                    set q to contents of p
+                    if special kind of q is none then set end of out to my playlistrow(q, false)
+                end try
+            end repeat
+            repeat with p in (get every folder playlist)
+                try
+                    set end of out to my playlistrow(contents of p, true)
                 end try
             end repeat
             return out
