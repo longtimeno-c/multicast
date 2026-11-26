@@ -396,7 +396,33 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
         }
     }
 
-    private func map(_ body: () async throws -> Void) async throws {
+    /// How long one transport command may take before the hub reports Spotify as not
+    /// responding. The script itself times out after 5 s, but compiling it (which loads
+    /// Spotify's terminology, from Spotify) is not covered by that and has been seen to hang.
+    public static let commandWait: TimeInterval = 6
+
+    private func map(_ body: @escaping @Sendable () async throws -> Void) async throws {
+        let once = OnceFlag()
+        let wait = Self.commandWait
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            Task {
+                do {
+                    try await Self.mapErrors(body)
+                    if once.claim() { c.resume() }
+                } catch {
+                    if once.claim() { c.resume(throwing: error) }
+                }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+                if once.claim() {
+                    c.resume(throwing: HubCommandError(.failed, "Spotify isn\u{2019}t responding. Quit and reopen Spotify, then try again."))
+                }
+            }
+        }
+    }
+
+    private static func mapErrors(_ body: () async throws -> Void) async throws {
         do { try await body() } catch let e as MediaAppController.MediaControlError {
             switch e {
             case .automationDenied, .automationConsentRequired:
