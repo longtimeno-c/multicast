@@ -1,0 +1,27 @@
+// Build settings for the Multicast output device (an AudioServerPlugIn .driver bundle).
+// Paths are relative to Drivers/MulticastDevice (the project directory).
+
+PRODUCT_NAME = MulticastDevice
+PRODUCT_BUNDLE_IDENTIFIER = io.github.longtimeno-c.multicast.device
+WRAPPER_EXTENSION = driver
+INFOPLIST_FILE = Driver/Info.plist
+GENERATE_INFOPLIST_FILE = NO
+ALWAYS_SEARCH_USER_PATHS = NO
+HEADER_SEARCH_PATHS = $(SRCROOT)/Core/include
+MACOSX_DEPLOYMENT_TARGET = 14.0
+GCC_C_LANGUAGE_STANDARD = gnu17
+GCC_TREAT_WARNINGS_AS_ERRORS = YES
+WARNING_CFLAGS = -Wall -Wextra
+ENABLE_HARDENED_RUNTIME = YES
+SKIP_INSTALL = YES
+ARCHS = $(ARCHS_STANDARD)
+ONLY_ACTIVE_ARCH = NO
+
+// Signing: ad hoc unless Apps/Config/Local.xcconfig (git-ignored) names your team, exactly as
+// for the Mac app. coreaudiod loads a locally built, team-signed driver; distributing it would
+// need Developer ID signing and notarization.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "../../Apps/Config/Local.xcconfig"
