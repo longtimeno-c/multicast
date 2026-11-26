@@ -18,12 +18,28 @@ public struct SessionState: Codable, Sendable, Equatable {
     /// Increases with every published change of ANY part of this state (speaker list, selection
     /// or engine), so a remote receiving states out of order can drop stale ones.
     public var revision: UInt64
+    /// Network speakers still listed that stopped answering discovery, with when they went
+    /// (see `SpeakerRoster`). Empty for speakers that are answering.
+    public var notSeenSince: [String: Date]
 
-    public init(speakers: [SpeakerDescriptor], selectedSpeakerIDs: [String], engine: EngineSnapshot, revision: UInt64 = 0) {
+    public init(speakers: [SpeakerDescriptor], selectedSpeakerIDs: [String], engine: EngineSnapshot, revision: UInt64 = 0,
+                notSeenSince: [String: Date] = [:]) {
         self.speakers = speakers
         self.selectedSpeakerIDs = selectedSpeakerIDs
         self.engine = engine
         self.revision = revision
+        self.notSeenSince = notSeenSince
+    }
+
+    private enum CodingKeys: String, CodingKey { case speakers, selectedSpeakerIDs, engine, revision, notSeenSince }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        speakers = try c.decode([SpeakerDescriptor].self, forKey: .speakers)
+        selectedSpeakerIDs = try c.decode([String].self, forKey: .selectedSpeakerIDs)
+        engine = try c.decode(EngineSnapshot.self, forKey: .engine)
+        revision = try c.decode(UInt64.self, forKey: .revision)
+        notSeenSince = try c.decodeIfPresent([String: Date].self, forKey: .notSeenSince) ?? [:]
     }
 }
 
@@ -71,6 +87,8 @@ public final class MulticastSession: @unchecked Sendable {
         public var fadeSeconds: TimeInterval = 0.5
         /// Allow selecting two advertisements of one physical device (normally refused).
         public var allowSamePhysicalDevice: Bool = false
+        /// Backoff for retrying a failed network speaker while playing; nil turns it off.
+        public var reconnectDelays: [TimeInterval]? = [2, 5, 10, 20, 30]
 
         public init() {}
     }
@@ -136,6 +154,7 @@ public final class MulticastSession: @unchecked Sendable {
     /// in-flight select of the same speaker (which would leave it playing but untracked).
     private let membership = AsyncFIFO()
     private let isShutDown = OSAllocatedUnfairLock(initialState: false)
+    private let reconnects = OSAllocatedUnfairLock(initialState: ReconnectSchedule())
 
     public init(configuration: Configuration = Configuration(),
                 directory: SpeakerDirectory? = nil,
@@ -164,13 +183,22 @@ public final class MulticastSession: @unchecked Sendable {
         }
         guard go else { return }
         directory.start()
-        let speakers = directory.updates
+        let listings = directory.listingUpdates
         let snapshots = engine.snapshots
+        if let delays = configuration.reconnectDelays { reconnects.withLock { $0 = ReconnectSchedule(delays: delays) } }
         let t1 = Task { [weak self] in
-            for await list in speakers {
+            var previouslyNotSeen = Set<String>()
+            for await listing in listings {
                 guard let self else { return }
-                self.publish { $0.speakers = list }
-                await self.followEndpointChanges(list)
+                self.publish {
+                    $0.speakers = listing.speakers
+                    $0.notSeenSince = listing.notSeenSince
+                }
+                // A speaker answering again after a gap: retry it now rather than on its backoff.
+                let back = previouslyNotSeen.subtracting(listing.notSeenSince.keys)
+                previouslyNotSeen = Set(listing.notSeenSince.keys)
+                if !back.isEmpty { self.reconnects.withLock { r in for id in back { r.retrySoon(id, at: Date()) } } }
+                await self.followEndpointChanges(listing.speakers)
             }
         }
         let t2 = Task { [weak self] in
@@ -179,7 +207,43 @@ public final class MulticastSession: @unchecked Sendable {
                 self.publish { $0.engine = snap }
             }
         }
-        selection.withLock { $0.tasks += [t1, t2] }
+        var started = [t1, t2]
+        if configuration.reconnectDelays != nil {
+            started.append(Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard let self else { return }
+                    await self.reconnectDue()
+                }
+            })
+        }
+        let all = started
+        selection.withLock { $0.tasks += all }
+    }
+
+    /// Retries the selected network speakers that failed during playback, on their backoff.
+    private func reconnectDue() async {
+        let snapshot = engine.snapshot
+        var failing: [String: String?] = [:]
+        if snapshot.transport == .playing {
+            let network: Set<String> = selection.withLock { sel in
+                Set(sel.descriptors.values.filter { $0.transport != .local }.map(\.id))
+            }
+            for e in snapshot.sinks where e.state == .failed && network.contains(e.id) { failing[e.id] = e.error }
+        }
+        let failingNow = failing
+        let due = reconnects.withLock { $0.due(failing: failingNow, at: Date()) }
+        for id in due {
+            configuration.directory.log?("reconnecting \(id)")
+            await engine.retrySink(id: id)
+        }
+    }
+
+    /// Browses the network again now, and retries every failed network speaker at once.
+    public func refreshSpeakers() {
+        directory.refresh()
+        let ids = selection.withLock { Array($0.order) }
+        reconnects.withLock { r in for id in ids { r.retrySoon(id, at: Date()) } }
     }
 
     /// Stops playback, tears every speaker down, closes the source and stops discovery.
@@ -219,7 +283,9 @@ public final class MulticastSession: @unchecked Sendable {
     public var state: SessionState {
         var s = broadcaster.current  // keeps the published revision
         s.engine = engine.snapshot
-        s.speakers = directory.speakers
+        let listing = directory.listing
+        s.speakers = listing.speakers
+        s.notSeenSince = listing.notSeenSince
         s.selectedSpeakerIDs = selection.withLock { $0.order }
         return s
     }

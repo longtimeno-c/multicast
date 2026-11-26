@@ -369,11 +369,14 @@ struct LocalHubSourceTests {
         try await rig.waitFor("spotify playing") { $0.nowPlaying?.title == "Song A" && $0.transport.isPlaying }
         await rig.hub.settle()
         let t = rig.state.transport
-        #expect(!t.canSeek && t.canSkip)
+        #expect(t.canSeek && t.canSkip)
         #expect(t.position == 10 && t.positionAsOf == sampled.addingTimeInterval(2))  // heard after the latency
         #expect(rig.state.nowPlaying?.artworkID == "hub.url:https://img.example/a.jpg")
         #expect(rig.session.transport == .playing)
-        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.seek(position: 5)) }
+        // Seeking goes to Spotify and flushes the speakers.
+        try await rig.hub.perform(.seek(position: 170))
+        await rig.hub.settle()
+        #expect(rig.spotify.commands.get().last == "seek 170")
 
         // Transport goes to Spotify; skip flushes and re-anchors the speakers.
         let before = rig.session.calls.filter { $0 == "pause" }.count
@@ -383,8 +386,9 @@ struct LocalHubSourceTests {
         #expect(rig.session.calls.filter { $0 == "pause" }.count == before + 1)
         rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song B", artist: "Band",
                                            trackID: "spotify:track:b", sampledAt: rig.clock.now))
-        try await rig.waitFor("history") { $0.content.spotifyHistory == 1 }
-        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:a"])
+        try await rig.waitFor("history") { $0.nowPlaying?.trackID == "spotify:track:b" && $0.content.spotifyHistory >= 2 }
+        // The current song first, then the earlier ones.
+        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:b", "spotify:track:a"])
 
         try await rig.hub.perform(.pause)
         await rig.hub.settle()
@@ -514,7 +518,7 @@ struct LocalHubSourceTests {
 
         try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
         try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
-        #expect(player.commands.get() == ["play s1"])
+        #expect(player.commands.get() == ["once s1"])
         player.publish {
             $0.isPlaying = true
             $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", duration: 200, trackID: "s1")
@@ -761,7 +765,8 @@ struct LocalHubResponsivenessTests {
         await rig.hub.setMusicPlayer(player)
         // No error: Music starts the song (on the Mac) and the engine stays off.
         try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
-        #expect(player.commands.get() == ["play s1"])
+        // The queue plays one song at a time and advances itself.
+        #expect(player.commands.get() == ["once s1"])
         player.publish { $0.isPlaying = true; $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", trackID: "s1") }
         try await rig.waitFor("music playing") { $0.activeSource == .appleMusic && $0.transport.isPlaying }
         await rig.hub.settle()

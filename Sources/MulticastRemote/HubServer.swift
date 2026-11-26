@@ -760,6 +760,9 @@ enum RemoteInputPolicy {
     static let maxCursorLength = 256
     static let maxSearchLength = 256
     static let maxRemovedFiles = 1000
+    static let maxQueuedTracks = 1000
+    static let maxTextLength = 512
+    static let maxLinkLength = 1024
 
     /// Reverse-DNS characters only, as bundle identifiers are.
     static func isBundleID(_ s: String) -> Bool {
@@ -784,8 +787,26 @@ enum RemoteInputPolicy {
             case .search(let q): return .success(.playTrack(id: id, context: .search(query: String(q.prefix(maxSearchLength)))))
             default: return .success(command)
             }
-        case .playPlaylist(let id):
+        case .playPlaylist(let id, _), .pinPlaylist(let id), .unpinPlaylist(let id):
             return idOK(id) ? .success(command) : .failure(notFound)
+        case .addToQueue(let tracks, let source, let placement):
+            guard source != .app, tracks.count <= maxQueuedTracks, tracks.allSatisfy({ idOK($0.id) }) else {
+                return .failure(notFound)
+            }
+            func cap(_ s: String) -> String { String(s.prefix(maxTextLength)) }
+            let safe = tracks.map {
+                TrackItem(id: $0.id, title: cap($0.title), artist: cap($0.artist), album: cap($0.album),
+                          duration: $0.duration.isFinite ? max(0, $0.duration) : 0,
+                          artworkID: $0.artworkID.flatMap { idOK($0) ? $0 : nil }, format: $0.format.map(cap))
+            }
+            return .success(.addToQueue(tracks: safe, source: source, placement: placement))
+        case .addSpotifyLink(let link, _), .pinSpotifyLink(let link):
+            return link.utf8.count <= maxLinkLength ? .success(command) : .failure(notFound)
+        case .removeFromQueue(let ids), .moveInQueue(let ids, _):
+            guard ids.count <= maxQueuedTracks, ids.allSatisfy(idOK) else { return .failure(notFound) }
+            return .success(command)
+        case .clearQueue:
+            return .success(command)
         case .captureApp(let bundleID):
             return isBundleID(bundleID) ? .success(command) : .failure(notFound)
         case .addFiles:
@@ -804,6 +825,8 @@ enum RemoteInputPolicy {
             return .success(.setSpeakerSyncTrim(id: id, milliseconds: min(r.upperBound, max(r.lowerBound, ms))))
         case .setMasterVolume(let volume):
             return .success(.setMasterVolume(volume: clamp01(volume)))
+        case .refreshSpeakers:
+            return .success(command)
         }
     }
 

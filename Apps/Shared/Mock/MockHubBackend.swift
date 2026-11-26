@@ -21,6 +21,7 @@ actor MockHubBackend: HubBackend {
     private let appInfo: [String: NowPlayingInfo]
     private let artworkStore: [ArtworkID: Data]
     private var spotifyIndex = 0
+    private var queueSerial = 100
     /// Speakers still to be "found" by the live mock's discovery.
     private var undiscovered: [SpeakerItem] = []
 
@@ -115,7 +116,7 @@ actor MockHubBackend: HubBackend {
         return .slice(hits, page)
     }
 
-    func upNext(_ page: PageRequest) -> Page<TrackItem> { .slice(content.upNext, page) }
+    func upNext(_ page: PageRequest) -> Page<QueueItem> { .slice(content.upNext, page) }
     func files(_ page: PageRequest) -> Page<TrackItem> { .slice(content.files, page) }
     func spotifyHistory(_ page: PageRequest) -> Page<TrackItem> { .slice(content.spotifyHistory, page) }
 
@@ -135,11 +136,58 @@ actor MockHubBackend: HubBackend {
         case .seek(let position): seek(to: position)
         case .selectSource(let source): try selectSource(source)
         case .playTrack(let id, let context): try playTrack(id: id, context: context)
-        case .playPlaylist(let id):
-            guard let first = content.playlistTracks[id]?.first else {
+        case .playPlaylist(let id, let shuffled):
+            if id.hasPrefix("spotify:") {
+                load(MockData.nowPlaying(spotifyTracks[spotifyIndex]), source: .spotify)
+                update { $0.queue.isHeld = !self.content.upNext.isEmpty; $0.queue.currentID = nil }
+                play()
+                return
+            }
+            guard var list = content.playlistTracks[id], !list.isEmpty else {
                 throw HubCommandError(.notFound, "That playlist is empty.")
             }
-            try playTrack(id: first.id, context: .playlist(id: id))
+            if shuffled { list.shuffle() }
+            startQueue(list, source: .appleMusic, at: 0)
+        case .addToQueue(let tracks, let source, let placement):
+            let items = tracks.map { t -> QueueItem in
+                queueSerial += 1
+                return QueueItem(id: "q\(queueSerial)", source: source, track: t)
+            }
+            if placement == .next { content.upNext.insert(contentsOf: items, at: 0) } else { content.upNext.append(contentsOf: items) }
+            queueChanged()
+        case .addSpotifyLink(let link, let placement):
+            guard link.contains("track") else { throw HubCommandError(.notFound, "That isn\u{2019}t a link to a Spotify song.") }
+            queueSerial += 1
+            let item = QueueItem(id: "q\(queueSerial)", source: .spotify, track: TrackItem(
+                id: "spotify:track:shared\(queueSerial)", title: "Shared song", artist: "Spotify", album: "", duration: 200))
+            if placement == .next { content.upNext.insert(item, at: 0) } else { content.upNext.append(item) }
+            queueChanged()
+        case .removeFromQueue(let ids):
+            content.upNext.removeAll { ids.contains($0.id) }
+            queueChanged()
+        case .moveInQueue(let ids, let offset):
+            let set = Set(ids)
+            let moving = content.upNext.filter { set.contains($0.id) }
+            let target = min(max(0, offset), content.upNext.count)
+            let before = content.upNext[..<target].filter { set.contains($0.id) }.count
+            content.upNext.removeAll { set.contains($0.id) }
+            content.upNext.insert(contentsOf: moving, at: target - before)
+            queueChanged()
+        case .clearQueue:
+            content.upNext.removeAll()
+            queueChanged()
+        case .pinPlaylist(let id):
+            guard let p = content.playlists.first(where: { $0.id == id }), state.pins.count < PinnedPlaylist.limit,
+                  !state.pins.contains(where: { $0.id == id }) else { return }
+            update { $0.pins.append(PinnedPlaylist(id: p.id, source: .appleMusic, name: p.name, artworkID: p.artworkID,
+                                                   trackCount: p.trackCount)) }
+        case .pinSpotifyLink(let link):
+            guard link.contains("playlist") else { throw HubCommandError(.notFound, "That isn\u{2019}t a link to a Spotify playlist.") }
+            queueSerial += 1
+            update { $0.pins.append(PinnedPlaylist(id: "spotify:playlist:shared\(self.queueSerial)", source: .spotify,
+                                                   name: "Shared playlist", artworkID: MockArtwork.id(.split))) }
+        case .unpinPlaylist(let id):
+            update { $0.pins.removeAll { $0.id == id } }
         case .captureApp(let bundleID): try captureApp(bundleID: bundleID)
         case .addFiles(let urls): addFiles(urls)
         case .removeFiles(let ids):
@@ -173,6 +221,7 @@ actor MockHubBackend: HubBackend {
             guard let s = state.speaker(id), s.isEnabled else { return }
             beginConnecting(id)
         case .setMasterVolume(let volume): update { $0.masterVolume = volume }
+        case .refreshSpeakers: break
         }
     }
 
@@ -226,6 +275,14 @@ actor MockHubBackend: HubBackend {
             }
             load(MockData.nowPlaying(spotifyTracks[spotifyIndex]))
         case .appleMusic, .files:
+            if delta > 0, !content.upNext.isEmpty {
+                let next = content.upNext.removeFirst()
+                load(MockData.nowPlaying(next.track), source: next.source)
+                update { $0.queue = QueueStatus(currentID: next.id, currentSource: next.source,
+                                                upcomingCount: self.content.upNext.count) }
+                queueChanged()
+                return
+            }
             let list = state.activeSource == .files ? content.files : content.songs
             guard !list.isEmpty else { return }
             let i = list.firstIndex { $0.id == state.nowPlaying?.trackID } ?? 0
@@ -265,20 +322,54 @@ actor MockHubBackend: HubBackend {
         }
     }
 
+    /// Like the hub: playing a song from a list queues everything after it.
     private func playTrack(id: String, context: TrackContext) throws {
         let list: [TrackItem]
         let source: SourceKind
         switch context {
-        case .songs, .search: list = content.songs; source = .appleMusic
-        case .upNext: list = content.upNext; source = .appleMusic
+        case .songs: list = content.songs; source = .appleMusic
+        case .search(let q): list = search(q, PageRequest(limit: 500)).items; source = .appleMusic
+        case .upNext:
+            guard let i = content.upNext.firstIndex(where: { $0.id == id }) else {
+                throw HubCommandError(.notFound, "That song is no longer in Up Next.")
+            }
+            let entry = content.upNext[i]
+            content.upNext.removeFirst(i + 1)
+            load(MockData.nowPlaying(entry.track), source: entry.source)
+            update { $0.queue = QueueStatus(currentID: entry.id, currentSource: entry.source, upcomingCount: self.content.upNext.count) }
+            queueChanged()
+            play()
+            return
         case .playlist(let pid): list = content.playlistTracks[pid] ?? []; source = .appleMusic
         case .files: list = content.files; source = .files
+        case .spotifyHistory: list = content.spotifyHistory; source = .spotify
         }
-        guard let track = list.first(where: { $0.id == id }) else {
+        guard let i = list.firstIndex(where: { $0.id == id }) else {
             throw HubCommandError(.notFound, "That track is no longer available.")
         }
-        load(MockData.nowPlaying(track), source: source)
+        startQueue(list, source: source, at: i)
+    }
+
+    private func startQueue(_ list: [TrackItem], source: SourceKind, at i: Int) {
+        content.upNext = list[(i + 1)...].map { t in
+            queueSerial += 1
+            return QueueItem(id: "q\(queueSerial)", source: source, track: t)
+        }
+        queueSerial += 1
+        let current = "q\(queueSerial)"
+        load(MockData.nowPlaying(list[i]), source: source)
+        update { $0.queue = QueueStatus(currentID: current, currentSource: source, upcomingCount: self.content.upNext.count) }
+        queueChanged()
         play()
+    }
+
+    private func queueChanged() {
+        let n = content.upNext.count
+        update {
+            $0.queue.upcomingCount = n
+            if n == 0 { $0.queue.isHeld = false }
+            $0.content.upNext &+= 1
+        }
     }
 
     private func captureApp(bundleID: String) throws {

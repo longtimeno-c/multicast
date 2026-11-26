@@ -12,7 +12,7 @@ import MulticastAppleMusic
 ///    allowed is what puts up the Automation prompt; the hub must never prompt unasked.
 ///    `authorizationStatus()` (which `LocalHub.tick()` calls while access is missing) and
 ///    `requestAuthorization()` start the subscription as soon as they see `.granted`.
-///  - A playlist is always played in order (`HubCommand.playPlaylist` has no shuffle).
+///  - Playlists reach the hub as track lists; the hub's play queue orders (or shuffles) them.
 public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendable {
     public let provider: AppleMusicProviding
 
@@ -201,6 +201,7 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     }
 
     public func play(trackID: String, context: TrackContext) async throws { try requireAccess(); try await provider.play(trackID: trackID, context: context) }
+    public func playOnce(trackID: String) async throws { try requireAccess(); try await provider.playOnce(trackID: trackID) }
     public func play(playlistID: String) async throws { try requireAccess(); try await provider.play(playlistID: playlistID, shuffled: false) }
     public func play() async throws { try requireAccess(); try await provider.play() }
     public func pause() async {

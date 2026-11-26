@@ -39,6 +39,9 @@ final class HubRuntime {
     private(set) var pairedRemotes: [PairedRemote] = []
     /// Why remotes can't reach this Mac, when the server could not start.
     private(set) var remoteProblem: String?
+    /// The remote server was refused by Local Network privacy (macOS answers NoAuth). The hub
+    /// keeps trying, so turning access on in System Settings takes effect without a relaunch.
+    private(set) var localNetworkBlocked = false
     let hubName: String
 
     @ObservationIgnored private let hub: LocalHub?
@@ -48,6 +51,7 @@ final class HubRuntime {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var pairingPanel: NSPanel?
     @ObservationIgnored private let codeLog: URL?
+    @ObservationIgnored private var serverRetry: Task<Void, Never>?
 
     @ObservationIgnored private let log = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "hub")
 
@@ -111,15 +115,38 @@ final class HubRuntime {
         tasks.append(Task { [weak self] in
             for await event in events { self?.handle(event) }
         })
+        await startListening(server)
+        refreshPairedRemotes()
+    }
+
+    private func startListening(_ server: HubServer) async {
         do {
             let port = try await server.start()
             log.info("serving remotes on port \(port, privacy: .public)")
             remoteProblem = nil
+            localNetworkBlocked = false
         } catch {
-            log.error("remote server failed: \(error.localizedDescription, privacy: .public)")
-            remoteProblem = "iPhone remotes can\u{2019}t connect: \(error.localizedDescription)"
+            log.error("remote server failed: \(String(describing: error), privacy: .public)")
+            serverFailed(String(describing: error))
         }
-        refreshPairedRemotes()
+    }
+
+    /// Says why remotes can't connect, and tries again shortly: a refusal by Local Network
+    /// privacy clears as soon as access is turned on, and a network that was down comes back.
+    private func serverFailed(_ reason: String) {
+        let blocked = reason.contains("Local Network") || reason.contains("NoAuth")
+        localNetworkBlocked = blocked
+        remoteProblem = blocked
+            ? "iPhones can\u{2019}t find this Mac: Local Network access is off for Multicast. Turn it on in Privacy & Security."
+            : "iPhone remotes can\u{2019}t connect: \(reason)"
+        guard serverRetry == nil, let server else { return }
+        serverRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.serverRetry = nil
+            self.log.info("restarting remote server")
+            await self.startListening(server)
+        }
     }
 
     /// A random id, made once and kept, so remotes recognise this Mac across launches and
@@ -150,9 +177,7 @@ final class HubRuntime {
             refreshPairedRemotes()
         case .stopped(let reason):
             log.error("remote server stopped: \(reason, privacy: .public)")
-            remoteProblem = reason.contains("Local Network access is off")
-                ? "iPhones can\u{2019}t find this Mac: Local Network access is off for Multicast. Turn it on in Privacy & Security, then reopen Multicast."
-                : "iPhone remotes can\u{2019}t connect: \(reason)"
+            serverFailed(reason)
         }
     }
 
@@ -208,6 +233,8 @@ final class HubRuntime {
     /// their aggregate devices destroyed, the engine stopped.
     func shutdown() async {
         closePairingPanel()
+        serverRetry?.cancel()
+        serverRetry = nil
         for t in tasks { t.cancel() }
         tasks.removeAll()
         model.stop()

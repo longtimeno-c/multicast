@@ -49,6 +49,9 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         }
     }
 
+    /// Connection failures, always on (the system log; names and addresses private).
+    static let osLog = Logger(subsystem: "multicast.raop", category: "connect")
+
     public let id: String
     public let displayName: String
     public let descriptor: SpeakerDescriptor
@@ -271,8 +274,14 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         guard let host, !host.isEmpty, let port else { throw RAOPError.missingAddress(displayName) }
         let connection: TCPConnection
         do {
-            connection = try TCPConnection.connect(host: host, port: port, timeout: options.connectTimeout)
+            connection = try TCPConnection.connect(host: host, port: port, timeout: options.connectTimeout) { [displayName] attempt, error in
+                if attempt == 1 || attempt % 8 == 0 {
+                    Self.osLog.notice("\(displayName, privacy: .private) connect attempt \(attempt, privacy: .public) failed with errno \(error.code, privacy: .public); retrying")
+                }
+            }
         } catch {
+            let code = (error as? RAOPSocketError)?.code ?? 0
+            Self.osLog.error("\(self.displayName, privacy: .private) connect failed, errno \(code, privacy: .public): \(String(describing: error), privacy: .private)")
             throw RAOPError.connectFailed("\(host):\(port): \(error)")
         }
         log("connected to \(connection.peer) from \(connection.local)")

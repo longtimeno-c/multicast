@@ -20,8 +20,9 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     case selectSource(source: SourceKind)
     /// Play a library or file track; `context` says what follows it.
     case playTrack(id: String, context: TrackContext)
-    /// Play a playlist from its first track.
-    case playPlaylist(id: String)
+    /// Play a playlist from the top, in order or shuffled. An Apple Music playlist replaces the
+    /// queue with its songs; a pinned Spotify playlist (`spotify:playlist:…`) is played by Spotify.
+    case playPlaylist(id: String, shuffled: Bool)
     case captureApp(bundleID: String)
     /// Add files on the hub's own disk to the file queue. Meaningless from a remote, which cannot
     /// name the hub's files.
@@ -33,6 +34,27 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     /// to System Settings.
     case requestPermission(permission: HubPermission)
 
+    // Queue
+    /// Queue songs after the current one or at the end. `source` is the app that plays them
+    /// (`.appleMusic`, `.spotify` or `.files`); `tracks` come from the hub's own lists.
+    case addToQueue(tracks: [TrackItem], source: SourceKind, placement: QueuePlacement)
+    /// Queue a Spotify song from a share link (`https://open.spotify.com/track/…` or
+    /// `spotify:track:…`).
+    case addSpotifyLink(link: String, placement: QueuePlacement)
+    /// Queue entry ids (`QueueItem.id`).
+    case removeFromQueue(ids: [String])
+    /// SwiftUI `onMove` meaning: `toOffset` is an index into Up Next before the move.
+    case moveInQueue(ids: [String], toOffset: Int)
+    /// Empties Up Next; the current song plays on.
+    case clearQueue
+
+    // Pinned playlists
+    /// Pin an Apple Music playlist by id.
+    case pinPlaylist(id: String)
+    /// Pin a Spotify playlist from a share link (`https://open.spotify.com/playlist/…`).
+    case pinSpotifyLink(link: String)
+    case unpinPlaylist(id: String)
+
     // Speakers
     case setSpeakerEnabled(id: SpeakerID, enabled: Bool)
     /// 0…1. Legal while the speaker is off: it is then the preset applied on connect.
@@ -42,9 +64,12 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     case retrySpeaker(id: SpeakerID)
     /// 0…1.
     case setMasterVolume(volume: Double)
+    /// Look for speakers on the network again now (known ones stay listed meanwhile), and retry
+    /// any speaker that is on but failed.
+    case refreshSpeakers
 
     public enum Category: String, Sendable, Codable {
-        case transport, source, speaker
+        case transport, source, queue, speaker
     }
 
     /// What kind of change this is: drives how a UI reports a refusal (speaker failures show in
@@ -54,7 +79,10 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
         case .play, .pause, .next, .previous, .seek: .transport
         case .selectSource, .playTrack, .playPlaylist, .captureApp, .addFiles, .removeFiles, .openSpotify,
              .requestPermission: .source
-        case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume: .speaker
+        case .addToQueue, .addSpotifyLink, .removeFromQueue, .moveInQueue, .clearQueue,
+             .pinPlaylist, .pinSpotifyLink, .unpinPlaylist: .queue
+        case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume,
+             .refreshSpeakers: .speaker
         }
     }
 

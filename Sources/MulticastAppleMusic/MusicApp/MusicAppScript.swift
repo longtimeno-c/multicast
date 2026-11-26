@@ -65,6 +65,14 @@ enum MusicAppScript {
         return "OK"
     end playtrack
 
+    on playonce(tid)
+        tell application id "com.apple.Music"
+            set t to first track of library playlist 1 whose persistent ID is tid
+            play t with once
+        end tell
+        return "OK"
+    end playonce
+
     on playincurrent(tid)
         tell application id "com.apple.Music"
             set t to first track of current playlist whose persistent ID is tid

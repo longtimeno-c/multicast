@@ -51,7 +51,9 @@ struct SidebarView: View {
         )) {
             Section("Sources") {
                 ForEach(SourceKind.allCases) { source in
-                    SidebarRow(source: source, isLive: model.activeSource == source)
+                    SidebarRow(source: source, isLive: model.activeSource == source,
+                               title: source == .appleMusic ? model.libraryTitle : source.title,
+                               symbol: source == .appleMusic ? model.librarySymbol : source.symbolName)
                         .tag(source)
                 }
             }
@@ -63,16 +65,18 @@ struct SidebarView: View {
 private struct SidebarRow: View {
     var source: SourceKind
     var isLive: Bool
+    var title: String
+    var symbol: String
 
     var body: some View {
         HStack(spacing: MC.Space.s) {
-            Label(source.title, systemImage: source.symbolName)
+            Label(title, systemImage: symbol)
             Spacer(minLength: MC.Space.s)
             if isLive {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(MC.accent)
-                    .help("Playing from \(source.title)")
+                    .help("Playing from \(title)")
                     .transition(.opacity)
             }
         }
@@ -94,6 +98,6 @@ struct SourceBrowser: View {
             case .files: FilesBrowser()
             }
         }
-        .navigationTitle(model.browsingSource.title)
+        .navigationTitle(model.browsingSource == .appleMusic ? model.libraryTitle : model.browsingSource.title)
     }
 }

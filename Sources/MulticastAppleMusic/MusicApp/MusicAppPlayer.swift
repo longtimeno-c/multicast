@@ -260,9 +260,18 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
             _ = try await call("playtrack", .init(string: trackID), .init(string: pid))
         case .upNext:
             _ = try await call("playincurrent", .init(string: trackID))
-        case .files:
-            throw HubCommandError(.unsupported, "Files aren't played through Apple Music.")
+        case .files, .spotifyHistory:
+            throw HubCommandError(.unsupported, "That isn't played through Apple Music.")
         }
+        refreshSoon()
+    }
+
+    /// Plays one library track and stops after it (`play … once true`), so Music never carries
+    /// on into its own idea of what comes next: the hub's queue does that.
+    public func playOnce(trackID: String) async throws {
+        try Self.validate(id: trackID)
+        try await ensureRunning()
+        _ = try await call("playonce", .init(string: trackID))
         refreshSoon()
     }
 

@@ -82,6 +82,40 @@ with Remove (after a confirmation it is disconnected at once and must pair again
 is the real remote. `-MCScene <name>` (`mock`, `pair`, `pairing`, `speakers`, `now-playing`, `playlists`, … see
 `Apps/iOS/Support/RemoteScenes.swift`) and `-MCAppearance light|dark` launch fixed review scenes on the mock hub.
 
+### Play queue, pinned playlists and the library
+
+The hub owns one play queue, the same on the Mac and every iPhone. It can hold Apple Music, Spotify and file songs
+together, and plays each one with its own app, switching the captured source as it goes. The speakers stay selected
+across a switch, and only a skip flushes their audio.
+
+- **Playing a song from a list** (a playlist, Songs, search results, Files, or Spotify songs from this session)
+  plays it and makes Up Next everything after it in that list, in order. **Play** and **Shuffle** on an open
+  playlist play the whole list in order or shuffled.
+- **Play Next** and **Add to Queue** are on every song: the context menu on the Mac, a swipe right or a long press
+  on the iPhone. Up Next shows the hub's queue: click or tap plays a song (the ones before it are dropped). On the
+  Mac you drag to reorder; on the iPhone you use Edit. You can remove songs one at a time or clear the whole list.
+- **Spotify songs** enter the queue without a Spotify Client ID in two ways. One is a song Spotify played this
+  session; Spotify gives its `spotify:track:` URI. The other is a pasted share link (`open.spotify.com/track/…`).
+  For a link, the hub asks Spotify's public oEmbed endpoint for the title and cover. That is a network call to
+  Spotify, made only when a link is pasted; if it fails, the song is queued as "Spotify song".
+- **How a song ends**: the Music app is asked to play one track (`play … once`), and Spotify plays
+  `play track "spotify:track:…"`. The hub works out from the app's last report when the song will end, and starts
+  the next one about 0.3 s before that. Otherwise Music carries on into its own next track (it does, even with
+  `once`), and Spotify into its autoplay. The next song also starts if the app reports the song stopped, paused at
+  its end, or moved on before the timer fires.
+- **When you play something directly in Music or Spotify**, the app takes over: the hub follows it, as before, and
+  the queue waits (Up Next says so). Next, or choosing a song in Up Next, carries on with the queue. Choosing
+  another source or app in Multicast does the same.
+- **At the end of the queue** playback stops, and Spotify is paused so its autoplay stays quiet. Adding songs
+  while nothing plays doesn't start them; Play does.
+- **Pinned playlists** sit in a shelf at the top of the library, and one click or tap plays one. You pin an
+  Apple Music playlist from its context menu or with the pin button of an open playlist. You pin a Spotify
+  playlist by pasting its share link; Spotify plays it (shuffle optional), and its songs aren't listed. Pins are
+  kept in the hub's settings.
+- **One library**: with Apple Music allowed and Spotify installed, Apple Music becomes **Library**, and its songs
+  and playlists come from both apps, each row marked with its source. Without a Client ID, Spotify can only give
+  the songs it played this session and pinned playlists. The Spotify source keeps its capture controls.
+
 ### Pairing
 
 1. Open Multicast on the Mac and Multicast Remote on the iPhone, on the same network.
@@ -98,7 +132,7 @@ on the network answering with its id) shows as unreachable and the iPhone keeps 
 
 | Permission | Needed for | Without it |
 |---|---|---|
-| Local Network | finding AirPlay speakers, and letting iPhones find the Mac | only this Mac's own outputs; remotes can't connect (shown in Settings and the speakers list) |
+| Local Network | finding AirPlay speakers, and letting iPhones find the Mac | only this Mac's own outputs; remotes can't connect (shown in the speakers list, the menu bar panel and Settings, with a button to the right pane; once it is turned on the Mac picks it up within about 10 s) |
 | System Audio Recording | Spotify, other apps and Apple Music (all captured) | those sources play silence; shown on the source |
 | Automation (Spotify, Music) | now playing and play/pause/skip; the Music app player | Spotify plays but can't be controlled; Apple Music unavailable |
 
@@ -108,6 +142,17 @@ right pane of Privacy & Security.
 The Mac app is signed "to run locally" (ad hoc). macOS treats every rebuild as a new app, so it may ask again
 for these permissions and for Keychain access to the pairing keys. Signing with your own team avoids that (see
 `Apps/Config/Mac.xcconfig`).
+
+### Finding and keeping speakers
+
+- The speaker list is browsed again every 45 s, whenever the Mac's network interfaces change, and on
+  **Refresh speakers** (the ↻ button in the speakers panel and the menu bar panel; pull down, or the Mac menu, on
+  the iPhone). Speakers already known stay listed while the fresh answers come in.
+- A speaker that stops answering stays in the list; after 20 s its row says "Not seen on the network", and after
+  3 minutes it is removed (a speaker that is on stays listed regardless).
+- While playing, a network speaker that fails is retried by itself after 2, 5, 10, 20 and then every 30 s, and at
+  once when it reappears on the network or on Refresh. A wrong password, or picking the same receiver twice, is
+  not retried. "Try again" retries at once.
 
 ## Command line
 
@@ -158,11 +203,19 @@ swift run multicast-remote-cli run --hub "Test Hub" --store /tmp/remote-keys.jso
 
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
-- **AirPlay 1 bridges (AirConnect and similar) need a sync trim.** They add their own delay; set it per speaker
-  (speaker details → Sync trim).
+- **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand.** The bridge itself plays to our
+  timing: it reports its buffer in `Audio-Latency` from RECORD (22050 frames, 0.5 s, for AirConnect 1.12.4), and
+  that is the receiver's minimum buffer, already covered by the 2 s group latency. The extra delay comes from the
+  device behind the bridge (a Sonos or UPnP renderer buffering the bridge's HTTP stream), which nothing on the
+  network reports, and it has not been measured here. So Multicast applies no default offset to bridges; set
+  speaker details → Sync trim per bridge. The trim range is −500…500 ms; positive plays later.
 - **Apple Music** plays through the Music app (Apple Events plus a capture of Music's audio). It needs Automation
   and System Audio Recording; neither has been granted on a test machine yet, so library, play and capture are
-  unverified live. Music doesn't expose Up Next to Apple Events: Up Next is approximated, and queue editing is not
-  offered. The MusicKit player is built but unproven (which process renders its audio is unknown).
+  unverified live. Music doesn't expose its own Up Next to Apple Events, so the hub keeps its own queue and plays
+  Music one track at a time. The MusicKit player is built but unproven (which process renders its audio is unknown).
+- **The play queue** has been run live from Apple Music to Apple Music: the next song started about 8 s after a seek
+  to 8 s before the end, with no foreign track in between. Apple Music to Spotify is verified only as far as the
+  switch: the queued Spotify song didn't start while the first AppleScript compile in the Multicast process was
+  held for tens of seconds by the system's security scan (not by Spotify). Track-end detection for Spotify is covered by unit tests only.
 - **iPhone-only mode** (playing to speakers from the phone without a Mac) is not built yet.
 - The remote link has not been reviewed by a third party; its threat model and gaps are in `Crypto.swift`.

@@ -5,7 +5,7 @@ import Foundation
 public struct ContentRevisions: Equatable, Hashable, Sendable, Codable {
     /// Songs, playlists, playlist contents and search results (the Apple Music library).
     public var library: UInt64
-    /// The up-next queue.
+    /// The hub's play queue (Up Next).
     public var upNext: UInt64
     /// The file queue.
     public var files: UInt64
@@ -46,6 +46,10 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
     public var capture: CaptureStatus
     public var spotify: SpotifyStatus
     public var content: ContentRevisions
+    /// The play queue (Up Next itself is `HubQuery.upNext`).
+    public var queue: QueueStatus
+    /// Pinned playlists, in pin order.
+    public var pins: [PinnedPlaylist]
 
     // Permissions and problems
     public var health: HubHealth
@@ -54,6 +58,7 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
                 isDiscovering: Bool = false, activeSource: SourceKind? = nil, nowPlaying: NowPlayingInfo? = nil,
                 transport: TransportState = TransportState(), capture: CaptureStatus = CaptureStatus(),
                 spotify: SpotifyStatus = .notRunning, content: ContentRevisions = ContentRevisions(),
+                queue: QueueStatus = QueueStatus(), pins: [PinnedPlaylist] = [],
                 health: HubHealth = HubHealth()) {
         self.revision = revision
         self.speakers = speakers
@@ -65,6 +70,8 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
         self.capture = capture
         self.spotify = spotify
         self.content = content
+        self.queue = queue
+        self.pins = pins
         self.health = health
     }
 

@@ -4,6 +4,7 @@ import MulticastHubModel
 /// The detail column: what's playing, then every speaker under one master volume.
 struct SpeakersPanel: View {
     @Environment(HubModel.self) private var model
+    @Environment(HubRuntime.self) private var runtime: HubRuntime?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedSpeaker: SpeakerID?
 
@@ -32,6 +33,12 @@ struct SpeakersPanel: View {
                         Spacer(minLength: MC.Space.s)
                         SpeakerSummary(counts: model.speakerCounts, isDiscovering: model.isDiscovering,
                                        playingOnMacOnly: playingOnMacOnly)
+                        RefreshSpeakersButton()
+                    }
+
+                    if localNetworkOff {
+                        LocalNetworkNotice()
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     GroupedSection {
@@ -40,13 +47,12 @@ struct SpeakersPanel: View {
                     }
 
                     if model.speakers.isEmpty {
-                        LookingForSpeakers()
-                            .transition(.opacity)
+                        if !localNetworkOff {
+                            LookingForSpeakers()
+                                .transition(.opacity)
+                        }
                     } else {
-                        if model.needsLocalNetwork {
-                            LocalNetworkNotice()
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        } else if !model.networkSpeakers.isEmpty {
+                        if !localNetworkOff, !model.networkSpeakers.isEmpty {
                             speakerGroup("AirPlay", model.networkSpeakers)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
@@ -64,6 +70,9 @@ struct SpeakersPanel: View {
         .scrollContentBackground(.hidden)
         .background(MC.Surface.canvas)
     }
+
+    /// Local Network access is off: the hub's discovery or its server for remotes was refused.
+    private var localNetworkOff: Bool { model.needsLocalNetwork || runtime?.localNetworkBlocked == true }
 
     /// A media app plays with no speaker on: it is heard on the Mac only, and joins a speaker
     /// as soon as one is turned on.
@@ -175,23 +184,45 @@ private struct LookingForSpeakers: View {
     }
 }
 
-/// Local Network access refused: AirPlay can't be found, and only System Settings can fix it.
+/// Looks for speakers again: known ones stay listed while the network answers afresh.
+struct RefreshSpeakersButton: View {
+    @Environment(HubModel.self) private var model
+
+    var body: some View {
+        Button(action: model.refreshSpeakers) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(MC.Ink.secondary)
+        }
+        .buttonStyle(.borderless)
+        .disabled(model.isDiscovering)
+        .help("Refresh speakers")
+        .accessibilityLabel("Refresh speakers")
+    }
+}
+
+enum LocalNetworkSettings {
+    static func open() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// Local Network access refused: AirPlay can't be found, iPhones can't find the Mac, and only
+/// System Settings can fix it.
 private struct LocalNetworkNotice: View {
     var body: some View {
         GroupedSection(title: "AirPlay") {
             SpeakerNoticeRow(
-                title: "Allow local network access",
-                message: "Multicast needs it to find AirPlay speakers. Turn it on in Privacy & Security, then come back."
+                title: "Local Network access is off",
+                message: "Multicast can\u{2019}t find AirPlay speakers, and iPhone remotes can\u{2019}t find this Mac. Turn it on for Multicast in Privacy & Security; it takes effect within a few seconds."
             ) {
                 Image(systemName: "wifi.exclamationmark")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(MC.Ink.body)
             } action: {
-                Button("Open Settings\u{2026}") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
+                Button("Open Settings\u{2026}", action: LocalNetworkSettings.open)
             }
         }
     }
