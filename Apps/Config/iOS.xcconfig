@@ -13,3 +13,6 @@ CODE_SIGN_STYLE = Automatic
 CODE_SIGN_IDENTITY = Apple Development
 CODE_SIGN_IDENTITY[sdk=iphonesimulator*] = -
 DEVELOPMENT_TEAM =
+
+// The app icon: Apps/Shared/Assets.xcassets, drawn by Apps/Scripts/make-icon.swift.
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
