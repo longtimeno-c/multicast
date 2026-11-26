@@ -185,7 +185,7 @@ extension LocalHub {
             await self.reanchor()
             await self.reconcileAndPublish()
         }
-        if !hasPlayableSpeaker { throw HubCommandError(.unavailable, Self.needsSpeaker) }
+        // No speaker on: Spotify plays on the Mac, and the hub captures it once one is.
     }
 
     func addToQueue(_ tracks: [TrackItem], source: SourceKind, placement: QueuePlacement) throws {
@@ -338,7 +338,9 @@ extension LocalHub {
             if flush, entry.source != .files { await self.reanchor() }
             await self.reconcileAndPublish()
         }
-        if !speakers { throw HubCommandError(.unavailable, Self.needsSpeaker) }
+        // A media app plays on the Mac with no speaker on, and the hub captures it once one is.
+        // A file has nowhere to play.
+        if !speakers, entry.source == .files { throw HubCommandError(.unavailable, Self.needsSpeaker) }
     }
 
     /// The last song ended: stop (the media app too, so Spotify's autoplay stays quiet).

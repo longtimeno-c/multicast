@@ -2,6 +2,7 @@
 import AppKit
 import Carbon
 import Foundation
+import os
 
 /// Queries and controls Spotify / Music through Apple Events (NSAppleScript).
 ///
@@ -184,6 +185,11 @@ public final class MediaAppController: @unchecked Sendable {
 
     // MARK: Scripts
 
+    /// How long one script waits for the app to answer. An app that has stopped handling its
+    /// scripting (Spotify does at times while it looks fine) would otherwise hold this
+    /// controller's queue for AppleScript's default two minutes per call.
+    static let appleEventTimeout: TimeInterval = 5
+
     static func stateScript(for app: MediaApp) -> String {
         let id = app.bundleID
         let artworkExpr = app == .spotify ? "artwork url of t" : "\"\""
@@ -198,6 +204,7 @@ public final class MediaAppController: @unchecked Sendable {
             end try
         end txt
         set US to character id 31
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(id)" is running then
             tell application id "\(id)"
                 set st to ""
@@ -242,6 +249,7 @@ public final class MediaAppController: @unchecked Sendable {
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 
@@ -260,12 +268,14 @@ public final class MediaAppController: @unchecked Sendable {
 
     static func commandScript(for app: MediaApp, command: String) -> String {
         """
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(app.bundleID)" is running then
             tell application id "\(app.bundleID)" to \(command)
             return "\(AppleScriptNowPlayingParser.okMarker)"
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 
@@ -290,11 +300,20 @@ public final class MediaAppController: @unchecked Sendable {
         }
     }
 
+    static let log = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "media-app")
+
     private func script(_ source: String) throws -> NSAppleScript {
         if let s = compiled[source] { return s }
         guard let s = NSAppleScript(source: source) else { throw MediaControlError.scriptCompileFailed("init") }
         var err: NSDictionary?
-        if !s.compileAndReturnError(&err) {
+        let started = Date()
+        // Compiling can take tens of seconds the first time in an app process (the system scans
+        // the script before compiling it), and the script's own timeout does not cover it.
+        let ok = s.compileAndReturnError(&err)
+        Self.log.debug("compile \(self.app.displayName, privacy: .public) ok=\(ok) \(Int(Date().timeIntervalSince(started) * 1000))ms")
+        if !ok {
+            let code = (err?[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
+            Self.log.error("compile \(self.app.displayName, privacy: .public) failed: \(code)")
             throw MediaControlError.scriptCompileFailed(Self.mapScriptError(err).localizedDescription)
         }
         compiled[source] = s
@@ -404,7 +423,9 @@ private final class ChangeObserver: @unchecked Sendable {
             // because the controller dispatches synchronously onto its own queue.
             current = try controller.syncNowPlayingForObserver()
         } catch {
-            return // permission errors etc.: keep last value; callers can query directly for the error
+            // Permission errors etc.: keep last value; callers can query directly for the error.
+            MediaAppController.log.debug("\(self.app.displayName, privacy: .public) status failed: \(String(describing: error), privacy: .public)")
+            return
         }
         switch last {
         case .none:

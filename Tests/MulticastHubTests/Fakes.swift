@@ -275,6 +275,8 @@ final class FakeApps: AppPresenceMonitoring, @unchecked Sendable {
     let installed = Locked<Set<String>>([])
     let running = Locked<Set<String>>([])
     let launched = Locked<[String]>([])
+    /// Apps opened in front (`open`), in order.
+    let opened = Locked<[String]>([])
     let fanout = Fanout<Void>()
 
     func isInstalled(_ bundleID: String) -> Bool { installed.get().contains(bundleID) }
@@ -282,6 +284,11 @@ final class FakeApps: AppPresenceMonitoring, @unchecked Sendable {
     func changes() -> AsyncStream<Void> { fanout.stream() }
     func launch(_ bundleID: String) async throws {
         launched.update { $0.append(bundleID) }
+        running.update { _ = $0.insert(bundleID) }
+        fanout.send(())
+    }
+    func open(_ bundleID: String) async throws {
+        opened.update { $0.append(bundleID) }
         running.update { _ = $0.insert(bundleID) }
         fanout.send(())
     }
@@ -309,6 +316,9 @@ final class FakeSpotify: MediaAppControlling, @unchecked Sendable {
     let failWith = Locked<HubCommandError?>(nil)
     let automation = Locked<PermissionStatus?>(.granted)
     let askCount = Locked(0)
+    /// While closed, silent permission checks and pauses wait (a Spotify that stopped answering).
+    let checkGate = Gate()
+    let pauseGate = Gate()
 
     func changes() -> AsyncStream<NowPlaying?> { fanout.stream() }
     private func run(_ name: String) throws {
@@ -316,7 +326,10 @@ final class FakeSpotify: MediaAppControlling, @unchecked Sendable {
         commands.update { $0.append(name) }
     }
     func play() async throws { try run("play") }
-    func pause() async throws { try run("pause") }
+    func pause() async throws {
+        await pauseGate.wait()
+        try run("pause")
+    }
     func next() async throws { try run("next") }
     func previous() async throws { try run("previous") }
     func seek(to seconds: TimeInterval) async throws { try run("seek \(Int(seconds))") }
@@ -324,8 +337,35 @@ final class FakeSpotify: MediaAppControlling, @unchecked Sendable {
         try run(shuffled.map { "play \(uri) shuffled \($0)" } ?? "play \(uri)")
     }
     func automationStatus(ask: Bool) async -> PermissionStatus? {
-        if ask { askCount.update { $0 += 1 } }
+        if ask { askCount.update { $0 += 1 } } else { await checkGate.wait() }
         return automation.get()
+    }
+}
+
+/// Open by default; `close()` makes `wait()` block until `open()`.
+final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = true
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func close() { lock.withLock { isOpen = false } }
+    func open() {
+        let w: [CheckedContinuation<Void, Never>] = lock.withLock {
+            isOpen = true
+            defer { waiters.removeAll() }
+            return waiters
+        }
+        w.forEach { $0.resume() }
+    }
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow: Bool = lock.withLock {
+                if isOpen { return true }
+                waiters.append(c)
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
     }
 }
 

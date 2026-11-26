@@ -31,7 +31,8 @@ struct SpeakersPanel: View {
                             .foregroundStyle(MC.Ink.primary)
                             .accessibilityAddTraits(.isHeader)
                         Spacer(minLength: MC.Space.s)
-                        SpeakerSummary(counts: model.speakerCounts, isDiscovering: model.isDiscovering)
+                        SpeakerSummary(counts: model.speakerCounts, isDiscovering: model.isDiscovering,
+                                       playingOnMacOnly: playingOnMacOnly)
                         RefreshSpeakersButton()
                     }
 
@@ -73,6 +74,13 @@ struct SpeakersPanel: View {
     /// Local Network access is off: the hub's discovery or its server for remotes was refused.
     private var localNetworkOff: Bool { model.needsLocalNetwork || runtime?.localNetworkBlocked == true }
 
+    /// A media app plays with no speaker on: it is heard on the Mac only, and joins a speaker
+    /// as soon as one is turned on.
+    private var playingOnMacOnly: Bool {
+        (model.activeSource == .appleMusic || model.activeSource == .spotify) && model.transport.isPlaying
+            && !model.speakers.contains(where: \.isEnabled)
+    }
+
     private var liveCaption: String? {
         guard model.activeSource == .app, let name = model.nowPlaying?.title else { return nil }
         return "Live from \(name)"
@@ -99,6 +107,7 @@ struct SpeakersPanel: View {
 private struct SpeakerSummary: View {
     var counts: HubModel.SpeakerCounts
     var isDiscovering: Bool
+    var playingOnMacOnly = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -118,7 +127,10 @@ private struct SpeakerSummary: View {
         if counts.ready > 0 { parts.append("\(counts.ready) ready") }
         if counts.connecting > 0 { parts.append("\(counts.connecting) connecting") }
         if counts.failed > 0 { parts.append("\(counts.failed) not responding") }
-        if parts.isEmpty { return isDiscovering ? "Searching" : "None selected" }
+        if parts.isEmpty {
+            if playingOnMacOnly { return "Playing on this Mac only \u{00B7} turn on a speaker" }
+            return isDiscovering ? "Searching" : "None selected"
+        }
         return parts.joined(separator: " \u{00B7} ")
     }
 }
