@@ -14,13 +14,42 @@
 		4D0C10002E00000000000009 /* MulticastAppleMusic in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000A /* MulticastAppleMusic */; };
 		4D0C10002E0000000000000B /* MulticastHubModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000C /* MulticastHubModel */; };
 		4D0C10002E0000000000000D /* MulticastRemote in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000E /* MulticastRemote */; };
+		4D0C10002E00000000000100 /* MulticastKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000101 /* MulticastKit */; };
+		4D0C10002E00000000000102 /* MulticastKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000103 /* MulticastKit */; };
+		4D0C10002E00000000000104 /* Multicast Broadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4D0C10002E00000000000110 /* Multicast Broadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4D0C10002E00000000000105 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4D0C10002E00000000000070 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4D0C10002E00000000000111;
+			remoteInfo = "Multicast Broadcast";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		4D0C10002E00000000000106 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4D0C10002E00000000000104 /* Multicast Broadcast.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		4D0C10002E00000000000010 /* Multicast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Multicast.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4D0C10002E00000000000011 /* Multicast Remote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Multicast Remote.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4D0C10002E00000000000033 /* Mac.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Mac.xcconfig; sourceTree = "<group>"; };
 		4D0C10002E00000000000034 /* iOS.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = iOS.xcconfig; sourceTree = "<group>"; };
+		4D0C10002E00000000000110 /* Multicast Broadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Multicast Broadcast.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4D0C10002E00000000000112 /* iOSBroadcast.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = iOSBroadcast.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -36,8 +65,17 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				MulticastRemote.entitlements,
 			);
 			target = 4D0C10002E00000000000041 /* Multicast Remote */;
+		};
+		4D0C10002E00000000000113 /* Exceptions for "iOSBroadcast" folder in "Multicast Broadcast" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				MulticastBroadcast.entitlements,
+			);
+			target = 4D0C10002E00000000000111 /* Multicast Broadcast */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -63,6 +101,14 @@
 			path = iOS;
 			sourceTree = "<group>";
 		};
+		4D0C10002E00000000000114 /* iOSBroadcast */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4D0C10002E00000000000113 /* Exceptions for "iOSBroadcast" folder in "Multicast Broadcast" target */,
+			);
+			path = iOSBroadcast;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +130,15 @@
 			files = (
 				4D0C10002E0000000000000B /* MulticastHubModel in Frameworks */,
 				4D0C10002E0000000000000D /* MulticastRemote in Frameworks */,
+				4D0C10002E00000000000100 /* MulticastKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4D0C10002E00000000000115 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D0C10002E00000000000102 /* MulticastKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +151,7 @@
 				4D0C10002E00000000000030 /* Shared */,
 				4D0C10002E00000000000031 /* Mac */,
 				4D0C10002E00000000000032 /* iOS */,
+				4D0C10002E00000000000114 /* iOSBroadcast */,
 				4D0C10002E00000000000062 /* Config */,
 				4D0C10002E00000000000061 /* Products */,
 			);
@@ -106,6 +162,7 @@
 			children = (
 				4D0C10002E00000000000010 /* Multicast.app */,
 				4D0C10002E00000000000011 /* Multicast Remote.app */,
+				4D0C10002E00000000000110 /* Multicast Broadcast.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -115,6 +172,7 @@
 			children = (
 				4D0C10002E00000000000033 /* Mac.xcconfig */,
 				4D0C10002E00000000000034 /* iOS.xcconfig */,
+				4D0C10002E00000000000112 /* iOSBroadcast.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -158,10 +216,12 @@
 				4D0C10002E00000000000053 /* Sources */,
 				4D0C10002E00000000000054 /* Frameworks */,
 				4D0C10002E00000000000055 /* Resources */,
+				4D0C10002E00000000000106 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				4D0C10002E00000000000116 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				4D0C10002E00000000000030 /* Shared */,
@@ -171,10 +231,34 @@
 			packageProductDependencies = (
 				4D0C10002E0000000000000C /* MulticastHubModel */,
 				4D0C10002E0000000000000E /* MulticastRemote */,
+				4D0C10002E00000000000101 /* MulticastKit */,
 			);
 			productName = "Multicast Remote";
 			productReference = 4D0C10002E00000000000011 /* Multicast Remote.app */;
 			productType = "com.apple.product-type.application";
+		};
+		4D0C10002E00000000000111 /* Multicast Broadcast */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D0C10002E00000000000117 /* Build configuration list for PBXNativeTarget "Multicast Broadcast" */;
+			buildPhases = (
+				4D0C10002E00000000000118 /* Sources */,
+				4D0C10002E00000000000115 /* Frameworks */,
+				4D0C10002E00000000000119 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4D0C10002E00000000000114 /* iOSBroadcast */,
+			);
+			name = "Multicast Broadcast";
+			packageProductDependencies = (
+				4D0C10002E00000000000103 /* MulticastKit */,
+			);
+			productName = "Multicast Broadcast";
+			productReference = 4D0C10002E00000000000110 /* Multicast Broadcast.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -190,6 +274,9 @@
 						CreatedOnToolsVersion = 27.0;
 					};
 					4D0C10002E00000000000041 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					4D0C10002E00000000000111 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -213,6 +300,7 @@
 			targets = (
 				4D0C10002E00000000000040 /* Multicast */,
 				4D0C10002E00000000000041 /* Multicast Remote */,
+				4D0C10002E00000000000111 /* Multicast Broadcast */,
 			);
 		};
 /* End PBXProject section */
@@ -226,6 +314,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		4D0C10002E00000000000055 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4D0C10002E00000000000119 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -273,7 +368,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4D0C10002E00000000000118 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4D0C10002E00000000000116 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4D0C10002E00000000000111 /* Multicast Broadcast */;
+			targetProxy = 4D0C10002E00000000000105 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		4D0C10002E00000000000071 /* Debug */ = {
@@ -440,6 +550,54 @@
 			};
 			name = Release;
 		};
+		4D0C10002E0000000000011A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000112 /* iOSBroadcast.xcconfig */;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		4D0C10002E0000000000011B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000112 /* iOSBroadcast.xcconfig */;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -466,6 +624,15 @@
 			buildConfigurations = (
 				4D0C10002E00000000000075 /* Debug */,
 				4D0C10002E00000000000076 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4D0C10002E00000000000117 /* Build configuration list for PBXNativeTarget "Multicast Broadcast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4D0C10002E0000000000011A /* Debug */,
+				4D0C10002E0000000000011B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -514,6 +681,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
 			productName = MulticastRemote;
+		};
+		4D0C10002E00000000000101 /* MulticastKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastKit;
+		};
+		4D0C10002E00000000000103 /* MulticastKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -54,6 +54,20 @@ enum RemoteScene: String, CaseIterable {
     case files
     /// The hub's first second: no speakers found yet, Apple Music not yet allowed.
     case firstRun = "first-run"
+    /// iPhone Only (experimental): speakers found, two turned on, no broadcast yet.
+    case phoneOnly = "phone-only"
+    /// iPhone Only: a broadcast playing on two speakers, a third joining.
+    case phoneOnlyPlaying = "phone-only-playing"
+    /// iPhone Only: a broadcast running, but the playing app shares no sound.
+    case phoneOnlySilent = "phone-only-silent"
+    /// iPhone Only: a broadcast whose speakers do not answer.
+    case phoneOnlyUnreachable = "phone-only-unreachable"
+    /// iPhone Only: the last broadcast gave up, with the reason.
+    case phoneOnlyStopped = "phone-only-stopped"
+    /// iPhone Only: still looking for speakers.
+    case phoneOnlySearching = "phone-only-searching"
+    /// iPhone Only: no speakers on the network.
+    case phoneOnlyEmpty = "phone-only-empty"
 
     static var current: RemoteScene {
         UserDefaults.standard.string(forKey: "MCScene").flatMap(RemoteScene.init(rawValue:)) ?? .live
@@ -71,6 +85,8 @@ enum RemoteScene: String, CaseIterable {
     private var hubScene: MockScene? {
         switch self {
         case .live, .mock, .pair, .pairing, .pairingError, .searching, .hubNotFound: nil
+        case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
+             .phoneOnlySearching, .phoneOnlyEmpty: nil
         case .lost, .speakers, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
         case .speakerDetail, .spotify: .spotify
         case .otherApp: .appPicker
@@ -106,7 +122,8 @@ enum RemoteScene: String, CaseIterable {
         case .searching:
             options.discovers = false
             timeout = .seconds(600)
-        case .hubNotFound:
+        case .hubNotFound, .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
+             .phoneOnlySearching, .phoneOnlyEmpty:
             options.discovers = false
             timeout = .zero
         case .lost:
@@ -152,11 +169,29 @@ enum RemoteScene: String, CaseIterable {
         case .files:
             nav.tab = .music
             nav.musicPath = [.source(.files)]
+        case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
+             .phoneOnlySearching, .phoneOnlyEmpty:
+            nav.showsPhoneOnly = true
         default:
             break
         }
 
         let connector = MockHubConnector(backend: backend, options: options)
         return RemoteSession(connector: connector, navigation: nav, searchTimeout: timeout)
+    }
+
+    /// What iPhone Only mode runs on: Bonjour and the App Group in the real app, made-up
+    /// speakers and a pretend broadcast in every review scene.
+    @MainActor func makePhoneOnlyService() -> PhoneOnlyService {
+        switch self {
+        case .live: LivePhoneOnlyService()
+        case .phoneOnlyPlaying: MockPhoneOnlyService(start: .capturing)
+        case .phoneOnlySilent: MockPhoneOnlyService(start: .silent)
+        case .phoneOnlyUnreachable: MockPhoneOnlyService(start: .unreachable)
+        case .phoneOnlyStopped: MockPhoneOnlyService(start: .ended)
+        case .phoneOnlySearching: MockPhoneOnlyService(start: .searching)
+        case .phoneOnlyEmpty: MockPhoneOnlyService(start: .noSpeakers)
+        default: MockPhoneOnlyService(start: .idle)
+        }
     }
 }

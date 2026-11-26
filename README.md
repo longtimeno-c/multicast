@@ -103,7 +103,8 @@ Mac:    Multicast (window, menu bar) ── HubModel ─────────
 - `Sources/MulticastDiscovery` — Bonjour discovery of AirPlay speakers
 - `Sources/MulticastRAOP` — AirPlay (RAOP) sender; AirPlay 2 devices are driven over RAOP after `POST /auth-setup`
 - `Sources/MulticastLocalOutput` — local and Bluetooth outputs
-- `Sources/MulticastSources` — tone, file, app-audio capture and Mac-output (`OutputDeviceSource`) sources
+- `Sources/MulticastSources` — tone, file, app-audio capture and Mac-output (`OutputDeviceSource`) sources, and
+  `PushedAudioSource` for audio pushed in by a capturer (the iPhone's broadcast extension)
 - `Drivers/MulticastDevice` — the "Multicast" output device (an AudioServerPlugIn) that the Mac output source reads; see its DESIGN.md for build, install and uninstall
 - `Sources/MulticastEngine` — pacing clock and fan-out
 - `Sources/MulticastKit` — `SpeakerDirectory`, `SinkFactory` and `MulticastSession` (the façade over all of the above)
@@ -120,9 +121,10 @@ Mac:    Multicast (window, menu bar) ── HubModel ─────────
 
 ## Apps
 
-`Apps/Multicast.xcodeproj` has two targets (build commands are under [Build and run](#build-and-run)).
+`Apps/Multicast.xcodeproj` has three targets (build commands are under [Build and run](#build-and-run)): the Mac
+app, the iPhone app and the iPhone app's broadcast extension, which is built and embedded with it.
 Per-target settings (bundle id, Info.plist, entitlements, signing, deployment target) live in
-`Apps/Config/Mac.xcconfig` and `Apps/Config/iOS.xcconfig`. To sign the Mac app with your own team, create the
+`Apps/Config/Mac.xcconfig`, `Apps/Config/iOS.xcconfig` and `Apps/Config/iOSBroadcast.xcconfig`. To sign the Mac app with your own team, create the
 git-ignored `Apps/Config/Local.xcconfig` as described in `Mac.xcconfig`.
 
 **Mac app (`Multicast`).** Runs the real hub: it finds the speakers, plays the chosen source, serves iPhone
@@ -140,6 +142,38 @@ with Remove (after a confirmation it is disconnected at once and must pair again
 **iPhone app (`Multicast Remote`).** Lists the Macs on the network; choose one to pair. With no launch arguments it
 is the real remote. `-MCScene <name>` (`mock`, `pair`, `pairing`, `speakers`, `now-playing`, `playlists`, … see
 `Apps/iOS/Support/RemoteScenes.swift`) and `-MCAppearance light|dark` launch fixed review scenes on the mock hub.
+
+### iPhone Only (experimental)
+
+With no Mac, the iPhone app can play what the iPhone itself is playing on AirPlay speakers. Open it from
+**Use iPhone Only** on the Connect screen, or from the hub menu on the Speakers tab.
+
+iOS lets an app hear other apps only through a screen broadcast, so that is how it works: turn on speakers, tap
+**Start Broadcast** and choose Multicast. The `Multicast Broadcast` extension (`Apps/iOSBroadcast`, a ReplayKit
+broadcast upload extension) then receives the playing app's audio, converts it to the pipeline format
+(`PushedAudioSource`) and sends it to the chosen speakers with the same engine and timeline as the Mac
+(`PhoneBroadcastRunner`). The app and the extension share the chosen speakers, volumes, sync trims and the
+broadcast's status through an App Group; volumes and speakers can be changed while it plays.
+
+What to expect:
+
+- Sound reaches the speakers about 2 seconds after the iPhone plays it, so video is out of sync.
+- The red broadcast indicator stays on, and the iPhone keeps playing through its own speaker, ahead of the others.
+- Some apps silence or hide themselves while the screen is broadcast. The screen says "Playing, but hearing
+  silence" when buffers arrive with nothing in them.
+- AirPlay speakers only; a speaker that needs a password is not supported in this mode.
+
+It cannot run in the simulator. A device build needs your team in the git-ignored `Apps/Config/Local.xcconfig`
+(`DEVELOPMENT_TEAM = <your team id>`) and `-allowProvisioningUpdates`, so Xcode can register the two bundle ids
+and the App Group `group.io.github.longtimeno-c.multicast`:
+
+```bash
+xcodebuild -project Apps/Multicast.xcodeproj -scheme "Multicast Remote" \
+    -destination 'generic/platform=iOS' -derivedDataPath .build-xcode-device -allowProvisioningUpdates build
+```
+
+Review scenes on made-up speakers: `-MCScene phone-only`, `phone-only-playing`, `phone-only-silent`,
+`phone-only-unreachable`, `phone-only-stopped`, `phone-only-searching`, `phone-only-empty`.
 
 ### Play queue, pinned playlists and the library
 
@@ -300,8 +334,12 @@ Multicast is a work in progress. There are development builds only: no signed, n
 
 - **Spotify:** opening, play, pause and skip work, but capturing Spotify's sound does not work at the moment, so
   Spotify can't be played to the speakers yet. Spotify songs and playlists in the queue and library depend on it.
-- **The iPhone app is a remote for the Mac**, not a standalone player. Playing to speakers from the phone without
-  a Mac (iPhone-only mode) is not built.
+- **iPhone Only mode has never run on an iPhone.** Its audio conversion, buffering and the code that plays a
+  broadcast to speakers are unit-tested on the Mac, both iOS targets build and sign for a device, and the screens
+  are checked in the simulator. The capture itself (what ReplayKit delivers, memory inside the extension, Local
+  Network access from the extension, sync by ear) is untested. Whether Apple Music and Spotify give a broadcast
+  real audio or silence is unknown: people report that iOS screen recordings of Apple Music have no sound, and
+  one report says Spotify's do, but nothing here has confirmed either.
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
 - **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand,** and sync across bridges has not

@@ -63,9 +63,43 @@ private struct HubPickerView: View {
                 Text("Open Multicast on the Mac that plays your music. It shows up here when your iPhone is on the same Wi\u{2011}Fi.")
             }
             .listRowBackground(Rectangle().fill(MC.Surface.group))
+
+            Section {
+                Button { session.navigation.showsPhoneOnly = true } label: { PhoneOnlyRow() }
+            } header: {
+                Text("No Mac?")
+            } footer: {
+                Text("Experimental. Plays what this iPhone is playing on your AirPlay speakers, about 2 seconds late.")
+            }
+            .listRowBackground(Rectangle().fill(MC.Surface.group))
         }
         .scrollContentBackground(.hidden)
         .navigationTitle("Connect")
+    }
+}
+
+/// The way into iPhone Only mode from the list of Macs.
+private struct PhoneOnlyRow: View {
+    var body: some View {
+        HStack(spacing: MC.Space.m) {
+            Image(systemName: "iphone")
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(MC.Ink.body)
+                .frame(width: 28)
+            Text("Use iPhone Only")
+                .font(MC.Font.body)
+                .foregroundStyle(MC.Ink.primary)
+            Spacer(minLength: MC.Space.s)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(MC.Ink.tertiary)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Use iPhone Only, experimental")
+        .accessibilityHint("Plays this iPhone\u{2019}s sound on AirPlay speakers without a Mac")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -122,6 +156,7 @@ private struct HubNotFoundView: View {
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 }
+                Button("Use iPhone Only (Experimental)") { session.navigation.showsPhoneOnly = true }
             }
         }
         .navigationTitle("Connect")

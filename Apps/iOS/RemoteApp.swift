@@ -36,6 +36,10 @@ struct RemoteRootView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: Bindable(session.navigation).showsPhoneOnly) {
+            PhoneOnlyScreen(model: PhoneOnlyModel(service: RemoteScene.current.makePhoneOnlyService()))
+                .preferredColorScheme(RemoteScene.colorScheme)
+        }
         .task { session.start() }
         .onAppear { session.reduceMotion = reduceMotion }
         .onChange(of: reduceMotion) { _, new in session.reduceMotion = new }
