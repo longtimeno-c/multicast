@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Multicast captures the sound of the app you choose, such as Spotify, so it can play it on your speakers.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Multicast asks Spotify what it is playing and sends it play, pause and skip.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Multicast finds AirPlay speakers on your network and streams music to them.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_raop._tcp</string>
+		<string>_airplay._tcp</string>
+	</array>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Multicast plays your Apple Music library and playlists on your speakers.</string>
+</dict>
+</plist>
