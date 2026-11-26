@@ -34,7 +34,8 @@ import MulticastSources
 ///       then play it through the hub's queue on this Mac's built-in speakers only (device
 ///       volume capped at 0.10, about 6 s), logging now playing, the speaker and the capture
 ///       counters each second. Tears everything down and restores the volume. `--no-play`
-///       stops after the search.
+///       stops after the search; `--to-end` seeks to 4 s before the end after the first second,
+///       to watch the queue start the next result.
 ///
 /// Launch with `open` so the app (not the terminal) is the process TCC asks about. The log goes
 /// to `--experiment-log` (stdout is lost under `open`) and to stdout.
@@ -61,7 +62,7 @@ func multicastExperimentsMain() {
     } else if args.contains("--music-app-experiment") {
         kind = .musicApp(prompt: !args.contains("--no-prompt"))
     } else if let i = args.firstIndex(of: "--catalog-experiment"), args.indices.contains(i + 1) {
-        kind = .catalog(term: args[i + 1], play: !args.contains("--no-play"))
+        kind = .catalog(term: args[i + 1], play: !args.contains("--no-play"), toEnd: args.contains("--to-end"))
     } else if args.contains("--spotify-experiment") {
         kind = .spotify
     } else {
@@ -86,11 +87,11 @@ private enum ExperimentKind: CustomStringConvertible {
     case musicKit(preferCatalog: Bool, prompt: Bool)
     case musicApp(prompt: Bool)
     case spotify
-    case catalog(term: String, play: Bool)
+    case catalog(term: String, play: Bool, toEnd: Bool)
 
     var description: String {
         switch self {
-        case .catalog(_, let play): return "catalog(play: \(play))"
+        case .catalog(_, let play, let toEnd): return "catalog(play: \(play), toEnd: \(toEnd))"
         case .spotify: return "spotify"
         case .musicKit(let catalog, let prompt): return "musicKit(preferCatalog: \(catalog), prompt: \(prompt))"
         case .musicApp(let prompt): return "musicApp(prompt: \(prompt))"
@@ -114,8 +115,8 @@ private enum ExperimentKind: CustomStringConvertible {
             log("OUTCOME\n\(outcome)")
         case .spotify:
             await SpotifyCaptureExperiment.run(log: log)
-        case .catalog(let term, let play):
-            await CatalogPlaybackExperiment.run(term: term, play: play, log: log)
+        case .catalog(let term, let play, let toEnd):
+            await CatalogPlaybackExperiment.run(term: term, play: play, toEnd: toEnd, log: log)
         }
     }
 }
@@ -206,7 +207,7 @@ private enum CatalogPlaybackExperiment {
     static let volumeCap: Float32 = 0.10
     static let playSeconds = 6
 
-    static func run(term: String, play: Bool, log: @escaping @Sendable (String) -> Void) async {
+    static func run(term: String, play: Bool, toEnd: Bool = false, log: @escaping @Sendable (String) -> Void) async {
         let provider = AppleMusicProviderFactory.make(.musicApp)
         let catalog: Page<TrackItem>
         do {
@@ -284,6 +285,12 @@ private enum CatalogPlaybackExperiment {
                 line += " capture=none"
             }
             log(line)
+            if toEnd, second == 1, song.duration > 10 {
+                do {
+                    try await hub.perform(.seek(position: song.duration - 4))
+                    log("seeked to 4 s before the end")
+                } catch { log("seek failed: \(error)") }
+            }
         }
         try? await hub.perform(.pause)
         try? await hub.perform(.setSpeakerEnabled(id: speaker.id, enabled: false))

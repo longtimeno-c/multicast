@@ -314,11 +314,14 @@ Multicast is a work in progress. There are development builds only: no signed, n
   Automation and System Audio Recording. Music doesn't expose its own Up Next to Apple Events, so the hub keeps its
   own queue and plays Music one track at a time. MusicKit's `ApplicationMusicPlayer` is rendered by the system
   process `com.apple.MediaPlayer.RemotePlayerService`, which a process tap captures (measured with library songs).
-- **Apple Music catalog search** is built and unit-tested but has not been run against Apple Music: on the
-  development Mac the developer token request is refused ("Client not found" for the bundle id), so no catalog
-  search has returned results and no catalog song has been played or captured yet. Until the permission for
-  Media & Apple Music has been granted (choose MusicKit under Settings once), the section stays absent too; there
-  is no button for it in search.
+- **Apple Music catalog search** has been run live with the Music app as the player: a song that is not in the
+  library was found, played through the hub's queue to the Mac's own speakers, and captured (non-silent capture
+  cycles on the tap that covers Music and `RemotePlayerService`); seeking to 4 s before its end started the next
+  catalog result about 5 s later, after roughly a second of silence. Not yet run: going between a playing Music
+  app and a catalog song, AirPlay speakers, and the iPhone remote against a real hub. The MusicKit renderer keeps
+  its output open for a few seconds after Multicast stops it. Until the permission for Media & Apple Music has
+  been granted (choose MusicKit under Settings once), the section stays absent; there is no button for it in
+  search.
 - **The play queue** has been run live from Apple Music to Apple Music: the next song started about 8 s after a seek
   to 8 s before the end, with no foreign track in between. Apple Music to Spotify is verified only as far as the
   switch: the queued Spotify song didn't start while the first AppleScript compile in the Multicast process was
