@@ -98,10 +98,11 @@ across a switch, and only a skip flushes their audio.
   session; Spotify gives its `spotify:track:` URI. The other is a pasted share link (`open.spotify.com/track/…`).
   For a link, the hub asks Spotify's public oEmbed endpoint for the title and cover. That is a network call to
   Spotify, made only when a link is pasted; if it fails, the song is queued as "Spotify song".
-- **How a song ends**: the Music app plays one track and stops after it (`play … once`), so Music never carries on
-  into its own Up Next. Spotify plays `play track "spotify:track:…"`. The next song starts at the end the hub works
-  out from the app's last report. It also starts when the app reports the song stopped, paused at its end, or moved
-  on. A Spotify song is cut about a quarter of a second early, before Spotify's own autoplay can start.
+- **How a song ends**: the Music app is asked to play one track (`play … once`), and Spotify plays
+  `play track "spotify:track:…"`. The hub works out from the app's last report when the song will end, and starts
+  the next one about 0.3 s before that. Otherwise Music carries on into its own next track (it does, even with
+  `once`), and Spotify into its autoplay. The next song also starts if the app reports the song stopped, paused at
+  its end, or moved on before the timer fires.
 - **When you play something directly in Music or Spotify**, the app takes over: the hub follows it, as before, and
   the queue waits (Up Next says so). Next, or choosing a song in Up Next, carries on with the queue. Choosing
   another source or app in Multicast does the same.
@@ -197,5 +198,9 @@ swift run multicast-remote-cli run --hub "Test Hub" --store /tmp/remote-keys.jso
   and System Audio Recording; neither has been granted on a test machine yet, so library, play and capture are
   unverified live. Music doesn't expose its own Up Next to Apple Events, so the hub keeps its own queue and plays
   Music one track at a time. The MusicKit player is built but unproven (which process renders its audio is unknown).
+- **The play queue** has been run live from Apple Music to Apple Music: the next song started about 8 s after a seek
+  to 8 s before the end, with no foreign track in between. Apple Music to Spotify is verified only as far as the
+  switch: on the test Mac, Spotify didn't answer Apple Events, so the queued Spotify song never played (the
+  playback-speed work bounds those events). Track-end detection for Spotify is covered by unit tests only.
 - **iPhone-only mode** (playing to speakers from the phone without a Mac) is not built yet.
 - The remote link has not been reviewed by a third party; its threat model and gaps are in `Crypto.swift`.

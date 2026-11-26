@@ -20,8 +20,8 @@ struct QueueSample: Equatable, Sendable {
 // entry with whichever app owns it, switching the captured source as it goes (the speakers stay
 // selected throughout), and starts the next entry when the current one ends:
 //
-//  - Apple Music: the Music app plays one library track and stops (`playOnce`), so Music never
-//    carries on into its own Up Next.
+//  - Apple Music: the Music app plays one library track (`playOnce`, `play … once`; Music may
+//    still carry on into its own next track, which the timer below gets ahead of).
 //  - Spotify: `play track "spotify:track:…"`.
 //  - Files: the file source, gapless from one queued file to the next.
 //
@@ -32,6 +32,9 @@ struct QueueSample: Equatable, Sendable {
 // app as before) until Next or a choice in Up Next carries on. After the last song, playback
 // stops.
 extension LocalHub {
+    /// How long before a song's extrapolated end the next one is started.
+    static let queueEndLead: TimeInterval = 0.3
+
     var queueDriving: Bool { playQueue.current != nil && !queueHeld }
 
     /// While the queue is starting or changing songs, the app's own play/pause reports are not
@@ -431,15 +434,15 @@ extension LocalHub {
         await queueEntryEnded(id)
     }
 
-    /// A timer at the extrapolated end, so the next song starts without waiting for a poll.
-    /// Spotify is cut a moment early (or it would start its own autoplay); Music stops by itself.
+    /// A timer just before the extrapolated end, so the next song starts without waiting for a
+    /// poll and before the app starts something of its own (Spotify's autoplay; Music carries on
+    /// into its own next track even when told to play one track `once`: seen live).
     private func scheduleQueueEnd(for entry: QueueItem, sample: QueueSample) {
         queueEndTimer?.cancel()
         queueEndTimer = nil
         guard sample.isPlaying, let d = sample.duration, d > 0 else { return }
         let remaining = max(0, d - sample.position(at: deps.now()))
-        let lead: TimeInterval = entry.source == .spotify ? -0.25 : 0.25
-        let wait = max(0, remaining + lead)
+        let wait = max(0, remaining - Self.queueEndLead)
         let id = entry.id
         queueEndTimer = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))

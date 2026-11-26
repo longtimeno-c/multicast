@@ -36,6 +36,7 @@ import MulticastRemote
 //   seek-end=SECONDS     seek to SECONDS before the end of the song playing
 //   keep-upnext=N        remove all but the first N songs of Up Next
 //   queue-spotify=current  queue the song Spotify played most recently this session
+//   request=automation   show the hub's permission prompt and wait for the answer
 //   expect-advance       wait (up to 60 s) until the queue moves to another song, or ends
 //
 // Exit codes: 0 every step done, 1 a step failed, 2 usage.
@@ -340,9 +341,19 @@ func run(hubQuery: String, store: PairingKeyStore, codeFile: URL?, remoteName: S
             await send(.addSpotifyLink(link: arg, placement: .last))
         case "keep-upnext":
             guard let n = Int(arg) else { throw2() }
-            let page = (try? await backend.upNext(PageRequest(limit: 500)))?.items ?? []
-            let drop = page.dropFirst(n).map(\.id)
-            if !drop.isEmpty { await send(.removeFromQueue(ids: Array(drop))) }
+            var all: [QueueItem] = []
+            var request = PageRequest(limit: 500)
+            while let page = try? await backend.upNext(request) {
+                all += page.items
+                guard let next = page.nextCursor else { break }
+                request = PageRequest(cursor: next, limit: 500)
+            }
+            let drop = all.dropFirst(n).map(\.id)
+            var i = 0
+            while i < drop.count {
+                await send(.removeFromQueue(ids: Array(drop[i..<min(i + 1000, drop.count)])))
+                i += 1000
+            }
         case "expect-advance":
             let before = await current().queue.currentID
             let started = Date()
@@ -367,6 +378,13 @@ func run(hubQuery: String, store: PairingKeyStore, codeFile: URL?, remoteName: S
             guard let before = Double(arg) else { throw2() }
             guard let d = await current().nowPlaying?.duration, d > before else { fail("the song playing has no known length") }
             await send(.seek(position: d - before))
+        case "request":
+            // Puts up the hub's permission prompt; a person at the Mac answers it.
+            guard let perm = HubPermission(rawValue: arg) else { throw2() }
+            await send(.requestPermission(permission: perm))
+            say("  waiting up to 90 s for someone at the Mac to answer")
+            if !(await log.wait(timeout: 90) { $0.health.permission(perm) != .notDetermined }) { say("  still not answered") }
+            say("  \(arg) is \(await current().health.permission(perm).rawValue)")
         case "health":
             let h = await current().health
             say("  \(StateLog.healthLine(h))")
