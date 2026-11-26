@@ -88,7 +88,14 @@ The hub owns one play queue, the same on the Mac and every iPhone. It can hold A
 together, and plays each one with its own app, switching the captured source as it goes. The speakers stay selected
 across a switch, and only a skip flushes their audio.
 
-- **Playing a song from a list** (a playlist, Songs, search results, Files, or Spotify songs from this session)
+- **The library is playlists**: pinned ones first, then every playlist (artwork tiles on the Mac, a list on the
+  iPhone). Opening one shows its artwork, Play and Shuffle, and its songs. Search finds songs and playlists, and
+  its results show only while you search.
+- **The player** is the Mac window's title bar, as in Music: transport and Shuffle, then what is playing with its
+  scrubber, then an Up Next button (Option-Command-U) that slides Up Next in beside the library. On the iPhone, the
+  full player has Shuffle and Up Next either side of the speakers button, and the mini player and the library
+  open Up Next in one tap. Shuffle shuffles what is left in Up Next; turning it off puts the songs back in order.
+- **Playing a song from a list** (a playlist, search results, Files, or Spotify songs from this session)
   plays it and makes Up Next everything after it in that list, in order. **Play** and **Shuffle** on an open
   playlist play the whole list in order or shuffled.
 - **Play Next** and **Add to Queue** are on every song: the context menu on the Mac, a swipe right or a long press
@@ -108,13 +115,14 @@ across a switch, and only a skip flushes their audio.
   another source or app in Multicast does the same.
 - **At the end of the queue** playback stops, and Spotify is paused so its autoplay stays quiet. Adding songs
   while nothing plays doesn't start them; Play does.
-- **Pinned playlists** sit in a shelf at the top of the library, and one click or tap plays one. You pin an
+- **Pinned playlists** sit at the top of the library: a click opens one (a Spotify playlist plays instead). You pin an
   Apple Music playlist from its context menu or with the pin button of an open playlist. You pin a Spotify
   playlist by pasting its share link; Spotify plays it (shuffle optional), and its songs aren't listed. Pins are
   kept in the hub's settings.
-- **One library**: with Apple Music allowed and Spotify installed, Apple Music becomes **Library**, and its songs
-  and playlists come from both apps, each row marked with its source. Without a Client ID, Spotify can only give
-  the songs it played this session and pinned playlists. The Spotify source keeps its capture controls.
+- **One library**: with Apple Music allowed and Spotify installed, Apple Music becomes **Library**, and it lists
+  both apps' playlists and finds both apps' songs, with Spotify items marked. Without a Client ID, Spotify can only
+  give the songs it played this session (found by search) and pinned playlists. The Spotify source keeps its
+  capture controls.
 
 ### Pairing
 
