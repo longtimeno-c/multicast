@@ -28,6 +28,16 @@ import Testing
                 == #"{"setSpeakerSyncTrim":{"id":"a","milliseconds":-40}}"#)
         #expect(try json(HubCommand.playTrack(id: "s1", context: .playlist(id: "p1")))
                 == #"{"playTrack":{"context":{"playlist":{"id":"p1"}},"id":"s1"}}"#)
+        #expect(try json(HubCommand.playPlaylist(id: "p1", shuffled: true)) == #"{"playPlaylist":{"id":"p1","shuffled":true}}"#)
+        #expect(try json(HubCommand.addToQueue(tracks: [TrackItem(id: "spotify:track:x", title: "T", artist: "A", album: "", duration: 3)],
+                                               source: .spotify, placement: .next))
+                == #"{"addToQueue":{"placement":"next","source":"spotify","tracks":[{"album":"","artist":"A","duration":3,"id":"spotify:track:x","title":"T"}]}}"#)
+        #expect(try json(HubCommand.moveInQueue(ids: ["q2"], toOffset: 0)) == #"{"moveInQueue":{"ids":["q2"],"toOffset":0}}"#)
+        #expect(try json(HubCommand.clearQueue) == #"{"clearQueue":{}}"#)
+        #expect(try json(HubCommand.setShuffle(enabled: true)) == #"{"setShuffle":{"enabled":true}}"#)
+        #expect(try json(HubCommand.pinSpotifyLink(link: "https://open.spotify.com/playlist/x"))
+                == #"{"pinSpotifyLink":{"link":"https:\/\/open.spotify.com\/playlist\/x"}}"#)
+        #expect(try json(TrackContext.spotifyHistory) == #"{"spotifyHistory":{}}"#)
         #expect(try json(HubCommand.selectSource(source: .appleMusic)) == #"{"selectSource":{"source":"appleMusic"}}"#)
         #expect(try json(HubCommand.requestPermission(permission: .audioCapture))
                 == #"{"requestPermission":{"permission":"audioCapture"}}"#)
@@ -38,7 +48,11 @@ import Testing
             .play, .pause, .next, .previous, .seek(position: 1.5),
             .selectSource(source: .spotify), .playTrack(id: "t", context: .songs), .playTrack(id: "t", context: .upNext),
             .playTrack(id: "t", context: .search(query: "tide")), .playTrack(id: "f1", context: .files),
-            .playPlaylist(id: "p"), .captureApp(bundleID: "com.example.player"),
+            .playPlaylist(id: "p", shuffled: false), .playTrack(id: "spotify:track:x", context: .spotifyHistory),
+            .addToQueue(tracks: [TrackItem(id: "s", title: "S", artist: "", album: "", duration: 1)], source: .appleMusic, placement: .last),
+            .addSpotifyLink(link: "spotify:track:x", placement: .next), .removeFromQueue(ids: ["q1"]),
+            .moveInQueue(ids: ["q1", "q3"], toOffset: 4), .clearQueue, .setShuffle(enabled: false), .pinPlaylist(id: "p"),
+            .pinSpotifyLink(link: "spotify:playlist:x"), .unpinPlaylist(id: "p"), .captureApp(bundleID: "com.example.player"),
             .addFiles(urls: [URL(fileURLWithPath: "/tmp/a song.flac")]), .removeFiles(ids: ["f1", "f2"]),
             .openSpotify, .requestPermission(permission: .automation),
             .setSpeakerEnabled(id: "x", enabled: false), .setSpeakerVolume(id: "x", volume: 0.5),
@@ -60,7 +74,17 @@ import Testing
                               duration: 252, artworkID: "cover.sun")
         try roundTrip(HubQueryResult.tracks(page: Page(items: [track], nextCursor: "1", totalCount: 2)))
         try roundTrip(HubQueryResult.playlists(page: Page(items: [PlaylistItem(id: "p", name: "Garden", trackCount: 3)])))
+        // Folders: two optional keys, omitted for a plain playlist, so older builds read and write it unchanged.
+        #expect(try json(PlaylistItem(id: "p", name: "Garden", trackCount: 3)) == #"{"id":"p","name":"Garden","trackCount":3}"#)
+        let folder = PlaylistItem(id: "f", name: "Evenings", trackCount: 9, isFolder: true, parentID: "top")
+        #expect(try json(folder) == #"{"id":"f","isFolder":true,"name":"Evenings","parentID":"top","trackCount":9}"#)
+        try roundTrip(folder)
+        let old = try JSONDecoder().decode(PlaylistItem.self, from: Data(#"{"id":"p","name":"Garden","trackCount":3,"artworkID":"a"}"#.utf8))
+        #expect(!old.isFolder && old.parentID == nil && old.artworkID == "a")
         try roundTrip(HubQueryResult.artwork(data: Data([1, 2, 3])))
+        let item = QueueItem(id: "q7", source: .spotify, track: track)
+        try roundTrip(HubQueryResult.queue(page: Page(items: [item], totalCount: 1)))
+        #expect(try json(item).hasPrefix(#"{"id":"q7","source":"spotify","track":{"#))
         try roundTrip(HubQueryResult.artwork(data: nil))
     }
 
@@ -78,13 +102,17 @@ import Testing
         s.capture = CaptureStatus(apps: [CapturableApp(id: "com.example.player", name: "Player", isMakingSound: true)])
         s.spotify = .running
         s.content = ContentRevisions(library: 1, upNext: 2, files: 3, spotifyHistory: 4)
+        s.queue = QueueStatus(currentID: "q3", currentSource: .appleMusic, upcomingCount: 12, isHeld: false)
+        s.pins = [PinnedPlaylist(id: "p1", source: .appleMusic, name: "Garden", trackCount: 3),
+                  PinnedPlaylist(id: "spotify:playlist:x", source: .spotify, name: "Morning")]
         s.health = HubHealth(permissions: PermissionSet(localNetwork: .granted, audioCapture: .denied),
                              extraIssues: [.sourceAppNotRunning(source: .spotify, bundleID: "com.spotify.client", name: "Spotify")])
         try roundTrip(s)
 
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as! [String: Any]
         #expect(Set(object.keys) == ["revision", "speakers", "masterVolume", "isDiscovering", "activeSource", "nowPlaying",
-                                     "transport", "capture", "spotify", "content", "health"])
+                                     "transport", "capture", "spotify", "content", "queue", "pins", "health"])
+        #expect(try json(s.queue) == #"{"currentID":"q3","currentSource":"appleMusic","isHeld":false,"isShuffled":false,"upcomingCount":12}"#)
         #expect(try json(SpeakerState.failed(reason: "Not responding")) == #"{"failed":{"reason":"Not responding"}}"#)
         #expect(try json(SpeakerID("542a1b001122")) == #""542a1b001122""#)
     }

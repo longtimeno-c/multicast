@@ -10,6 +10,7 @@ import MulticastHubModel
 import MulticastKit
 import MulticastRAOP
 import MulticastSources
+import os
 import UniformTypeIdentifiers
 
 // The real implementations of the protocols in HubDependencies.swift, on macOS.
@@ -49,7 +50,11 @@ public extension LocalHub {
 public final class KitSession: HubSessionControlling, @unchecked Sendable {
     public let session: MulticastSession
 
+    private var diagnosticsTask: Task<Void, Never>?
+
     public init(_ session: MulticastSession) { self.session = session }
+
+    deinit { diagnosticsTask?.cancel() }
 
     public var state: SessionState { session.state }
     public func stateUpdates() -> AsyncStream<SessionState> { session.updates }
@@ -59,14 +64,49 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
     public var latencySeconds: TimeInterval { Double(session.engine.snapshot.latencyMillis) / 1000 }
     public var currentSource: AudioSource? { session.currentSource }
 
-    public func start() { session.start() }
-    public func shutdown() async { await session.shutdown() }
+    public func start() {
+        session.start()
+        diagnosticsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                self?.logDiagnostics()
+            }
+        }
+    }
+
+    public func shutdown() async {
+        diagnosticsTask?.cancel()
+        await session.shutdown()
+    }
+
+    private static let diagnosticsLog = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "diagnostics")
+
+    /// While the engine plays, every 5 s: each sink's counters and the capture's (debug level, so
+    /// it costs nothing unless someone streams the log). Counters are cumulative since the sink
+    /// or capture started; names are never logged.
+    private func logDiagnostics() {
+        guard session.state.engine.transport == .playing else { return }
+        let log = Self.diagnosticsLog
+        for (i, d) in session.diagnostics().enumerated() {
+            switch d.kind {
+            case .raop:
+                log.debug("sink\(i) raop sent=\(d.packetsSent ?? 0) sendErrors=\(d.sendErrors ?? 0) resendRequests=\(d.resendRequests ?? 0) resent=\(d.packetsResent ?? 0) resendMisses=\(d.resendMisses ?? 0) timing=\(d.timingRequestsAnswered ?? 0) sync=\(d.syncPacketsSent ?? 0) receiverLatency=\(d.receiverAudioLatencyFrames ?? -1)")
+            default:
+                log.debug("sink\(i) local callbacks=\(d.renderCallbacks ?? 0) syncErrorMs=\(String(format: "%.2f", d.syncErrorMillis ?? 0), privacy: .public) ratePPM=\(String(format: "%.1f", d.rateCorrectionPPM ?? 0), privacy: .public) underrunFrames=\(d.underrunFrames ?? 0) outputLatencyMs=\(String(format: "%.1f", d.outputLatencyMillis ?? 0), privacy: .public)")
+            }
+        }
+        if #available(macOS 14.2, *), let tap = session.currentSource as? AppAudioTapSource {
+            let s = tap.statistics
+            log.debug("capture cycles=\(s.ioCycles) frames=\(s.capturedFrames) nonSilent=\(s.nonSilentCycles) inOverflow=\(s.inputOverflowFrames) outOverflow=\(s.outputOverflowFrames) underruns=\(s.underruns) driftDrops=\(s.driftDrops) driftDups=\(s.driftDuplicates) resyncs=\(s.resyncs) rebuilds=\(s.rebuilds)")
+        }
+    }
 
     public func select(_ speaker: SpeakerDescriptor, volume: Float, offsetMillis: Int) async throws {
         try await session.select(speaker, volume: volume, offsetMillis: offsetMillis)
     }
     public func deselect(speakerID: String) async { await session.deselect(speakerID: speakerID) }
     public func retry(speakerID: String) async { await session.retry(speakerID: speakerID) }
+    public func refreshSpeakers() { session.refreshSpeakers() }
 
     public func setSource(_ source: AudioSource) async throws { try await session.setSource(.custom(source)) }
     public func play() async throws { try await session.play() }
@@ -235,6 +275,23 @@ public final class WorkspaceAppPresence: AppPresenceMonitoring, @unchecked Senda
         _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
+    public func open(_ bundleID: String) async throws {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            throw HubCommandError(.unavailable, "Not installed")
+        }
+        // Activation is cooperative (macOS 14+): the active app (this one, where the person
+        // clicked) must yield to the other app, or the request is silently ignored.
+        await MainActor.run { NSApp?.yieldActivation(toApplicationWithBundleIdentifier: bundleID) }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
+        // Already running and hidden or behind other windows: bring it forward as well.
+        await MainActor.run {
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?
+                .activate(from: .current, options: [])
+        }
+    }
+
     public func iconPNG(bundleID: String, maxPixel: Int) -> Data? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let image = NSWorkspace.shared.icon(forFile: url.path)
@@ -286,18 +343,73 @@ public final class ProcessTapApps: CapturableAppsProviding, @unchecked Sendable 
 /// Spotify over Apple Events (`MediaAppController`), errors mapped to `HubCommandError`.
 public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable {
     private let controller = MediaAppController(app: .spotify)
+    private let lock = NSLock()
+    private var statusCheck: Task<PermissionStatus?, Never>?
+    /// How long `automationStatus(ask: false)` waits before answering "unknown" (the check runs
+    /// on and is reused by the next caller). The system asks Spotify itself; a Spotify that
+    /// stopped handling its scripting makes that take most of a minute.
+    public let statusWait: TimeInterval
 
-    public init() {}
+    public init(statusWait: TimeInterval = 2) { self.statusWait = statusWait }
 
-    public func changes() -> AsyncStream<NowPlaying?> { controller.changes(pollInterval: 2) }
+    /// Now playing and transport go out as raw Apple Events (`SpotifyEvents`): no AppleScript is
+    /// compiled, so none waits on the system's script scan.
+    private let events = SpotifyEvents()
+    private let eventQueue = DispatchQueue(label: "Multicast.SpotifyEvents")
 
-    public func play() async throws { try await map { try await self.controller.play() } }
-    public func pause() async throws { try await map { try await self.controller.pause() } }
-    public func next() async throws { try await map { try await self.controller.nextTrack() } }
-    public func previous() async throws { try await map { try await self.controller.previousTrack() } }
+    public func changes() -> AsyncStream<NowPlaying?> { SpotifyEventsObserver.stream(events, interval: 2) }
+
+    public func play() async throws { try await map { try await self.send { try $0.play() } } }
+    public func pause() async throws { try await map { try await self.send { try $0.pause() } } }
+    public func next() async throws { try await map { try await self.send { try $0.next() } } }
+    public func previous() async throws { try await map { try await self.send { try $0.previous() } } }
+
+    private func send(_ body: @escaping @Sendable (SpotifyEvents) throws -> Void) async throws {
+        let events = events
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            eventQueue.async { c.resume(with: Result { try body(events) }) }
+        }
+    }
+
+    public func seek(to seconds: TimeInterval) async throws {
+        try await map { try await self.controller.seek(to: seconds) }
+    }
+
+    public func play(uri: String, shuffled: Bool?) async throws {
+        try await map { try await self.controller.play(uri: uri, shuffled: shuffled) }
+    }
 
     public func automationStatus(ask: Bool) async -> PermissionStatus? {
-        switch await controller.automationPermission(askIfNeeded: ask) {
+        // Asking waits on a person; only the silent check is shared and bounded.
+        if ask { return await Self.map(controller.automationPermission(askIfNeeded: true)) }
+        let check: Task<PermissionStatus?, Never> = lock.withLock {
+            if let running = statusCheck { return running }
+            let controller = controller
+            let t = Task<PermissionStatus?, Never> { [weak self] in
+                let status = Self.map(await controller.automationPermission(askIfNeeded: false))
+                self?.lock.withLock { self?.statusCheck = nil }
+                return status
+            }
+            statusCheck = t
+            return t
+        }
+        // Whichever comes first (a task group would wait for the check anyway).
+        let wait = statusWait
+        let once = OnceFlag()
+        return await withCheckedContinuation { (c: CheckedContinuation<PermissionStatus?, Never>) in
+            Task {
+                let status = await check.value
+                if once.claim() { c.resume(returning: status) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+                if once.claim() { c.resume(returning: nil) }
+            }
+        }
+    }
+
+    private static func map(_ permission: MediaAppController.AutomationPermission) -> PermissionStatus? {
+        switch permission {
         case .granted: return .granted
         case .denied: return .denied
         case .notDetermined: return .notDetermined
@@ -305,7 +417,33 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
         }
     }
 
-    private func map(_ body: () async throws -> Void) async throws {
+    /// How long one transport command may take before the hub reports Spotify as not
+    /// responding. The script itself times out after 5 s, but compiling it (which loads
+    /// Spotify's terminology, from Spotify) is not covered by that and has been seen to hang.
+    public static let commandWait: TimeInterval = 6
+
+    private func map(_ body: @escaping @Sendable () async throws -> Void) async throws {
+        let once = OnceFlag()
+        let wait = Self.commandWait
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            Task {
+                do {
+                    try await Self.mapErrors(body)
+                    if once.claim() { c.resume() }
+                } catch {
+                    if once.claim() { c.resume(throwing: error) }
+                }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+                if once.claim() {
+                    c.resume(throwing: HubCommandError(.failed, "Spotify isn\u{2019}t responding. Quit and reopen Spotify, then try again."))
+                }
+            }
+        }
+    }
+
+    private static func mapErrors(_ body: () async throws -> Void) async throws {
         do { try await body() } catch let e as MediaAppController.MediaControlError {
             switch e {
             case .automationDenied, .automationConsentRequired:
@@ -313,6 +451,8 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
                                       "Allow Multicast to control Spotify in System Settings \u{203A} Privacy & Security \u{203A} Automation.")
             case .notRunning:
                 throw HubCommandError(.unavailable, "Spotify isn\u{2019}t open.")
+            case .scriptError(code: -1712, _):
+                throw HubCommandError(.failed, "Spotify isn\u{2019}t responding. Quit and reopen Spotify, then try again.")
             default:
                 throw HubCommandError(.failed, "Spotify didn\u{2019}t respond.")
             }
@@ -373,6 +513,22 @@ public final class LiveSystemServices: HubSystemServices, @unchecked Sendable {
         }
         guard CGImageSourceCreateWithData(data as CFData, nil) != nil else { return nil }
         return data
+    }
+
+    /// A network call to Spotify with the pasted link, only when someone pastes one.
+    public func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo? {
+        guard page.host == "open.spotify.com",
+              var c = URLComponents(string: "https://open.spotify.com/oembed") else { return nil }
+        c.queryItems = [URLQueryItem(name: "url", value: page.absoluteString)]
+        guard let url = c.url else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 5)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count < 256 * 1024,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let title = object["title"] as? String, !title.isEmpty else { return nil }
+        let thumb = (object["thumbnail_url"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil }
+        return SpotifyEmbedInfo(title: String(title.prefix(300)), thumbnailURL: thumb)
     }
 
     static func hasInternalBattery() -> Bool {

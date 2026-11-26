@@ -16,6 +16,12 @@ public final class SpeakerDirectory: @unchecked Sendable {
         /// Local device kinds that are not offered. By default the macOS "AirPlay" system output
         /// is hidden (it would route audio through the OS's own AirPlay stack a second time).
         public var hiddenLocalKinds: Set<SpeakerDescriptor.LocalKind> = [.airplaySystem]
+        /// How long a network speaker that stopped answering stays listed (see `SpeakerRoster`).
+        public var roster = SpeakerRoster.Policy()
+        /// How often held speakers are re-checked against `roster` (marking, dropping).
+        public var rosterTick: TimeInterval = 5
+        /// Re-browse the network this often (fresh queries; known speakers stay listed). nil = never.
+        public var rescanInterval: TimeInterval? = 45
         public var log: (@Sendable (String) -> Void)?
 
         public init(includeNetwork: Bool = true, includeLocal: Bool = true, hideThisMachine: Bool = true,
@@ -30,24 +36,28 @@ public final class SpeakerDirectory: @unchecked Sendable {
     public let configuration: Configuration
 
     private struct Inputs {
-        var network: [SpeakerDescriptor] = []
+        var roster: SpeakerRoster
         var local: [SpeakerDescriptor] = []
         var defaultLocalID: String?
         var tasks: [Task<Void, Never>] = []
         var running = false
     }
 
-    private let inputs = OSAllocatedUnfairLock(initialState: Inputs())
+    private let inputs: OSAllocatedUnfairLock<Inputs>
     private let broadcaster = Broadcaster<[SpeakerDescriptor]>([])
+    private let listingBroadcaster = Broadcaster<SpeakerRoster.Listing>(SpeakerRoster.Listing())
     private let browser: SpeakerBrowser?
     private var localDirectory: LocalOutputDirectory?
     private let localLock = NSLock()
 
     public init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
+        inputs = OSAllocatedUnfairLock(initialState: Inputs(roster: SpeakerRoster(policy: configuration.roster)))
         if configuration.includeNetwork {
-            browser = SpeakerBrowser(configuration: .init(hideThisMachine: configuration.hideThisMachine,
-                                                          log: configuration.log))
+            var browse = SpeakerBrowser.Configuration(hideThisMachine: configuration.hideThisMachine,
+                                                      log: configuration.log)
+            browse.rescanInterval = configuration.rescanInterval
+            browser = SpeakerBrowser(configuration: browse)
         } else {
             browser = nil
         }
@@ -58,6 +68,7 @@ public final class SpeakerDirectory: @unchecked Sendable {
         localDirectory?.invalidate()
         for t in inputs.withLock({ $0.tasks }) { t.cancel() }
         broadcaster.finish()
+        listingBroadcaster.finish()
     }
 
     // MARK: Public API
@@ -77,7 +88,16 @@ public final class SpeakerDirectory: @unchecked Sendable {
             tasks.append(Task { [weak self] in
                 for await list in stream {
                     guard let self else { return }
-                    self.inputs.withLock { $0.network = list }
+                    self.inputs.withLock { $0.roster.observe(list, at: Date()) }
+                    self.republish()
+                }
+            })
+            let tick = configuration.rosterTick
+            tasks.append(Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: UInt64(max(tick, 0.5) * 1e9))
+                    guard let self else { return }
+                    self.inputs.withLock { _ = $0.roster.prune(at: Date()) }
                     self.republish()
                 }
             })
@@ -114,7 +134,7 @@ public final class SpeakerDirectory: @unchecked Sendable {
     public func stop() {
         let tasks: [Task<Void, Never>] = inputs.withLock {
             $0.running = false
-            defer { $0.tasks = []; $0.network = []; $0.local = [] }
+            defer { $0.tasks = []; $0.roster.reset(); $0.local = [] }
             return $0.tasks
         }
         for t in tasks { t.cancel() }
@@ -127,6 +147,15 @@ public final class SpeakerDirectory: @unchecked Sendable {
 
     /// The merged list now, then on every change.
     public var updates: AsyncStream<[SpeakerDescriptor]> { broadcaster.makeStream() }
+
+    /// The merged list with the network speakers that stopped answering (still listed, see
+    /// `SpeakerRoster`), now and on every change of either.
+    public var listing: SpeakerRoster.Listing { listingBroadcaster.current }
+    public var listingUpdates: AsyncStream<SpeakerRoster.Listing> { listingBroadcaster.makeStream() }
+
+    /// Browse the network again now (e.g. a Refresh button). Known speakers stay listed while
+    /// the fresh answers come in.
+    public func refresh() { browser?.refresh() }
 
     public func speaker(id: String) -> SpeakerDescriptor? { speakers.first { $0.id == id } }
 
@@ -156,10 +185,13 @@ public final class SpeakerDirectory: @unchecked Sendable {
     // MARK: Merge
 
     private func republish() {
-        let (network, local, def) = inputs.withLock { ($0.network, $0.local, $0.defaultLocalID) }
-        let merged = SpeakerDirectory.merge(network: network, local: local, defaultLocalID: def,
+        let now = Date()
+        let (network, local, def) = inputs.withLock { ($0.roster.listing(at: now), $0.local, $0.defaultLocalID) }
+        let merged = SpeakerDirectory.merge(network: network.speakers, local: local, defaultLocalID: def,
                                             hiddenLocalKinds: configuration.hiddenLocalKinds)
         if merged != broadcaster.current { broadcaster.send(merged) }
+        let listing = SpeakerRoster.Listing(speakers: merged, notSeenSince: network.notSeenSince)
+        if listing != listingBroadcaster.current { listingBroadcaster.send(listing) }
     }
 
     /// Pure merge: local outputs first (the default output first, then by name), then network

@@ -68,13 +68,25 @@ enum Snapshotter {
         let state = scene.state
         let content = scene.content
         return HubModel(backend: MockHubBackend(state: state, content: content, artwork: artwork), state: state,
-                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing)
+                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing,
+                        openPlaylist: scene == .playlist ? openPlaylist : nil,
+                        playlistTracks: scene == .playlist ? content.playlistTracks[openPlaylist.id] ?? [] : [],
+                        showsUpNext: scene == .upNext,
+                        openFolderID: scene == .folder ? "f1" : nil)
+    }
+
+    /// The playlist the playlist scene opens.
+    private static var openPlaylist: PlaylistItem {
+        MockData.playlists.first { $0.id == "p4" } ?? MockData.playlists[0]
     }
 
     private static func fileName(_ scene: MockScene) -> String {
         switch scene {
         case .idle: "idle-no-speakers"
         case .appleMusic: "apple-music-playing"
+        case .folder: "folder-open"
+        case .playlist: "playlist-open"
+        case .upNext: "up-next"
         case .spotify: "spotify-capture"
         case .appPicker: "other-app-picker"
         case .firstRun: "first-run-looking-for-speakers"
@@ -90,7 +102,8 @@ enum Snapshotter {
         let initial = size ?? hosting.fittingSize
         // The main window gets a real titled window so its toolbar and sidebar are the
         // system's; fitted panels (popover, menu-bar panel) get a bare one.
-        let style: NSWindow.StyleMask = size == nil ? [.borderless] : [.titled, .fullSizeContentView]
+        let style: NSWindow.StyleMask = size == nil ? [.borderless]
+            : [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         let window = KeyableWindow(contentRect: NSRect(origin: CGPoint(x: -20_000, y: -20_000), size: initial),
                               styleMask: style, backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true
@@ -108,6 +121,9 @@ enum Snapshotter {
             hosting.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         }
+        // The app's window has a hidden title bar (`.windowStyle(.hiddenTitleBar)`), which a bare
+        // hosting window doesn't apply: drop the toolbar it grew, as the app's window has none.
+        if size != nil { window.toolbar = nil }
         let finalSize = size ?? hosting.fittingSize
         if finalSize != hosting.bounds.size {
             window.setContentSize(finalSize)

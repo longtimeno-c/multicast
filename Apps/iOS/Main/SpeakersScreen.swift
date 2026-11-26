@@ -41,6 +41,12 @@ struct SpeakersScreen: View {
                 // tap was here or the change came from the hub.
                 .animation(MC.Motion.state(reduceMotion), value: model.speakers.map(\.isEnabled))
             }
+            .refreshable {
+                guard session.linkProblem == nil else { return }
+                model.refreshSpeakers()
+                // The hub keeps known speakers listed; give fresh answers a moment to arrive.
+                try? await Task.sleep(for: .seconds(1.5))
+            }
             .softBottomEdge()
             .background(MC.Surface.canvas)
             .disabled(session.linkProblem != nil)
@@ -72,7 +78,11 @@ struct SpeakersScreen: View {
                 Label(session.linkProblem == nil ? "Connected" : "Not connected",
                       systemImage: session.linkProblem == nil ? "checkmark.circle" : "wifi.exclamationmark")
             }
-            Button(role: .destructive) { confirmsForget = true } label: {
+            Button(action: model.refreshSpeakers) {
+                Label("Refresh Speakers", systemImage: "arrow.clockwise")
+            }
+            .disabled(session.linkProblem != nil)
+                        Button(role: .destructive) { confirmsForget = true } label: {
                 Label("Forget This Mac", systemImage: "xmark.circle")
             }
         } label: {

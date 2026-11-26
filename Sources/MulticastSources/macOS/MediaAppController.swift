@@ -2,6 +2,7 @@
 import AppKit
 import Carbon
 import Foundation
+import os
 
 /// Queries and controls Spotify / Music through Apple Events (NSAppleScript).
 ///
@@ -100,6 +101,69 @@ public final class MediaAppController: @unchecked Sendable {
     public func nextTrack() async throws { try await command("next track") }
     public func previousTrack() async throws { try await command("previous track") }
 
+    /// Spotify only: plays a `spotify:track:`, `spotify:playlist:` or `spotify:album:` URI,
+    /// setting shuffle first when `shuffled` is given. The URI travels as an Apple Event
+    /// parameter to one script compiled once (`spotifyHandlers`): a script per URI would be
+    /// compiled, and security-scanned, again for every song.
+    public func play(uri: String, shuffled: Bool? = nil) async throws {
+        guard app == .spotify, uri.hasPrefix("spotify:"), uri.utf8.count <= 200 else {
+            throw MediaControlError.unexpectedResult("invalid uri")
+        }
+        let shuffle = shuffled.map { $0 ? "on" : "off" } ?? ""
+        try await handler("playuri", [NSAppleEventDescriptor(string: uri), NSAppleEventDescriptor(string: shuffle)])
+    }
+
+    /// Spotify only: seconds into the current track, through the same compiled script.
+    public func seek(to seconds: TimeInterval) async throws {
+        guard app == .spotify else { return try await setPosition(seconds) }
+        try await handler("seekto", [NSAppleEventDescriptor(double: max(0, seconds))])
+    }
+
+    static let spotifyHandlers = """
+    on playuri(u, shuf)
+        if application id "\(MediaApp.spotify.bundleID)" is running then
+            tell application id "\(MediaApp.spotify.bundleID)"
+                if shuf is "on" then set shuffling to true
+                if shuf is "off" then set shuffling to false
+                play track u
+            end tell
+            return "\(AppleScriptNowPlayingParser.okMarker)"
+        end if
+        return "\(AppleScriptNowPlayingParser.notRunningMarker)"
+    end playuri
+
+    on seekto(p)
+        if application id "\(MediaApp.spotify.bundleID)" is running then
+            tell application id "\(MediaApp.spotify.bundleID)" to set player position to p
+            return "\(AppleScriptNowPlayingParser.okMarker)"
+        end if
+        return "\(AppleScriptNowPlayingParser.notRunningMarker)"
+    end seekto
+    """
+
+    /// Calls one handler of `spotifyHandlers` with descriptor parameters.
+    private func handler(_ name: String, _ params: [NSAppleEventDescriptor]) async throws {
+        guard isRunning else { throw MediaControlError.notRunning }
+        let box = HandlerParams(params)
+        let out: String = try await onQueue {
+            let s = try self.script(Self.spotifyHandlers)
+            let event = NSAppleEventDescriptor(
+                eventClass: AEEventClass(kASAppleScriptSuite), eventID: AEEventID(kASSubroutineEvent),
+                targetDescriptor: .currentProcess(), returnID: AEReturnID(kAutoGenerateReturnID),
+                transactionID: AETransactionID(kAnyTransactionID))
+            event.setDescriptor(NSAppleEventDescriptor(string: name), forKeyword: AEKeyword(keyASSubroutineName))
+            let list = NSAppleEventDescriptor.list()
+            for (i, p) in box.items.enumerated() { list.insert(p, at: i + 1) }
+            event.setDescriptor(list, forKeyword: AEKeyword(keyDirectObject))
+            var err: NSDictionary?
+            let result = s.executeAppleEvent(event, error: &err)
+            if let err { throw Self.mapScriptError(err) }
+            return result.stringValue ?? ""
+        }
+        if out == AppleScriptNowPlayingParser.notRunningMarker { throw MediaControlError.notRunning }
+        guard out == AppleScriptNowPlayingParser.okMarker else { throw MediaControlError.unexpectedResult(out) }
+    }
+
     public func setPosition(_ seconds: TimeInterval) async throws {
         let s = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0, seconds))
         try await command("set player position to \(s)")
@@ -121,6 +185,11 @@ public final class MediaAppController: @unchecked Sendable {
 
     // MARK: Scripts
 
+    /// How long one script waits for the app to answer. An app that has stopped handling its
+    /// scripting (Spotify does at times while it looks fine) would otherwise hold this
+    /// controller's queue for AppleScript's default two minutes per call.
+    static let appleEventTimeout: TimeInterval = 5
+
     static func stateScript(for app: MediaApp) -> String {
         let id = app.bundleID
         let artworkExpr = app == .spotify ? "artwork url of t" : "\"\""
@@ -135,6 +204,7 @@ public final class MediaAppController: @unchecked Sendable {
             end try
         end txt
         set US to character id 31
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(id)" is running then
             tell application id "\(id)"
                 set st to ""
@@ -179,6 +249,7 @@ public final class MediaAppController: @unchecked Sendable {
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 
@@ -197,12 +268,14 @@ public final class MediaAppController: @unchecked Sendable {
 
     static func commandScript(for app: MediaApp, command: String) -> String {
         """
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(app.bundleID)" is running then
             tell application id "\(app.bundleID)" to \(command)
             return "\(AppleScriptNowPlayingParser.okMarker)"
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 
@@ -227,11 +300,20 @@ public final class MediaAppController: @unchecked Sendable {
         }
     }
 
+    static let log = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "media-app")
+
     private func script(_ source: String) throws -> NSAppleScript {
         if let s = compiled[source] { return s }
         guard let s = NSAppleScript(source: source) else { throw MediaControlError.scriptCompileFailed("init") }
         var err: NSDictionary?
-        if !s.compileAndReturnError(&err) {
+        let started = Date()
+        // Compiling can take tens of seconds the first time in an app process (the system scans
+        // the script before compiling it), and the script's own timeout does not cover it.
+        let ok = s.compileAndReturnError(&err)
+        Self.log.debug("compile \(self.app.displayName, privacy: .public) ok=\(ok) \(Int(Date().timeIntervalSince(started) * 1000))ms")
+        if !ok {
+            let code = (err?[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
+            Self.log.error("compile \(self.app.displayName, privacy: .public) failed: \(code)")
             throw MediaControlError.scriptCompileFailed(Self.mapScriptError(err).localizedDescription)
         }
         compiled[source] = s
@@ -282,6 +364,12 @@ public final class MediaAppController: @unchecked Sendable {
         if out == AppleScriptNowPlayingParser.notRunningMarker { throw MediaControlError.notRunning }
         guard out == AppleScriptNowPlayingParser.okMarker else { throw MediaControlError.unexpectedResult(out) }
     }
+}
+
+/// Descriptors built by the caller and used only on the controller's queue.
+private struct HandlerParams: @unchecked Sendable {
+    let items: [NSAppleEventDescriptor]
+    init(_ items: [NSAppleEventDescriptor]) { self.items = items }
 }
 
 /// Drives `MediaAppController.changes`.
@@ -335,7 +423,9 @@ private final class ChangeObserver: @unchecked Sendable {
             // because the controller dispatches synchronously onto its own queue.
             current = try controller.syncNowPlayingForObserver()
         } catch {
-            return // permission errors etc.: keep last value; callers can query directly for the error
+            // Permission errors etc.: keep last value; callers can query directly for the error.
+            MediaAppController.log.debug("\(self.app.displayName, privacy: .public) status failed: \(String(describing: error), privacy: .public)")
+            return
         }
         switch last {
         case .none:

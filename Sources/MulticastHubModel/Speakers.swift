@@ -99,12 +99,15 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     public var state: SpeakerState
     /// Per-speaker playout offset in milliseconds. Negative plays earlier.
     public var syncTrimMs: Int
+    /// Set while a network speaker has stopped answering on the network (it stays listed for a
+    /// while in case it comes back): when it was last heard. nil = answering, or a local output.
+    public var notSeenSince: Date?
 
     public static let syncTrimRange: ClosedRange<Int> = -500...500
 
     public init(id: SpeakerID, name: String, transport: SpeakerTransport, glyph: SpeakerGlyph,
                 model: String? = nil, address: String? = nil, isEnabled: Bool = false,
-                volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0) {
+                volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0, notSeenSince: Date? = nil) {
         self.id = id
         self.name = name
         self.transport = transport
@@ -115,6 +118,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         self.volume = volume
         self.state = state
         self.syncTrimMs = syncTrimMs
+        self.notSeenSince = notSeenSince
     }
 
     /// What the speaker actually plays at: its own level scaled by the master.

@@ -160,6 +160,8 @@ private struct Item: Identifiable, Codable, Equatable, Sendable {
         #expect(HubCommand.play.category == .transport)
         #expect(HubCommand.captureApp(bundleID: "x").category == .source)
         #expect(HubCommand.setMasterVolume(volume: 1).category == .speaker)
+        #expect(HubCommand.clearQueue.category == .queue)
+        #expect(HubCommand.pinPlaylist(id: "p").category == .queue)
         #expect(HubCommand.setSpeakerVolume(id: "a", volume: 0.1).coalescingKey
                 == HubCommand.setSpeakerVolume(id: "a", volume: 0.9).coalescingKey)
         #expect(HubCommand.setSpeakerVolume(id: "a", volume: 0.1).coalescingKey
@@ -185,7 +187,7 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
     }
     func songs(_ page: PageRequest) async throws -> Page<TrackItem> { .slice(songsList, page) }
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> { .empty }
-    func upNext(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+    func upNext(_ page: PageRequest) async throws -> Page<QueueItem> { .empty }
     func files(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
     func spotifyHistory(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
     func perform(_ command: HubCommand) async throws {
@@ -266,5 +268,54 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
         var late = 0
         for await _ in b.stream() { late += 1 }
         #expect(late == 1)
+    }
+}
+
+@Suite struct PagedListEditTests {
+    private func list() -> PagedList<QueueItem> {
+        PagedList(items: ["a", "b", "c", "d"].map {
+            QueueItem(id: $0, source: .appleMusic, track: TrackItem(id: "t\($0)", title: $0, artist: "", album: "", duration: 1))
+        })
+    }
+
+    @Test func movesRemovesAndDropsThrough() {
+        var l = list()
+        l.move(fromOffsets: [3], toOffset: 0)
+        #expect(l.items.map(\.id) == ["d", "a", "b", "c"])
+        l.move(fromOffsets: [0, 1], toOffset: 4)
+        #expect(l.items.map(\.id) == ["b", "c", "d", "a"])
+        l.removeAll(ids: ["c"])
+        #expect(l.items.map(\.id) == ["b", "d", "a"] && l.totalCount == 3)
+        l.removeThrough("d")
+        #expect(l.items.map(\.id) == ["a"] && l.totalCount == 1)
+    }
+}
+
+@Suite struct PlaylistTreeTests {
+    let items = [
+        PlaylistItem(id: "p1", name: "Top", trackCount: 2, artworkID: "a1"),
+        PlaylistItem(id: "f1", name: "Evenings", trackCount: 9, isFolder: true),
+        PlaylistItem(id: "p2", name: "Dinner", trackCount: 4, artworkID: "a2", parentID: "f1"),
+        PlaylistItem(id: "f2", name: "Weekends", trackCount: 5, isFolder: true, parentID: "f1"),
+        PlaylistItem(id: "p3", name: "Sunday", trackCount: 5, artworkID: "a3", parentID: "f2"),
+        PlaylistItem(id: "p4", name: "Lost", trackCount: 1, parentID: "gone"),
+    ]
+
+    @Test func buildsTheTree() {
+        let t = PlaylistTree(items)
+        #expect(t.items(in: nil).map(\.id) == ["f1", "p1", "p4"])   // folders first; an orphan shows at the top
+        #expect(t.items(in: "f1").map(\.id) == ["f2", "p2"])
+        #expect(t.path(to: "p3").map(\.id) == ["f1", "f2"])
+        #expect(t.path(to: "p1").isEmpty)
+        #expect(t.mosaic(for: "f1") == ["a2", "a3"])
+        #expect(t.playlistCount(in: "f1") == 2)
+    }
+
+    @Test func survivesACycle() {
+        let loop = [PlaylistItem(id: "a", name: "A", trackCount: 0, isFolder: true, parentID: "b"),
+                    PlaylistItem(id: "b", name: "B", trackCount: 0, isFolder: true, parentID: "a")]
+        let t = PlaylistTree(loop)
+        #expect(t.path(to: "a").count <= 1)
+        #expect(t.playlistCount(in: "a") == 0)
     }
 }

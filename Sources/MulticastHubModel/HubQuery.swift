@@ -13,6 +13,7 @@ public enum HubQuery: Equatable, Hashable, Sendable, Codable {
     case songs(page: PageRequest)
     /// Library search by title, artist or album. An empty query returns an empty page.
     case search(query: String, page: PageRequest)
+    /// The hub's Up Next (answered with `.queue`).
     case upNext(page: PageRequest)
     case files(page: PageRequest)
     case spotifyHistory(page: PageRequest)
@@ -27,6 +28,7 @@ public enum HubQuery: Equatable, Hashable, Sendable, Codable {
 public enum HubQueryResult: Equatable, Sendable, Codable {
     case playlists(page: Page<PlaylistItem>)
     case tracks(page: Page<TrackItem>)
+    case queue(page: Page<QueueItem>)
     /// Encoded image bytes (PNG or JPEG), nil when the id is unknown.
     case artwork(data: Data?)
 
@@ -37,6 +39,11 @@ public enum HubQueryResult: Equatable, Sendable, Codable {
 
     public var tracks: Page<TrackItem>? {
         if case .tracks(let p) = self { return p }
+        return nil
+    }
+
+    public var queue: Page<QueueItem>? {
+        if case .queue(let p) = self { return p }
         return nil
     }
 

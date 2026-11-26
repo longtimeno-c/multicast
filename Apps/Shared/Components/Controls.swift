@@ -159,7 +159,9 @@ struct SpeakerStatusLine: View {
 
     private var text: String {
         switch speaker.state {
-        case .off, .ready, .playing: speaker.kindDescription
+        case .off, .ready, .playing:
+            // Still listed in case it comes back; say it has gone quiet rather than drop it.
+            speaker.notSeenSince == nil ? speaker.kindDescription : "Not seen on the network"
         case .connecting: "Connecting\u{2026}"
         case .failed(let reason): reason
         }

@@ -99,6 +99,8 @@ public protocol AppleMusicProviding: AnyObject, Sendable {
     /// Plays `trackID`; what follows it depends on `context` (see each backend).
     func play(trackID: String, context: TrackContext) async throws
     func play(playlistID: String, shuffled: Bool) async throws
+    /// Plays one track and stops after it.
+    func playOnce(trackID: String) async throws
     /// Whether `insertNext` / `append` work on this backend.
     var supportsQueueEditing: Bool { get }
     func insertNext(trackIDs: [String]) async throws
@@ -135,10 +137,15 @@ public enum AppleMusicProviderFactory {
     public static func make(_ kind: AppleMusicBackendKind) -> AppleMusicProviding {
         switch kind {
         case .musicApp: return MusicAppPlayer()
-        case .musicKit: return MusicKitPlayer()
+        case .musicKit: return MusicKitPlayer(renderer: .apps(bundleIDs: [MusicKitPlayer.remotePlayerServiceBundleID]))
         }
     }
     #endif
+}
+
+public extension AppleMusicProviding {
+    /// Plays one track and stops after it. The default starts it as a library song.
+    func playOnce(trackID: String) async throws { try await play(trackID: trackID, context: .songs) }
 }
 
 public extension AppleMusicProviding {

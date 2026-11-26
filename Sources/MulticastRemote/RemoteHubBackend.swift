@@ -561,7 +561,12 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
     public func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
         try await tracks(.search(query: query, page: page))
     }
-    public func upNext(_ page: PageRequest) async throws -> Page<TrackItem> { try await tracks(.upNext(page: page)) }
+    public func upNext(_ page: PageRequest) async throws -> Page<QueueItem> {
+        guard let p = try await query(.upNext(page: page)).queue else {
+            throw HubCommandError(.failed, "Unexpected answer from the Mac.")
+        }
+        return p
+    }
     public func files(_ page: PageRequest) async throws -> Page<TrackItem> { try await tracks(.files(page: page)) }
     public func spotifyHistory(_ page: PageRequest) async throws -> Page<TrackItem> {
         try await tracks(.spotifyHistory(page: page))

@@ -350,7 +350,7 @@ struct LocalHubSourceTests {
         #expect(rig.state.spotify == .notRunning)
         try await rig.hub.perform(.openSpotify)
         try await rig.waitFor("running") { $0.spotify == .running }
-        #expect(rig.apps.launched.get() == [spotifyID])
+        #expect(rig.apps.opened.get() == [spotifyID])
 
         // Files playing, then switch to Spotify: Spotify's own state decides.
         let dir = temporaryDirectory()
@@ -369,11 +369,14 @@ struct LocalHubSourceTests {
         try await rig.waitFor("spotify playing") { $0.nowPlaying?.title == "Song A" && $0.transport.isPlaying }
         await rig.hub.settle()
         let t = rig.state.transport
-        #expect(!t.canSeek && t.canSkip)
+        #expect(t.canSeek && t.canSkip)
         #expect(t.position == 10 && t.positionAsOf == sampled.addingTimeInterval(2))  // heard after the latency
         #expect(rig.state.nowPlaying?.artworkID == "hub.url:https://img.example/a.jpg")
         #expect(rig.session.transport == .playing)
-        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.seek(position: 5)) }
+        // Seeking goes to Spotify and flushes the speakers.
+        try await rig.hub.perform(.seek(position: 170))
+        await rig.hub.settle()
+        #expect(rig.spotify.commands.get().last == "seek 170")
 
         // Transport goes to Spotify; skip flushes and re-anchors the speakers.
         let before = rig.session.calls.filter { $0 == "pause" }.count
@@ -383,8 +386,9 @@ struct LocalHubSourceTests {
         #expect(rig.session.calls.filter { $0 == "pause" }.count == before + 1)
         rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song B", artist: "Band",
                                            trackID: "spotify:track:b", sampledAt: rig.clock.now))
-        try await rig.waitFor("history") { $0.content.spotifyHistory == 1 }
-        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:a"])
+        try await rig.waitFor("history") { $0.nowPlaying?.trackID == "spotify:track:b" && $0.content.spotifyHistory >= 2 }
+        // The current song first, then the earlier ones.
+        #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:b", "spotify:track:a"])
 
         try await rig.hub.perform(.pause)
         await rig.hub.settle()
@@ -514,7 +518,7 @@ struct LocalHubSourceTests {
 
         try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
         try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
-        #expect(player.commands.get() == ["play s1"])
+        #expect(player.commands.get() == ["once s1"])
         player.publish {
             $0.isPlaying = true
             $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", duration: 200, trackID: "s1")
@@ -688,3 +692,170 @@ struct LocalHubReviewFixTests {
         #expect(rig.sources.captures.get().map(\.bundleID) == ["com.example.player"])
     }
 }
+
+@Suite("LocalHub slow apps and no speakers")
+struct LocalHubResponsivenessTests {
+    let spotifyID = LocalHub.spotifyBundleID
+
+    /// Clock-free deadline for "this must not wait on the gate".
+    private func within(_ seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> Void) async throws -> Bool {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { try await body(); return true }
+            group.addTask { try await Task.sleep(nanoseconds: UInt64(seconds * 1e9)); return false }
+            let first = try await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    @Test func aSlowSpotifyPermissionCheckHoldsUpNothing() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        rig.spotify.automation.set(.granted)
+        rig.spotify.checkGate.close()
+        await rig.hub.start()
+        let hub = rig.hub
+        // tick() returns although the check is still running, and the work queue (where the
+        // first tick is queued) still selects speakers and starts the engine.
+        #expect(try await within(1) { await hub.tick() })
+        let dir = temporaryDirectory()
+        try await rig.addFiles(["one.m4a"], in: dir)
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        try await rig.hub.perform(.playTrack(id: "file-1", context: .files))
+        var engineStarted = false
+        for _ in 0..<200 where !engineStarted {
+            engineStarted = rig.session.transport == .playing
+            if !engineStarted { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        #expect(engineStarted)
+        #expect(rig.state.health.permission(.automation) != .granted)
+
+        rig.spotify.checkGate.open()
+        try await rig.waitFor("automation known") { $0.health.permission(.automation) == .granted }
+    }
+
+    @Test func switchingToAppleMusicDoesNotWaitForSpotifyToPause() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song A", trackID: "a", sampledAt: rig.clock.now))
+        try await rig.waitFor("spotify playing") { $0.transport.isPlaying }
+
+        rig.spotify.pauseGate.close()
+        try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
+        player.publish { $0.isPlaying = true; $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", trackID: "s1") }
+        try await rig.waitFor("apple music on the engine") { $0.activeSource == .appleMusic && $0.transport.isPlaying }
+        #expect(rig.session.transport == .playing)
+        #expect(!rig.spotify.commands.get().contains("pause"))
+        rig.spotify.pauseGate.open()
+        for _ in 0..<200 where !rig.spotify.commands.get().contains("pause") { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(rig.spotify.commands.get().contains("pause"))
+    }
+
+    @Test func appleMusicPlaysWithNoSpeakerAndJoinsWhenOneIsTurnedOn() async throws {
+        let rig = Rig()
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        // No error: Music starts the song (on the Mac) and the engine stays off.
+        try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
+        // The queue plays one song at a time and advances itself.
+        #expect(player.commands.get() == ["once s1"])
+        player.publish { $0.isPlaying = true; $0.nowPlaying = NowPlayingInfo(title: "Tide", artist: "Harbour", trackID: "s1") }
+        try await rig.waitFor("music playing") { $0.activeSource == .appleMusic && $0.transport.isPlaying }
+        await rig.hub.settle()
+        #expect(rig.session.transport != .playing)
+
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        try await rig.waitFor("captured on the speaker") { $0.speaker("542a1b003344")?.state == .playing }
+        #expect(rig.session.transport == .playing)
+
+        // Transport Play with no speaker is allowed for a media app too.
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: false))
+        await rig.hub.settle()
+        try await rig.hub.perform(.play)
+        #expect(player.commands.get().last == "play")
+    }
+
+    @Test func openSpotifyBringsItForwardAndChoosingAClosedSpotifyOpensIt() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        // Running already: still brought forward (it used to be a silent background launch).
+        try await rig.hub.perform(.openSpotify)
+        #expect(rig.apps.opened.get() == [spotifyID])
+
+        rig.apps.setRunning(spotifyID, false)
+        try await rig.waitFor("closed") { $0.spotify == .notRunning }
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        await rig.hub.settle()
+        #expect(rig.apps.launched.get() == [spotifyID])
+        #expect(rig.state.activeSource == .spotify)
+        #expect(rig.state.spotify == .running)
+        #expect(rig.sources.captures.get().map(\.bundleID) == [spotifyID])
+    }
+
+    @Test func theMusicTapClearsAStaleCaptureDenial() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        // A Spotify tap that only ever heard silence reads as denied…
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        await rig.hub.settle()
+        let spotifyTap = try #require(rig.sources.captures.get().first)
+        spotifyTap.evidence.send(.denied)
+        try await rig.waitFor("denied") { $0.health.permission(.audioCapture) == .denied }
+        // …and the Music tap hearing sound puts it right.
+        try await rig.hub.perform(.selectSource(source: .appleMusic))
+        await rig.hub.settle()
+        let musicTap = try #require(rig.session.currentSource as? FakeCaptureSource)
+        #expect(musicTap.bundleID == "music")
+        musicTap.evidence.send(.granted)
+        try await rig.waitFor("granted") { $0.health.permission(.audioCapture) == .granted }
+    }
+
+    @Test func switchingToAppleMusicPausesSpotifyWithNoSpeakerOn() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song A", trackID: "a", sampledAt: rig.clock.now))
+        try await rig.waitFor("spotify playing") { $0.transport.isPlaying }
+        try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
+        for _ in 0..<200 where !rig.spotify.commands.get().contains("pause") { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(rig.spotify.commands.get().contains("pause"))
+    }
+
+    @Test func aStaleBackgroundCheckDoesNotUndoADenialFromACommand() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        rig.spotify.automation.set(.notDetermined)
+        await rig.start()
+        rig.spotify.checkGate.close()
+        await rig.hub.tick()  // starts a check that is held at the gate
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.failWith.set(HubCommandError(.permissionMissing, "Allow it"))
+        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.play) }
+        #expect(rig.state.health.permission(.automation) == .denied)
+        rig.spotify.checkGate.open()  // the old check now answers "not determined"
+        await rig.hub.settle()
+        #expect(rig.state.health.permission(.automation) == .denied)
+    }
+}
+

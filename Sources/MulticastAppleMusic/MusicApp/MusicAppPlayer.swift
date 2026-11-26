@@ -12,7 +12,8 @@ import MulticastSources
 /// - Library: the whole song list is read in five bulk Apple Events, sorted by title and kept
 ///   in memory (`LibraryIndex`); songs, search and paging are then local. It is refreshed when
 ///   `libraryTTL` has passed and Music's track count changed, or on `invalidateLibrary()`.
-/// - Playlists: user playlists (regular and smart, not folders), artwork from the first track.
+/// - Playlists: user playlists (regular and smart) and playlist folders, each with the folder
+///   it sits in, artwork from the first track. A folder's tracks are all the tracks inside it.
 /// - Up next: Music does not expose its queue to other apps. This reports the tracks after the
 ///   current one in the playlist Music is playing (nothing while shuffle is on), and
 ///   `insertNext` / `append` throw `.unsupported`.
@@ -47,6 +48,9 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
     public let pollInterval: TimeInterval
 
     private let queue = DispatchQueue(label: "Multicast.MusicAppPlayer", qos: .userInitiated)
+    /// Artwork look-ups wait here and enter `queue` one at a time, so a page of rows asking for
+    /// covers never queues up ahead of a play or pause (each is one Apple Event of ~50 ms).
+    private let artworkLane = DispatchQueue(label: "Multicast.MusicAppPlayer.artwork", qos: .utility)
     private var script: NSAppleScript?
     private var library: (index: LibraryIndex, checkedAt: Date)?
     private var playlistCache: (items: [PlaylistItem], builtAt: Date)?
@@ -70,6 +74,11 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
         fanout = SnapshotFanout { [weak self] active in
             self?.queue.async { active ? self?.startObserving() : self?.stopObserving() }
         }
+        // Compile now, off every caller's path, when Music is already open: the system
+        // security-scans a script before an app compiles it, which can take tens of seconds in
+        // a fresh process. (Compiling reads Music's terminology from Music itself and would
+        // launch it, so a closed Music is compiled for right after `ensureRunning` opens it.)
+        if Self.isRunning { queue.async { [weak self] in _ = try? self?.compiledScript() } }
     }
 
     deinit {
@@ -194,7 +203,7 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
         guard case .musicAppTrack(let pid)? = AppleMusicArtworkRef(artworkID: id) else { return nil }
         let key = ArtworkCache.Key(id: id, maxPixel: max(0, maxPixel))
         if let hit = artworkCache.data(for: key) { return hit }
-        guard Self.isRunning, let reply = try? await call("artworkdata", .init(string: pid)) else { return nil }
+        guard Self.isRunning, let reply = try? await artworkCall(pid) else { return nil }
         if reply.descriptorType == typeUnicodeText || reply.descriptorType == typeUTF8Text || MusicAppParsing.isMissing(reply) {
             return nil
         }
@@ -252,9 +261,18 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
             _ = try await call("playtrack", .init(string: trackID), .init(string: pid))
         case .upNext:
             _ = try await call("playincurrent", .init(string: trackID))
-        case .files:
-            throw HubCommandError(.unsupported, "Files aren't played through Apple Music.")
+        case .files, .spotifyHistory:
+            throw HubCommandError(.unsupported, "That isn't played through Apple Music.")
         }
+        refreshSoon()
+    }
+
+    /// Plays one library track and stops after it (`play … once true`), so Music never carries
+    /// on into its own idea of what comes next: the hub's queue does that.
+    public func playOnce(trackID: String) async throws {
+        try Self.validate(id: trackID)
+        try await ensureRunning()
+        _ = try await call("playonce", .init(string: trackID))
         refreshSoon()
     }
 
@@ -416,9 +434,30 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
     private func call(_ handler: String, _ params: NSAppleEventDescriptor...) async throws -> NSAppleEventDescriptor {
         // Descriptors are created here and used only on the queue afterwards.
         let boxed = DescriptorBox(params)
+        let enqueued = MulticastTiming.now
         return try await withCheckedThrowingContinuation { c in
             queue.async {
-                c.resume(with: Result { try self.runSync(handler, boxed.items) }.map(DescriptorBox.one))
+                let started = MulticastTiming.now
+                let result = Result { try self.runSync(handler, boxed.items) }
+                MulticastTiming.log.debug("music.ae \(handler, privacy: .public) wait=\((started &- enqueued) / 1_000_000)ms run=\(MulticastTiming.ms(since: started))ms ok=\((try? result.get()) != nil)")
+                c.resume(with: result.map(DescriptorBox.one))
+            }
+        }.items[0]
+    }
+
+    /// `artworkdata` through the artwork lane (see `artworkLane`).
+    private func artworkCall(_ pid: String) async throws -> NSAppleEventDescriptor {
+        let boxed = DescriptorBox([NSAppleEventDescriptor(string: pid)])
+        let enqueued = MulticastTiming.now
+        return try await withCheckedThrowingContinuation { c in
+            artworkLane.async {
+                let result: Result<DescriptorBox, Error> = self.queue.sync {
+                    let started = MulticastTiming.now
+                    let r = Result { try self.runSync("artworkdata", boxed.items) }.map(DescriptorBox.one)
+                    MulticastTiming.log.debug("music.ae artworkdata wait=\((started &- enqueued) / 1_000_000)ms run=\(MulticastTiming.ms(since: started))ms")
+                    return r
+                }
+                c.resume(with: result)
             }
         }.items[0]
     }
@@ -451,7 +490,10 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
             throw HubCommandError(.failed, "The Music script could not be created.")
         }
         var err: NSDictionary?
-        guard s.compileAndReturnError(&err) else {
+        let started = MulticastTiming.now
+        let compiled = s.compileAndReturnError(&err)
+        MulticastTiming.log.debug("music.script compile ok=\(compiled) \(MulticastTiming.ms(since: started))ms")
+        guard compiled else {
             let message = (err?[NSAppleScript.errorMessage] as? String) ?? "unknown"
             throw HubCommandError(.failed, "The Music script did not compile: \(message)")
         }

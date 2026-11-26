@@ -31,17 +31,118 @@ public struct TrackItem: Identifiable, Equatable, Hashable, Sendable, Codable {
     }
 }
 
+/// A playlist or a playlist folder. The playlists query lists both, flat, in library order;
+/// `parentID` names the folder an item sits in (nil at the top), so clients build the tree.
+/// A folder's `trackCount` counts every song inside it, and playing a folder plays them all.
+///
+/// Wire form: `{"id":"p1","name":"Garden","trackCount":3}`, plus `"isFolder":true` for a
+/// folder and `"parentID":"f1"` inside one. Both are omitted when false / nil, and default when
+/// missing, so builds from before folders read and write the same playlists.
 public struct PlaylistItem: Identifiable, Equatable, Hashable, Sendable, Codable {
     public let id: String
     public var name: String
     public var trackCount: Int
     public var artworkID: ArtworkID?
+    /// A playlist folder (Music's "folder playlist").
+    public var isFolder: Bool
+    /// The folder this item sits in; nil at the top of the library.
+    public var parentID: String?
 
-    public init(id: String, name: String, trackCount: Int, artworkID: ArtworkID? = nil) {
+    public init(id: String, name: String, trackCount: Int, artworkID: ArtworkID? = nil,
+                isFolder: Bool = false, parentID: String? = nil) {
         self.id = id
         self.name = name
         self.trackCount = trackCount
         self.artworkID = artworkID
+        self.isFolder = isFolder
+        self.parentID = parentID
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, trackCount, artworkID, isFolder, parentID }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        trackCount = try c.decode(Int.self, forKey: .trackCount)
+        artworkID = try c.decodeIfPresent(ArtworkID.self, forKey: .artworkID)
+        isFolder = try c.decodeIfPresent(Bool.self, forKey: .isFolder) ?? false
+        parentID = try c.decodeIfPresent(String.self, forKey: .parentID)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(trackCount, forKey: .trackCount)
+        try c.encodeIfPresent(artworkID, forKey: .artworkID)
+        if isFolder { try c.encode(true, forKey: .isFolder) }
+        try c.encodeIfPresent(parentID, forKey: .parentID)
+    }
+}
+
+/// The playlist tree, from the flat list the playlists query returns.
+public struct PlaylistTree: Equatable, Sendable {
+    public let all: [PlaylistItem]
+    private let children: [String: [PlaylistItem]]
+    private let byID: [String: PlaylistItem]
+
+    public init(_ items: [PlaylistItem]) {
+        all = items
+        let ids = Set(items.map(\.id))
+        var children: [String: [PlaylistItem]] = [:]
+        // An item whose folder isn't listed shows at the top rather than vanishing.
+        for item in items { children[item.parentID.flatMap { ids.contains($0) ? $0 : nil } ?? "", default: []].append(item) }
+        self.children = children
+        byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The items directly in `folderID` (nil: the top of the library), folders first, each
+    /// group in library order, as Music lists them.
+    public func items(in folderID: String?) -> [PlaylistItem] {
+        let list = children[folderID ?? ""] ?? []
+        return list.filter(\.isFolder) + list.filter { !$0.isFolder }
+    }
+
+    public func item(_ id: String) -> PlaylistItem? { byID[id] }
+
+    /// The folders from the top down to (not including) `id`.
+    public func path(to id: String) -> [PlaylistItem] {
+        var out: [PlaylistItem] = []
+        var seen: Set<String> = [id]
+        var next = byID[id]?.parentID
+        while let p = next, let folder = byID[p], seen.insert(p).inserted {
+            out.insert(folder, at: 0)
+            next = folder.parentID
+        }
+        return out
+    }
+
+    /// Up to four covers for a folder's mosaic: its playlists first, then its sub-folders'.
+    public func mosaic(for folderID: String, limit: Int = 4) -> [ArtworkID] {
+        var out: [ArtworkID] = []
+        var queue = [folderID]
+        var seen: Set<String> = []
+        while let f = queue.first, out.count < limit {
+            queue.removeFirst()
+            guard seen.insert(f).inserted else { continue }
+            let items = children[f] ?? []
+            for p in items where !p.isFolder { if let a = p.artworkID, !out.contains(a) { out.append(a) } }
+            queue += items.filter(\.isFolder).map(\.id)
+        }
+        return Array(out.prefix(limit))
+    }
+
+    /// How many playlists sit anywhere inside `folderID`.
+    public func playlistCount(in folderID: String) -> Int {
+        var n = 0
+        var queue = [folderID]
+        var seen: Set<String> = []
+        while let f = queue.popLast() {
+            guard seen.insert(f).inserted else { continue }
+            for p in children[f] ?? [] { if p.isFolder { queue.append(p.id) } else { n += 1 } }
+        }
+        return n
     }
 }
 
@@ -101,16 +202,20 @@ public struct Page<Item: Sendable & Codable & Equatable>: Equatable, Sendable, C
 /// Where a track was chosen, so the hub knows what plays after it.
 ///
 /// Wire form (synthesized): `{"songs":{}}`, `{"playlist":{"id":"p1"}}`, `{"upNext":{}}`,
-/// `{"search":{"query":"tide"}}`, `{"files":{}}`.
+/// `{"search":{"query":"tide"}}`, `{"files":{}}`, `{"spotifyHistory":{}}`.
+///
+/// Playing a song from a context makes Up Next everything after it in that context.
 public enum TrackContext: Equatable, Hashable, Sendable, Codable {
     /// The whole song library, in library order.
     case songs
     /// A playlist, in playlist order.
     case playlist(id: String)
-    /// Jump within the current up-next queue.
+    /// Jump to an entry of the hub's Up Next (`id` is a `QueueItem.id`).
     case upNext
     /// A library search result list.
     case search(query: String)
     /// The file queue.
     case files
+    /// Spotify songs heard this session (`id` is a `spotify:track:` URI).
+    case spotifyHistory
 }

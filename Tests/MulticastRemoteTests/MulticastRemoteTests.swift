@@ -325,7 +325,7 @@ import Testing
         // A remote that can't prove the key is refused by the Mac (raw client, bad proof).
         let link = try await rawLink(port: port)
         let eph = Curve25519.KeyAgreement.PrivateKey()
-        try await link.send(WireJSON.encode(Hello(minVersion: 1, maxVersion: 1, remoteID: "remote-a", remoteName: "x",
+        try await link.send(WireJSON.encode(Hello(minVersion: RemoteProtocol.currentVersion, maxVersion: RemoteProtocol.currentVersion, remoteID: "remote-a", remoteName: "x",
                                                   intent: .session(nonce: randomBytes(32), ephemeralKey: eph.publicKey.rawRepresentation))))
         guard case .sessionChallenge = try await link.receiveHandshake(timeout: 2, "challenge") else {
             Issue.record("no challenge")
@@ -420,7 +420,7 @@ import Testing
     @Test func refusesIncompatibleVersionsWithAClearMessage() async throws {
         let stores = Fixture.pairedStores()
         // A hub newer than this remote.
-        let (server, port) = try await startServer(TestBackend(), store: stores.hub) { $0.supportedVersions = 2...3 }
+        let (server, port) = try await startServer(TestBackend(), store: stores.hub) { $0.supportedVersions = 3...4 }
         defer { Task { await server.stop() } }
         let remote = RemoteHubBackend(configuration: Fixture.remoteConfig(port: port), keyStore: stores.remote)
         defer { Task { await remote.stop() } }
@@ -440,7 +440,7 @@ import Testing
             Issue.record("not refused")
             return
         }
-        #expect(refusal.code == .incompatibleVersion && refusal.hubMinVersion == 1 && refusal.hubMaxVersion == 1)
+        #expect(refusal.code == .incompatibleVersion && refusal.hubMinVersion == RemoteProtocol.oldestVersion && refusal.hubMaxVersion == RemoteProtocol.currentVersion)
         #expect(refusal.message.hasSuffix("Update Multicast on the Mac."))
     }
 
@@ -464,7 +464,7 @@ import Testing
         #expect(await serverCloses(junk))
         // An unknown remote id with path characters.
         let path = try await rawLink(port: port)
-        try await path.send(WireJSON.encode(Hello(minVersion: 1, maxVersion: 1, remoteID: "../../etc", remoteName: "x",
+        try await path.send(WireJSON.encode(Hello(minVersion: RemoteProtocol.currentVersion, maxVersion: RemoteProtocol.currentVersion, remoteID: "../../etc", remoteName: "x",
                                                   intent: .session(nonce: randomBytes(32), ephemeralKey: randomBytes(32)))))
         #expect(await serverCloses(path))
         // Silence: dropped after the handshake timeout.
@@ -476,7 +476,7 @@ import Testing
         // After authenticating: a sealed frame of junk, a frame that isn't sealed, an oversized frame.
         for attack in 0..<3 {
             let link = try await rawLink(port: port)
-            let identity = RemoteIdentity(remoteID: "remote-a", remoteName: "Raw", versions: 1...1)
+            let identity = RemoteIdentity(remoteID: "remote-a", remoteName: "Raw", versions: RemoteProtocol.supportedVersions)
             guard case .established = try await ClientHandshake.openSession(link, identity: identity, keyStore: stores.remote,
                                                                             expectedHubID: Fixture.hubID, timeout: 2) else {
                 Issue.record("handshake failed")
@@ -509,7 +509,7 @@ import Testing
         let events = server.events()
         // Authenticates, then never reads or writes again.
         let link = try await rawLink(port: port)
-        let identity = RemoteIdentity(remoteID: "remote-a", remoteName: "Raw", versions: 1...1)
+        let identity = RemoteIdentity(remoteID: "remote-a", remoteName: "Raw", versions: RemoteProtocol.supportedVersions)
         _ = try await ClientHandshake.openSession(link, identity: identity, keyStore: stores.remote,
                                                   expectedHubID: Fixture.hubID, timeout: 2)
         let event = try await first(events, within: 4, "disconnect") {

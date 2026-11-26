@@ -167,6 +167,8 @@ final class RenderSim {
         #expect(l[63...].allSatisfy { $0 == 0 })
         sim.callback()
         #expect(sim.left.allSatisfy { $0 == 0 })
+        // The deliberate silence after a flush is not counted as an underrun.
+        #expect(sim.core.snapshotStats().underrunFrames == 0)
     }
 
     @Test func gainIsRampedAndApplied() {

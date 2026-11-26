@@ -7,12 +7,12 @@ import MusicKit
 
 /// Apple Music through MusicKit's `ApplicationMusicPlayer`, inside Multicast.
 ///
-/// STATUS: compiled, NOT proven end to end. It needs (a) the app signed under the team whose App
-/// ID has the MusicKit service (Apps/Config/Mac.xcconfig) and (b) the Apple Music permission,
-/// which a person must grant in the system prompt. Until `MusicKitRenderProbe` has run with
-/// the permission granted, which process renders `ApplicationMusicPlayer` audio on macOS is
-/// unknown, so `renderer` must be supplied from that probe's result. Prefer `MusicAppPlayer`
-/// until then.
+/// Needs (a) the app signed under the team whose App ID has the MusicKit service
+/// (Apps/Config/Mac.xcconfig) and (b) the Apple Music permission, which a person must grant in
+/// the system prompt. `ApplicationMusicPlayer` audio is rendered by the system process
+/// `com.apple.MediaPlayer.RemotePlayerService`, not by Multicast, so the hub taps that
+/// (`AppleMusicProviderFactory` passes `.apps([remotePlayerServiceBundleID])`). The tap waits
+/// for the process, which starts with the first playback.
 ///
 /// DRM: MusicKit never hands out samples; the sound reaches Multicast only through a process
 /// tap on whichever process renders it (`makeAudioSource()`).
@@ -26,6 +26,10 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
         /// A separate process (a system helper), by bundle id.
         case apps(bundleIDs: [String])
     }
+
+    /// The system process that renders `ApplicationMusicPlayer` audio on macOS (measured: a
+    /// tap on it hears MusicKit playback; Multicast's own process stays silent).
+    public static let remotePlayerServiceBundleID = "com.apple.MediaPlayer.RemotePlayerService"
 
     public let kind = AppleMusicBackendKind.musicKit
     public let supportsQueueEditing = true
@@ -191,8 +195,8 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
                 return true
             }
             guard found else { throw HubCommandError(.notFound, "That song is no longer in Up Next.") }
-        case .files:
-            throw HubCommandError(.unsupported, "Files aren't played through Apple Music.")
+        case .files, .spotifyHistory:
+            throw HubCommandError(.unsupported, "That isn't played through Apple Music.")
         }
         try await wrap { try await self.player.play() }
         bumpUpNext()
@@ -322,8 +326,8 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
 
     // MARK: Capture
 
-    /// UNVERIFIED target: see `Renderer`. With `.thisProcess` the tap also captures and mutes
-    /// Multicast's own local-speaker output.
+    /// A tap on `renderer`. With `.thisProcess` the tap also captures and mutes Multicast's own
+    /// local-speaker output, so the hub uses `.apps([remotePlayerServiceBundleID])`.
     public func makeAudioSource() -> AudioSource {
         switch renderer {
         case .thisProcess:

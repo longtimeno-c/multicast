@@ -137,17 +137,34 @@ final class TCPConnection {
 
     deinit { close() }
 
-    static func connect(host: String, port: UInt16, timeout: TimeInterval) throws -> TCPConnection {
-        let addresses = try SocketAddress.resolve(host: host, port: port)
-        var lastError: Error = RAOPSocketError(message: "no address for \(host)")
-        for address in addresses {
-            do {
-                return try connect(to: address, timeout: timeout)
-            } catch {
-                lastError = error
+    /// Errors that say "not yet" rather than "no": macOS's Local Network privacy check makes a
+    /// BSD socket `connect` to a LAN address fail at once with EHOSTUNREACH while it decides
+    /// (the first connections after launch), and a Wi-Fi rejoin briefly leaves no route.
+    static let retryableConnectErrors: Set<Int32> = [EHOSTUNREACH, ENETUNREACH, ENETDOWN, EADDRNOTAVAIL]
+
+    /// Connects to the first address of `host` that answers. An immediate "no route" is retried
+    /// (re-resolving) every 250 ms until `timeout` has passed in all.
+    static func connect(host: String, port: UInt16, timeout: TimeInterval,
+                        onRetry: ((Int, RAOPSocketError) -> Void)? = nil) throws -> TCPConnection {
+        let deadline = Date().addingTimeInterval(timeout)
+        var attempt = 0
+        while true {
+            attempt += 1
+            let addresses = try SocketAddress.resolve(host: host, port: port)
+            var lastError: Error = RAOPSocketError(message: "no address for \(host)")
+            for address in addresses {
+                let left = max(0.5, deadline.timeIntervalSinceNow)
+                do {
+                    return try connect(to: address, timeout: left)
+                } catch {
+                    lastError = error
+                }
             }
+            guard let e = lastError as? RAOPSocketError, retryableConnectErrors.contains(e.code),
+                  deadline.timeIntervalSinceNow > 0.25 else { throw lastError }
+            onRetry?(attempt, e)
+            Thread.sleep(forTimeInterval: 0.25)
         }
-        throw lastError
     }
 
     static func connect(to address: SocketAddress, timeout: TimeInterval) throws -> TCPConnection {

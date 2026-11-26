@@ -40,11 +40,11 @@ enum RemoteScene: String, CaseIterable {
     case playlists
     /// A playlist's songs.
     case playlist
-    /// Apple Music, songs.
-    case songs
+    /// A playlist folder with a nested folder.
+    case folder
     /// Apple Music, a library search.
     case search
-    /// Apple Music, up next.
+    /// Up Next over the library.
     case upNext = "up-next"
     /// The Spotify source while it plays.
     case spotify
@@ -71,7 +71,7 @@ enum RemoteScene: String, CaseIterable {
     private var hubScene: MockScene? {
         switch self {
         case .live, .mock, .pair, .pairing, .pairingError, .searching, .hubNotFound: nil
-        case .lost, .speakers, .nowPlaying, .playlists, .playlist, .songs, .search, .upNext, .files: .appleMusic
+        case .lost, .speakers, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
         case .speakerDetail, .spotify: .spotify
         case .otherApp: .appPicker
         case .firstRun: .firstRun
@@ -123,16 +123,18 @@ enum RemoteScene: String, CaseIterable {
         case .playlists:
             nav.tab = .music
             nav.musicPath = [.source(.appleMusic)]
-            nav.appleMusicSection = .playlists
         case .playlist:
             nav.tab = .music
-            if let p = MockData.playlists.first(where: { $0.id == "p4" }) {
-                nav.musicPath = [.source(.appleMusic), .playlist(p)]
+            // Dinner party sits in the Evenings folder: the stack goes through it.
+            if let p = MockData.playlists.first(where: { $0.id == "p4" }),
+               let f = MockData.playlists.first(where: { $0.id == "f1" }) {
+                nav.musicPath = [.source(.appleMusic), .folder(f), .playlist(p)]
             }
-        case .songs:
+        case .folder:
             nav.tab = .music
-            nav.musicPath = [.source(.appleMusic)]
-            nav.appleMusicSection = .songs
+            if let f = MockData.playlists.first(where: { $0.id == "f1" }) {
+                nav.musicPath = [.source(.appleMusic), .folder(f)]
+            }
         case .search:
             nav.tab = .music
             nav.musicPath = [.source(.appleMusic)]
@@ -140,7 +142,7 @@ enum RemoteScene: String, CaseIterable {
         case .upNext:
             nav.tab = .music
             nav.musicPath = [.source(.appleMusic)]
-            nav.appleMusicSection = .upNext
+            nav.showsUpNext = true
         case .spotify:
             nav.tab = .music
             nav.musicPath = [.source(.spotify)]

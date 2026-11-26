@@ -1,6 +1,7 @@
 import Foundation
 import MulticastHubModel
 import Observation
+import os
 import SwiftUI
 
 /// A failed transport or source command, shown as an alert.
@@ -28,13 +29,16 @@ final class HubModel {
     private(set) var capture = CaptureStatus()
     private(set) var spotify: SpotifyStatus = .notRunning
     private(set) var health = HubHealth()
+    private(set) var queue = QueueStatus()
+    private(set) var pins: [PinnedPlaylist] = []
     private(set) var availability: HubAvailability = .connected
     private(set) var levels: StereoLevels = .silent
 
     // Paged lists, fetched on demand and refetched when `HubState.content` says they changed.
     private(set) var songs = PagedList<TrackItem>()
     private(set) var playlists = PagedList<PlaylistItem>()
-    private(set) var upNext = PagedList<TrackItem>()
+    /// The hub's Up Next: Apple Music, Spotify and file songs in play order.
+    private(set) var upNext = PagedList<QueueItem>()
     private(set) var files = PagedList<TrackItem>()
     private(set) var spotifyHistory = PagedList<TrackItem>()
     /// Library search results for `searchQuery`.
@@ -46,6 +50,12 @@ final class HubModel {
 
     // Navigation that other surfaces (menu commands, the menu-bar panel) also drive.
     var browsingSource: SourceKind = .appleMusic
+    /// Up Next is open beside the library (Mac).
+    var showsUpNext = false
+    /// The playlist open in the library, if any (Mac). `openPlaylist(_:)` loads its songs.
+    var openedPlaylist: PlaylistItem?
+    /// The playlist folder open in the library (Mac); nil at the top of the library.
+    var openFolderID: String?
     /// A refused transport or source command. Speaker failures show in the speaker's row.
     var alert: HubAlert?
     /// Set by the root views from the environment; structural changes animate with it.
@@ -53,8 +63,8 @@ final class HubModel {
 
     @ObservationIgnored private let backend: HubBackend
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
-    @ObservationIgnored private let commands: AsyncStream<HubCommand>.Continuation
-    @ObservationIgnored private let commandStream: AsyncStream<HubCommand>
+    @ObservationIgnored private let commands: AsyncStream<(HubCommand, UInt64)>.Continuation
+    @ObservationIgnored private let commandStream: AsyncStream<(HubCommand, UInt64)>
     @ObservationIgnored private var published = HubState()
     @ObservationIgnored private var content = ContentRevisions()
 
@@ -88,7 +98,7 @@ final class HubModel {
     struct Preload {
         var songs: [TrackItem] = []
         var playlists: [PlaylistItem] = []
-        var upNext: [TrackItem] = []
+        var upNext: [QueueItem] = []
         var files: [TrackItem] = []
         var spotifyHistory: [TrackItem] = []
     }
@@ -101,12 +111,14 @@ final class HubModel {
 
     init(backend: HubBackend) {
         self.backend = backend
-        (commandStream, commands) = AsyncStream.makeStream(of: HubCommand.self)
+        (commandStream, commands) = AsyncStream.makeStream(of: (HubCommand, UInt64).self)
     }
 
     /// For snapshots and previews: start from a fixed state without subscribing.
     convenience init(backend: HubBackend, state: HubState, preload: Preload = Preload(),
-                     artwork: [ArtworkID: Data] = [:], levels: StereoLevels = .silent, browsing: SourceKind? = nil) {
+                     artwork: [ArtworkID: Data] = [:], levels: StereoLevels = .silent, browsing: SourceKind? = nil,
+                     openPlaylist: PlaylistItem? = nil, playlistTracks: [TrackItem] = [], showsUpNext: Bool = false,
+                     openFolderID: String? = nil) {
         self.init(backend: backend)
         apply(state)
         let r = state.content
@@ -120,6 +132,13 @@ final class HubModel {
         }
         self.levels = levels
         if let browsing { browsingSource = browsing }
+        if let openPlaylist {
+            openedPlaylist = openPlaylist
+            openPlaylistID = openPlaylist.id
+            self.playlistTracks = PagedList(items: playlistTracks, revision: r.library)
+        }
+        self.showsUpNext = showsUpNext
+        self.openFolderID = openFolderID ?? openPlaylist?.parentID
     }
 
     func start() {
@@ -140,10 +159,13 @@ final class HubModel {
         })
         // One consumer, so commands reach the backend in the order they were made.
         tasks.append(Task { [weak self] in
-            for await command in commandStream {
+            for await (command, sentAt) in commandStream {
+                let started = DispatchTime.now().uptimeNanoseconds
                 do { try await backend.perform(command) } catch {
                     self?.refused(command, error)
                 }
+                let name = String(String(describing: command).prefix { $0 != "(" })
+                Self.timing.debug("model.command \(name, privacy: .public) waited=\((started &- sentAt) / 1_000_000)ms performed=\((DispatchTime.now().uptimeNanoseconds &- started) / 1_000_000)ms")
             }
         })
         for key in [ListKey.songs, .playlists, .upNext, .files, .spotifyHistory] { loadFirstPage(key) }
@@ -168,6 +190,8 @@ final class HubModel {
         if capture != s.capture { withAnimation(structural) { capture = s.capture } }
         if spotify != s.spotify { spotify = s.spotify }
         if health != s.health { withAnimation(structural) { health = s.health } }
+        if queue != s.queue { queue = s.queue }
+        if pins != s.pins { withAnimation(structural) { pins = s.pins } }
         applyContent(s.content)
     }
 
@@ -243,6 +267,12 @@ final class HubModel {
             alert = HubAlert(title: "Couldn\u{2019}t control playback", message: error.localizedDescription)
         case .source:
             alert = HubAlert(title: "Couldn\u{2019}t switch source", message: error.localizedDescription)
+        case .queue:
+            // An optimistic edit of Up Next goes back to what the hub has.
+            upNext.invalidate(revision: content.upNext &+ 1)
+            upNext.invalidate(revision: content.upNext)
+            loadFirstPage(.upNext)
+            alert = HubAlert(title: "Couldn\u{2019}t change the queue", message: error.localizedDescription)
         }
     }
 
@@ -359,6 +389,9 @@ final class HubModel {
             } else {
                 self[keyPath: list] = updated
             }
+            // Playlists come whole: folders are built from the full list, and a folder's
+            // contents can sit on any page.
+            if key == .playlists, updated.canLoadMore { self.loadNextPage(.playlists) }
         }
     }
 
@@ -392,6 +425,18 @@ final class HubModel {
     }
 
     var canPlay: Bool { activeSource != nil && nowPlaying != nil }
+
+    /// Apple Music and Spotify both connected: one library lists both (Spotify contributes what
+    /// it can without a Client ID: this session's songs and pinned playlists).
+    var libraryIsCombined: Bool { health.permission(.appleMusic) == .granted && spotify != .notInstalled }
+
+    /// What the Apple Music entry is called: Library once it lists Spotify too.
+    var libraryTitle: String { libraryIsCombined ? "Library" : SourceKind.appleMusic.title }
+    var librarySymbol: String { libraryIsCombined ? "square.stack" : SourceKind.appleMusic.symbolName }
+
+    /// Spotify songs the hub can play again (Spotify gave their URI), current first.
+    var spotifySessionSongs: [TrackItem] { spotifyHistory.items.filter { $0.id.hasPrefix("spotify:track:") } }
+    var spotifyPins: [PinnedPlaylist] { pins.filter { $0.source == .spotify } }
     var hasPosition: Bool { (activeSource?.hasPosition ?? false) && nowPlaying?.duration != nil }
     var needsLocalNetwork: Bool { health.permission(.localNetwork) == .denied }
 
@@ -471,6 +516,12 @@ final class HubModel {
         send(.setSpeakerSyncTrim(id: id, milliseconds: v))
     }
 
+    /// Look for speakers again on the hub (known ones stay listed) and retry failed ones.
+    func refreshSpeakers() {
+        isDiscovering = true
+        send(.refreshSpeakers)
+    }
+
     func retry(_ id: SpeakerID) {
         mutateSpeaker(id) { $0.state = .connecting }
         send(.retrySpeaker(id: id))
@@ -504,7 +555,118 @@ final class HubModel {
     }
 
     func playTrack(_ id: String, context: TrackContext) { send(.playTrack(id: id, context: context)) }
-    func playPlaylist(_ id: String) { send(.playPlaylist(id: id)) }
+    func playPlaylist(_ id: String, shuffled: Bool = false) { send(.playPlaylist(id: id, shuffled: shuffled)) }
+
+    // MARK: Queue
+
+    /// Plays an Up Next entry now (the entries before it are dropped).
+    /// Shuffles Up Next, or puts it back in order.
+    func toggleShuffle() {
+        queue.isShuffled.toggle()
+        send(.setShuffle(enabled: queue.isShuffled))
+    }
+
+    func toggleUpNext() {
+        withAnimation(structural) { showsUpNext.toggle() }
+    }
+
+    func showPlaylist(_ playlist: PlaylistItem) {
+        openPlaylist(playlist.id)
+        withAnimation(MC.Motion.feedback) { openedPlaylist = playlist }
+    }
+
+    func closePlaylist() {
+        withAnimation(MC.Motion.feedback) { openedPlaylist = nil }
+    }
+
+    /// The playlist tree (folders and the playlists in them) from the loaded playlists.
+    var playlistTree: PlaylistTree { PlaylistTree(playlists.items) }
+
+    /// Opens a folder (nil: the top of the library), closing any open playlist.
+    func openFolder(_ id: String?) {
+        withAnimation(MC.Motion.feedback) {
+            openedPlaylist = nil
+            openFolderID = id
+        }
+    }
+
+    /// A folder opens to its contents; a playlist to its songs.
+    func open(_ item: PlaylistItem) {
+        if item.isFolder { openFolder(item.id) } else { showPlaylist(item) }
+    }
+
+    /// "1 playlist", "3 playlists" (anywhere inside the folder).
+    func folderDetail(_ folder: PlaylistItem) -> String {
+        let n = playlistTree.playlistCount(in: folder.id)
+        return n == 1 ? "1 playlist" : "\(n) playlists"
+    }
+
+    func playQueued(_ entryID: String) {
+        withAnimation(structural) { upNext.removeThrough(entryID) }
+        send(.playTrack(id: entryID, context: .upNext))
+    }
+
+    func playNext(_ tracks: [TrackItem], from source: SourceKind) {
+        send(.addToQueue(tracks: tracks, source: source, placement: .next))
+    }
+
+    func addToQueue(_ tracks: [TrackItem], from source: SourceKind) {
+        send(.addToQueue(tracks: tracks, source: source, placement: .last))
+    }
+
+    /// A pasted `open.spotify.com/track/…` link. Returns false (sending nothing) when the text
+    /// isn't one, so the field can say so at once.
+    @discardableResult
+    func addSpotifyLink(_ text: String, placement: QueuePlacement = .last) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.looksLikeSpotifyLink(t, kind: "track") else { return false }
+        send(.addSpotifyLink(link: t, placement: placement))
+        return true
+    }
+
+    func removeFromQueue(_ ids: [String]) {
+        withAnimation(structural) { upNext.removeAll(ids: Set(ids)) }
+        send(.removeFromQueue(ids: ids))
+    }
+
+    /// SwiftUI's `onMove`: the rows move at once, the hub hears the same move.
+    func moveInQueue(from offsets: IndexSet, to destination: Int) {
+        let ids = offsets.compactMap { upNext.items.indices.contains($0) ? upNext.items[$0].id : nil }
+        guard !ids.isEmpty else { return }
+        upNext.move(fromOffsets: offsets, toOffset: destination)
+        send(.moveInQueue(ids: ids, toOffset: destination))
+    }
+
+    func clearQueue() {
+        withAnimation(structural) { upNext.removeAll(ids: Set(upNext.items.map(\.id))) }
+        send(.clearQueue)
+    }
+
+    // MARK: Pins
+
+    func isPinned(_ playlistID: String) -> Bool { pins.contains { $0.id == playlistID } }
+
+    func pin(_ playlistID: String) { send(.pinPlaylist(id: playlistID)) }
+
+    /// A pasted `open.spotify.com/playlist/…` link. Returns false when the text isn't one.
+    @discardableResult
+    func pinSpotifyLink(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.looksLikeSpotifyLink(t, kind: "playlist") else { return false }
+        send(.pinSpotifyLink(link: t))
+        return true
+    }
+
+    func unpin(_ playlistID: String) {
+        withAnimation(structural) { pins.removeAll { $0.id == playlistID } }
+        send(.unpinPlaylist(id: playlistID))
+    }
+
+    /// A first check before sending; the hub checks properly.
+    nonisolated static func looksLikeSpotifyLink(_ text: String, kind: String) -> Bool {
+        text.hasPrefix("spotify:\(kind):") || text.contains("open.spotify.com/\(kind)/")
+            || (text.contains("open.spotify.com/") && text.contains("/\(kind)/"))
+    }
 
     func captureApp(_ bundleID: String) {
         withAnimation(structural) { capture.capturedAppID = bundleID }
@@ -523,8 +685,10 @@ final class HubModel {
         change(&speakers[i])
     }
 
+    nonisolated static let timing = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "timing")
+
     private func send(_ command: HubCommand) {
-        commands.yield(command)
+        commands.yield((command, DispatchTime.now().uptimeNanoseconds))
     }
 
     /// Runs `action` at most once per throttle interval, on the trailing edge.

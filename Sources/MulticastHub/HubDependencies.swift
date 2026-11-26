@@ -45,6 +45,8 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func select(_ speaker: SpeakerDescriptor, volume: Float, offsetMillis: Int) async throws
     func deselect(speakerID: String) async
     func retry(speakerID: String) async
+    /// Browse for speakers again and retry failed ones (default: nothing).
+    func refreshSpeakers()
 
     func setSource(_ source: AudioSource) async throws
     func play() async throws
@@ -103,8 +105,14 @@ public protocol AppPresenceMonitoring: Sendable {
     func changes() -> AsyncStream<Void>
     /// Launches without bringing it to the front.
     func launch(_ bundleID: String) async throws
+    /// Opens it in front (launching it if needed), as when the person asks to open it.
+    func open(_ bundleID: String) async throws
     /// The app's icon as PNG, at most `maxPixel` on a side (0 = 512).
     func iconPNG(bundleID: String, maxPixel: Int) -> Data?
+}
+
+public extension AppPresenceMonitoring {
+    func open(_ bundleID: String) async throws { try await launch(bundleID) }
 }
 
 /// Running apps that could be captured, live.
@@ -122,9 +130,40 @@ public protocol MediaAppControlling: Sendable {
     func pause() async throws
     func next() async throws
     func previous() async throws
+    /// Plays a Spotify URI (track, playlist); `shuffled` sets shuffle first when given.
+    func play(uri: String, shuffled: Bool?) async throws
+    /// Seconds into the current track.
+    func seek(to seconds: TimeInterval) async throws
     /// Automation permission for the app. `ask: true` shows the system prompt (and waits for
     /// the answer). nil when it cannot be known now (app not running).
     func automationStatus(ask: Bool) async -> PermissionStatus?
+}
+
+public extension MediaAppControlling {
+    /// Plays a Spotify URI (track, playlist, album); `shuffled` sets Spotify's shuffle first
+    /// when given. The default can't.
+    func play(uri: String, shuffled: Bool?) async throws {
+        throw HubCommandError(.unsupported, "This player can\u{2019}t play a link.")
+    }
+
+    func seek(to seconds: TimeInterval) async throws {
+        throw HubCommandError(.unsupported, "This player can\u{2019}t seek.")
+    }
+}
+
+/// What Spotify's public oEmbed endpoint says about a share link.
+public struct SpotifyEmbedInfo: Equatable, Sendable {
+    public var title: String
+    public var thumbnailURL: URL?
+    public init(title: String, thumbnailURL: URL?) {
+        self.title = title
+        self.thumbnailURL = thumbnailURL
+    }
+}
+
+public extension HubSystemServices {
+    /// `https://open.spotify.com/oembed?url=…` (no key). nil on any failure; the default knows nothing.
+    func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo? { nil }
 }
 
 // MARK: - Misc system services
@@ -138,6 +177,8 @@ public protocol HubSystemServices: Sendable {
     func fetchImage(_ url: URL) async -> Data?
     /// Whether this Mac is a laptop (built-in output glyph).
     var hostIsLaptop: Bool { get }
+    /// What Spotify's public oEmbed endpoint says about an `open.spotify.com` page.
+    func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo?
 }
 
 /// Everything `LocalHub` is built from.
@@ -164,4 +205,8 @@ public struct HubDependencies: Sendable {
         self.settings = settings
         self.now = now
     }
+}
+
+extension HubSessionControlling {
+    public func refreshSpeakers() {}
 }

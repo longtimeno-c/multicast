@@ -67,6 +67,10 @@ final class TimelineRingBuffer: @unchecked Sendable {
         resetRequests.add(1)
     }
 
+    /// A reset was asked for and the producer has not written since: the ring reads as empty on
+    /// purpose (a flush), not because audio is late.
+    var isResetPending: Bool { resetRequests.load() != ackedReset.load() }
+
     // MARK: Producer
 
     enum WriteResult: Equatable {

@@ -12,7 +12,7 @@ import MulticastAppleMusic
 ///    allowed is what puts up the Automation prompt; the hub must never prompt unasked.
 ///    `authorizationStatus()` (which `LocalHub.tick()` calls while access is missing) and
 ///    `requestAuthorization()` start the subscription as soon as they see `.granted`.
-///  - A playlist is always played in order (`HubCommand.playPlaylist` has no shuffle).
+///  - Playlists reach the hub as track lists; the hub's play queue orders (or shuffles) them.
 public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendable {
     public let provider: AppleMusicProviding
 
@@ -49,6 +49,8 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     /// check runs at a time and a caller waits at most `statusWait` for it; otherwise it gets
     /// the last known status and the running check updates it later.
     public func authorizationStatus() async -> PermissionStatus {
+        let started = MulticastTiming.now
+        defer { MulticastTiming.log.debug("hub.music authorizationStatus \(MulticastTiming.ms(since: started))ms") }
         let check: Task<PermissionStatus, Never> = lock.withLock {
             if let running = statusCheck { return running }
             let provider = provider
@@ -85,7 +87,9 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     }
 
     public func refreshAuthorization() async -> PermissionStatus {
+        let started = MulticastTiming.now
         let status = await provider.currentAccess()
+        MulticastTiming.log.debug("hub.music refreshAuthorization \(MulticastTiming.ms(since: started))ms")
         lock.withLock { lastStatus = status }
         if status == .granted { startForwarding() }
         return status
@@ -197,6 +201,7 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     }
 
     public func play(trackID: String, context: TrackContext) async throws { try requireAccess(); try await provider.play(trackID: trackID, context: context) }
+    public func playOnce(trackID: String) async throws { try requireAccess(); try await provider.playOnce(trackID: trackID) }
     public func play(playlistID: String) async throws { try requireAccess(); try await provider.play(playlistID: playlistID, shuffled: false) }
     public func play() async throws { try requireAccess(); try await provider.play() }
     public func pause() async {
@@ -217,7 +222,7 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
 }
 
 /// True for the first caller only.
-private final class OnceFlag: @unchecked Sendable {
+final class OnceFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var claimed = false
     func claim() -> Bool { lock.withLock { defer { claimed = true }; return !claimed } }

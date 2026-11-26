@@ -20,4 +20,8 @@ CODE_SIGN_STYLE = Automatic
 CODE_SIGN_IDENTITY = -
 DEVELOPMENT_TEAM =
 
+// The "Stable Debug UUID" build phase rewrites the linked executable in place (see
+// Apps/Scripts/stable-debug-uuid.py), which the user-script sandbox does not allow.
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+
 #include? "Local.xcconfig"

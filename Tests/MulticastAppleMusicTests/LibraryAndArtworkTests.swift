@@ -207,3 +207,15 @@ final class Flags: @unchecked Sendable {
     func append(_ b: Bool) { lock.lock(); v.append(b); lock.unlock() }
     var values: [Bool] { lock.lock(); defer { lock.unlock() }; return v }
 }
+
+#if os(macOS)
+@Suite("Provider factory")
+struct ProviderFactoryTests {
+    @Test func musicKitTapsTheSystemRendererNotThisProcess() throws {
+        guard #available(macOS 14.2, *) else { return }
+        let provider = AppleMusicProviderFactory.make(.musicKit)
+        let player = try #require(provider as? MusicKitPlayer)
+        #expect(player.renderer == .apps(bundleIDs: ["com.apple.MediaPlayer.RemotePlayerService"]))
+    }
+}
+#endif
