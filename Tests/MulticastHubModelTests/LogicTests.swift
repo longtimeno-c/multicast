@@ -270,3 +270,23 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
         #expect(late == 1)
     }
 }
+
+@Suite struct PagedListEditTests {
+    private func list() -> PagedList<QueueItem> {
+        PagedList(items: ["a", "b", "c", "d"].map {
+            QueueItem(id: $0, source: .appleMusic, track: TrackItem(id: "t\($0)", title: $0, artist: "", album: "", duration: 1))
+        })
+    }
+
+    @Test func movesRemovesAndDropsThrough() {
+        var l = list()
+        l.move(fromOffsets: [3], toOffset: 0)
+        #expect(l.items.map(\.id) == ["d", "a", "b", "c"])
+        l.move(fromOffsets: [0, 1], toOffset: 4)
+        #expect(l.items.map(\.id) == ["b", "c", "d", "a"])
+        l.removeAll(ids: ["c"])
+        #expect(l.items.map(\.id) == ["b", "d", "a"] && l.totalCount == 3)
+        l.removeThrough("d")
+        #expect(l.items.map(\.id) == ["a"] && l.totalCount == 1)
+    }
+}

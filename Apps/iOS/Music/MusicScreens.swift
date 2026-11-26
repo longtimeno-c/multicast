@@ -277,19 +277,16 @@ private struct AppleMusicView: View {
                 case .playlists: playlists(model.playlists.items)
                 case .songs: tracks(model.songs.items, list: .songs, context: .songs)
                 case .upNext:
-                    if model.upNext.isLoaded && model.upNext.items.isEmpty {
-                        Text("Nothing is queued after this song.")
-                            .font(MC.Font.body)
-                            .foregroundStyle(MC.Ink.secondary)
-                            .listRowBackground(Color.clear)
-                    }
-                    tracks(model.upNext.items, list: .upNext, context: .upNext)
+                    UpNextSection()
                 }
             }
         }
         .listStyle(.plain)
         .remoteList()
         .animation(MC.Motion.feedback, value: nav.appleMusicSection)
+        .toolbar {
+            if nav.appleMusicSection == .upNext && !isSearching { UpNextToolbar() }
+        }
     }
 
     @ViewBuilder private var searchResults: some View {
@@ -324,6 +321,7 @@ private struct AppleMusicView: View {
                 PhoneTrackRow(track: track, isCurrent: isCurrent(track))
             }
             .buttonStyle(.plain)
+            .queueActions(track, source: .appleMusic, play: { model.playTrack(track.id, context: context) })
             .listRowBackground(Color.clear)
             .onAppear { model.loadMoreIfNeeded(list, after: track.id) }
         }
@@ -372,6 +370,7 @@ private struct PlaylistView: View {
                         PhoneTrackRow(track: track, isCurrent: isCurrent(track))
                     }
                     .buttonStyle(.plain)
+                    .queueActions(track, source: .appleMusic, play: { model.playTrack(track.id, context: .playlist(id: playlist.id)) })
                     .listRowBackground(Color.clear)
                     .onAppear { model.loadMoreIfNeeded(.playlist, after: track.id) }
                 }
@@ -382,7 +381,16 @@ private struct PlaylistView: View {
         .navigationTitle(playlist.name)
         .navigationBarTitleDisplayMode(.inline)
         // The header already names the playlist; the bar keeps the name for the back menu only.
-        .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) } }
+        .toolbar {
+            ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
+            ToolbarItem(placement: .primaryAction) {
+                let pinned = model.isPinned(playlist.id)
+                Button { pinned ? model.unpin(playlist.id) : model.pin(playlist.id) } label: {
+                    Image(systemName: pinned ? "pin.fill" : "pin")
+                }
+                .accessibilityLabel(pinned ? "Unpin" : "Pin to Top")
+            }
+        }
         .onAppear { model.openPlaylist(playlist.id) }
     }
 
@@ -399,18 +407,31 @@ private struct PlaylistView: View {
                     .monospacedDigit()
             }
             .multilineTextAlignment(.center)
-            Button { model.playPlaylist(playlist.id) } label: {
-                // An explicit icon and title, centred together in the capsule.
-                HStack(spacing: MC.Space.s) {
-                    Image(systemName: "play.fill")
-                        .accessibilityHidden(true)
-                    Text("Play")
+            HStack(spacing: MC.Space.m) {
+                Button { model.playPlaylist(playlist.id) } label: {
+                    // An explicit icon and title, centred together in the capsule.
+                    HStack(spacing: MC.Space.s) {
+                        Image(systemName: "play.fill")
+                            .accessibilityHidden(true)
+                        Text("Play")
+                    }
+                    .font(MC.Font.bodyEmphasis)
+                    .frame(minWidth: 112)
                 }
-                .font(MC.Font.bodyEmphasis)
-                .frame(minWidth: 140)
+                .accessibilityLabel("Play \(playlist.name)")
+                .buttonStyle(.borderedProminent)
+                Button { model.playPlaylist(playlist.id, shuffled: true) } label: {
+                    HStack(spacing: MC.Space.s) {
+                        Image(systemName: "shuffle")
+                            .accessibilityHidden(true)
+                        Text("Shuffle")
+                    }
+                    .font(MC.Font.bodyEmphasis)
+                    .frame(minWidth: 112)
+                }
+                .accessibilityLabel("Shuffle \(playlist.name)")
+                .buttonStyle(.bordered)
             }
-            .accessibilityLabel("Play \(playlist.name)")
-            .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .buttonBorderShape(.capsule)
             .padding(.top, MC.Space.xs)
@@ -442,15 +463,26 @@ private struct SpotifyView: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     if !model.spotifyHistory.items.isEmpty {
-                        Section("Earlier this session") {
+                        Section("This session") {
                             ForEach(model.spotifyHistory.items) { track in
-                                PhoneTrackRow(track: track, isCurrent: false)
-                                    .accessibilityRemoveTraits(.isButton)
+                                if track.id.hasPrefix("spotify:track:") {
+                                    Button { model.playTrack(track.id, context: .spotifyHistory) } label: {
+                                        PhoneTrackRow(track: track, isCurrent: isLive && model.nowPlaying?.trackID == track.id)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .queueActions(track, source: .spotify, play: { model.playTrack(track.id, context: .spotifyHistory) })
                                     .listRowBackground(Color.clear)
                                     .onAppear { model.loadMoreIfNeeded(.spotifyHistory, after: track.id) }
+                                } else {
+                                    PhoneTrackRow(track: track, isCurrent: false)
+                                        .accessibilityRemoveTraits(.isButton)
+                                        .listRowBackground(Color.clear)
+                                        .onAppear { model.loadMoreIfNeeded(.spotifyHistory, after: track.id) }
+                                }
                             }
                         }
                     }
+                    ListNote("Swipe a song to queue it, or paste a song link with Add Spotify Song in Up Next.")
                 }
                 .listStyle(.plain)
                 .remoteList()
@@ -616,6 +648,7 @@ private struct FilesView: View {
                             .swipeActions {
                                 Button("Remove", role: .destructive) { model.removeFiles([file.id]) }
                             }
+                            .queueActions(file, source: .files, play: { model.playTrack(file.id, context: .files) })
                             .onAppear { model.loadMoreIfNeeded(.files, after: file.id) }
                         }
                     ListNote("Files live on \(hubName). Add more there; swipe to remove one from the list.")
@@ -628,4 +661,122 @@ private struct FilesView: View {
     }
 
     private var hubName: String { session.hub?.name ?? "the Mac" }
+}
+
+// MARK: - Queue
+
+extension View {
+    /// Play Next and Add to Queue: a leading swipe, and the long-press menu (with Play first).
+    func queueActions(_ track: TrackItem, source: SourceKind, play: @escaping () -> Void) -> some View {
+        modifier(QueueActions(track: track, source: source, play: play))
+    }
+}
+
+private struct QueueActions: ViewModifier {
+    @Environment(HubModel.self) private var model
+    var track: TrackItem
+    var source: SourceKind
+    var play: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button { model.playNext([track], from: source) } label: {
+                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                .tint(MC.accent)
+                Button { model.addToQueue([track], from: source) } label: {
+                    Label("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward")
+                }
+                .tint(.gray)
+            }
+            .contextMenu {
+                Button(action: play) { Label("Play", systemImage: "play") }
+                Button { model.playNext([track], from: source) } label: {
+                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                Button { model.addToQueue([track], from: source) } label: {
+                    Label("Add to Queue", systemImage: "text.line.last.and.arrowtriangle.forward")
+                }
+            }
+    }
+}
+
+/// Up Next inside the Apple Music list: the hub's queue, whichever app plays each song.
+/// Tap plays, swipe removes, Edit reorders.
+struct UpNextSection: View {
+    @Environment(HubModel.self) private var model
+
+    var body: some View {
+        if model.queue.isHeld {
+            ListNote("Something else is playing on the Mac. These songs wait; Next carries on with them.")
+        }
+        if model.upNext.isLoaded && model.upNext.items.isEmpty {
+            Text("Swipe a song right to play it next or add it to the queue, from Apple Music, Spotify or Files.")
+                .font(MC.Font.body)
+                .foregroundStyle(MC.Ink.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+        }
+        ForEach(model.upNext.items) { item in
+            Button { model.playQueued(item.id) } label: {
+                PhoneTrackRow(track: item.track, isCurrent: false, detail: detail(item))
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(Color.clear)
+            .accessibilityHint(item.source == .appleMusic ? "" : "Plays from \(item.source.title)")
+            .onAppear { model.loadMoreIfNeeded(.upNext, after: item.id) }
+        }
+        .onDelete { offsets in model.removeFromQueue(offsets.map { model.upNext.items[$0].id }) }
+        .onMove { model.moveInQueue(from: $0, to: $1) }
+    }
+
+    private func detail(_ item: QueueItem) -> String {
+        switch item.source {
+        case .appleMusic: item.track.artist
+        default: [item.source.title, item.track.artist].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        }
+    }
+}
+
+/// Up Next's own controls: Edit (reorder), Clear and Add Spotify Song.
+struct UpNextToolbar: ToolbarContent {
+    @Environment(HubModel.self) private var model
+    @State private var askingForLink = false
+    @State private var link = ""
+    @State private var invalid = false
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button { link = ""; askingForLink = true } label: {
+                    Label("Add Spotify Song\u{2026}", systemImage: "link")
+                }
+                Button(role: .destructive) { model.clearQueue() } label: {
+                    Label("Clear Up Next", systemImage: "xmark.circle")
+                }
+                .disabled(model.upNext.items.isEmpty)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel("Up Next options")
+            .alert("Add Spotify Song", isPresented: $askingForLink) {
+                TextField("Song link", text: $link)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Add to Queue") { invalid = !model.addSpotifyLink(link) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("In Spotify, choose Share \u{203A} Copy Song Link, then paste it here.")
+            }
+            .alert("That isn\u{2019}t a Spotify song link", isPresented: $invalid) {
+                Button("OK", role: .cancel) {}
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            EditButton()
+                .disabled(model.upNext.items.isEmpty)
+        }
+    }
 }
