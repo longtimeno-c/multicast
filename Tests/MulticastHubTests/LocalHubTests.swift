@@ -824,5 +824,38 @@ struct LocalHubResponsivenessTests {
         musicTap.evidence.send(.granted)
         try await rig.waitFor("granted") { $0.health.permission(.audioCapture) == .granted }
     }
+
+    @Test func switchingToAppleMusicPausesSpotifyWithNoSpeakerOn() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song A", trackID: "a", sampledAt: rig.clock.now))
+        try await rig.waitFor("spotify playing") { $0.transport.isPlaying }
+        try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
+        for _ in 0..<200 where !rig.spotify.commands.get().contains("pause") { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(rig.spotify.commands.get().contains("pause"))
+    }
+
+    @Test func aStaleBackgroundCheckDoesNotUndoADenialFromACommand() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        rig.spotify.automation.set(.notDetermined)
+        await rig.start()
+        rig.spotify.checkGate.close()
+        await rig.hub.tick()  // starts a check that is held at the gate
+        try await rig.hub.perform(.setSpeakerEnabled(id: "542a1b003344", enabled: true))
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.failWith.set(HubCommandError(.permissionMissing, "Allow it"))
+        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.play) }
+        #expect(rig.state.health.permission(.automation) == .denied)
+        rig.spotify.checkGate.open()  // the old check now answers "not determined"
+        await rig.hub.settle()
+        #expect(rig.state.health.permission(.automation) == .denied)
+    }
 }
 

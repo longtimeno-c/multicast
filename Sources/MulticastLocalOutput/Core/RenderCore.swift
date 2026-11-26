@@ -325,6 +325,9 @@ final class RenderCore: @unchecked Sendable {
             out[2 * i + 1] *= g
         }
 
+        // A flush empties the ring on purpose (a source switch or seek drops what was queued
+        // and the new audio is heard one group latency later): that silence is not an underrun.
+        if ring.isResetPending { hasSeenAudio = false }
         if hasSeenAudio && valid < n {
             statUnderrun.add(UInt64(n - valid))
         }

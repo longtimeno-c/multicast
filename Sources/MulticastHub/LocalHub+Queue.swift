@@ -1,4 +1,5 @@
 import Foundation
+import MulticastAppleMusic
 import MulticastHubModel
 
 /// The last thing the owning app said about the queue's current song.
@@ -141,6 +142,8 @@ extension LocalHub {
             }
         case .songs, .playlist, .search:
             let player = try requireMusicPlayer()
+            let listed = MulticastTiming.now
+            defer { MulticastTiming.log.debug("hub.queue list for play \(MulticastTiming.ms(since: listed))ms") }
             let list: [TrackItem]
             switch context {
             case .playlist(let pid): list = try await Self.collect { try await player.tracks(inPlaylist: pid, $0) }
@@ -307,7 +310,9 @@ extension LocalHub {
                 let player = try requireMusicPlayer()
                 if activeSource != .appleMusic { try await selectSource(.appleMusic) }
                 wantsPlay = speakers
+                let started = MulticastTiming.now
                 try await player.playOnce(trackID: entry.track.id)
+                MulticastTiming.log.debug("hub.queue playOnce \(MulticastTiming.ms(since: started))ms")
             case .spotify:
                 try await ensureSpotifyOpen()
                 if activeSource != .spotify { try await selectSource(.spotify) }

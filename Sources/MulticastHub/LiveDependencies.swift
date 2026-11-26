@@ -352,12 +352,24 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
 
     public init(statusWait: TimeInterval = 2) { self.statusWait = statusWait }
 
-    public func changes() -> AsyncStream<NowPlaying?> { controller.changes(pollInterval: 2) }
+    /// Now playing and transport go out as raw Apple Events (`SpotifyEvents`): no AppleScript is
+    /// compiled, so none waits on the system's script scan.
+    private let events = SpotifyEvents()
+    private let eventQueue = DispatchQueue(label: "Multicast.SpotifyEvents")
 
-    public func play() async throws { try await map { try await self.controller.play() } }
-    public func pause() async throws { try await map { try await self.controller.pause() } }
-    public func next() async throws { try await map { try await self.controller.nextTrack() } }
-    public func previous() async throws { try await map { try await self.controller.previousTrack() } }
+    public func changes() -> AsyncStream<NowPlaying?> { SpotifyEventsObserver.stream(events, interval: 2) }
+
+    public func play() async throws { try await map { try await self.send { try $0.play() } } }
+    public func pause() async throws { try await map { try await self.send { try $0.pause() } } }
+    public func next() async throws { try await map { try await self.send { try $0.next() } } }
+    public func previous() async throws { try await map { try await self.send { try $0.previous() } } }
+
+    private func send(_ body: @escaping @Sendable (SpotifyEvents) throws -> Void) async throws {
+        let events = events
+        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+            eventQueue.async { c.resume(with: Result { try body(events) }) }
+        }
+    }
 
     public func seek(to seconds: TimeInterval) async throws {
         try await map { try await self.controller.seek(to: seconds) }
