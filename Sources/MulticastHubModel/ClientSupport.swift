@@ -37,6 +37,31 @@ public struct PagedList<Item: Identifiable & Sendable & Codable & Equatable>: Eq
         return PageRequest(cursor: isLoaded ? nextCursor : nil, limit: limit)
     }
 
+    // Optimistic edits (a UI changes Up Next before the hub's next page arrives).
+
+    public mutating func removeAll(ids: Set<Item.ID>) {
+        let before = items.count
+        items.removeAll { ids.contains($0.id) }
+        if let t = totalCount { totalCount = max(0, t - (before - items.count)) }
+    }
+
+    /// Drops every item up to and including `id`.
+    public mutating func removeThrough(_ id: Item.ID) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items.removeFirst(i + 1)
+        if let t = totalCount { totalCount = max(0, t - (i + 1)) }
+    }
+
+    /// SwiftUI `onMove` semantics.
+    public mutating func move(fromOffsets offsets: IndexSet, toOffset destination: Int) {
+        let moving = offsets.sorted().filter { items.indices.contains($0) }.map { items[$0] }
+        guard !moving.isEmpty else { return }
+        let target = min(max(0, destination), items.count)
+        let before = offsets.filter { $0 < target }.count
+        for i in offsets.sorted(by: >) where items.indices.contains(i) { items.remove(at: i) }
+        items.insert(contentsOf: moving, at: target - before)
+    }
+
     /// The list changed on the backend: forget the pages and start again at `revision`.
     /// Items stay visible until the new first page replaces them, so the list doesn't blink.
     public mutating func invalidate(revision: UInt64) {

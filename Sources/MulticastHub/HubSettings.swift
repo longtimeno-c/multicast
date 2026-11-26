@@ -20,9 +20,23 @@ public struct HubSettings: Codable, Equatable, Sendable {
     public var masterVolume: Double
     public var speakers: [String: SpeakerPreset]
 
-    public init(masterVolume: Double = 0.6, speakers: [String: SpeakerPreset] = [:]) {
+    /// Pinned playlists, in pin order.
+    public var pins: [PinnedPlaylist]
+
+    public init(masterVolume: Double = 0.6, speakers: [String: SpeakerPreset] = [:], pins: [PinnedPlaylist] = []) {
         self.masterVolume = masterVolume
         self.speakers = speakers
+        self.pins = pins
+    }
+
+    private enum CodingKeys: String, CodingKey { case masterVolume, speakers, pins }
+
+    /// Settings saved before a field existed still load (the field takes its default).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        masterVolume = try c.decode(Double.self, forKey: .masterVolume)
+        speakers = try c.decode([String: SpeakerPreset].self, forKey: .speakers)
+        pins = try c.decodeIfPresent([PinnedPlaylist].self, forKey: .pins) ?? []
     }
 }
 

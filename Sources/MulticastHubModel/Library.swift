@@ -101,16 +101,20 @@ public struct Page<Item: Sendable & Codable & Equatable>: Equatable, Sendable, C
 /// Where a track was chosen, so the hub knows what plays after it.
 ///
 /// Wire form (synthesized): `{"songs":{}}`, `{"playlist":{"id":"p1"}}`, `{"upNext":{}}`,
-/// `{"search":{"query":"tide"}}`, `{"files":{}}`.
+/// `{"search":{"query":"tide"}}`, `{"files":{}}`, `{"spotifyHistory":{}}`.
+///
+/// Playing a song from a context makes Up Next everything after it in that context.
 public enum TrackContext: Equatable, Hashable, Sendable, Codable {
     /// The whole song library, in library order.
     case songs
     /// A playlist, in playlist order.
     case playlist(id: String)
-    /// Jump within the current up-next queue.
+    /// Jump to an entry of the hub's Up Next (`id` is a `QueueItem.id`).
     case upNext
     /// A library search result list.
     case search(query: String)
     /// The file queue.
     case files
+    /// Spotify songs heard this session (`id` is a `spotify:track:` URI).
+    case spotifyHistory
 }

@@ -297,6 +297,14 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
     public func next() async throws { try await map { try await self.controller.nextTrack() } }
     public func previous() async throws { try await map { try await self.controller.previousTrack() } }
 
+    public func seek(to seconds: TimeInterval) async throws {
+        try await map { try await self.controller.seek(to: seconds) }
+    }
+
+    public func play(uri: String, shuffled: Bool?) async throws {
+        try await map { try await self.controller.play(uri: uri, shuffled: shuffled) }
+    }
+
     public func automationStatus(ask: Bool) async -> PermissionStatus? {
         switch await controller.automationPermission(askIfNeeded: ask) {
         case .granted: return .granted
@@ -374,6 +382,22 @@ public final class LiveSystemServices: HubSystemServices, @unchecked Sendable {
         }
         guard CGImageSourceCreateWithData(data as CFData, nil) != nil else { return nil }
         return data
+    }
+
+    /// A network call to Spotify with the pasted link, only when someone pastes one.
+    public func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo? {
+        guard page.host == "open.spotify.com",
+              var c = URLComponents(string: "https://open.spotify.com/oembed") else { return nil }
+        c.queryItems = [URLQueryItem(name: "url", value: page.absoluteString)]
+        guard let url = c.url else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 5)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count < 256 * 1024,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let title = object["title"] as? String, !title.isEmpty else { return nil }
+        let thumb = (object["thumbnail_url"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil }
+        return SpotifyEmbedInfo(title: String(title.prefix(300)), thumbnailURL: thumb)
     }
 
     static func hasInternalBattery() -> Bool {

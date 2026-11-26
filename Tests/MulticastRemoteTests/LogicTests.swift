@@ -337,11 +337,26 @@ import Testing
             #expect(throws: HubCommandError.self) { try RemoteInputPolicy.sanitize(.captureApp(bundleID: bad)).get() }
         }
         #expect(throws: HubCommandError.self) {
-            try RemoteInputPolicy.sanitize(.playPlaylist(id: String(repeating: "x", count: 10_000))).get()
+            try RemoteInputPolicy.sanitize(.playPlaylist(id: String(repeating: "x", count: 10_000), shuffled: false)).get()
         }
         #expect(throws: HubCommandError.self) {
             try RemoteInputPolicy.sanitize(.removeFiles(ids: Array(repeating: "f", count: 5000))).get()
         }
+        // Queue: text capped, counts bounded, captured apps refused.
+        let long = TrackItem(id: "s1", title: String(repeating: "t", count: 5000), artist: "a", album: "", duration: .nan)
+        guard case .addToQueue(let safe, .appleMusic, .next) = try RemoteInputPolicy.sanitize(
+            .addToQueue(tracks: [long], source: .appleMusic, placement: .next)).get() else { Issue.record("not queued"); return }
+        #expect(safe[0].title.count == RemoteInputPolicy.maxTextLength && safe[0].duration == 0)
+        #expect(throws: HubCommandError.self) {
+            try RemoteInputPolicy.sanitize(.addToQueue(tracks: [long], source: .app, placement: .last)).get()
+        }
+        #expect(throws: HubCommandError.self) {
+            try RemoteInputPolicy.sanitize(.moveInQueue(ids: Array(repeating: "q", count: 5000), toOffset: 0)).get()
+        }
+        #expect(throws: HubCommandError.self) {
+            try RemoteInputPolicy.sanitize(.addSpotifyLink(link: String(repeating: "x", count: 5000), placement: .last)).get()
+        }
+        #expect(try RemoteInputPolicy.sanitize(.clearQueue).get() == .clearQueue)
     }
 
     @Test func queriesAreClamped() throws {
@@ -377,12 +392,12 @@ import Testing
 @Suite struct BrowserParsingTests {
     @Test func readsTheTXTRecord() throws {
         var txt = NWTXTRecord()
-        txt["v"] = "1"
+        txt["v"] = "2"
         txt["id"] = "hub-0001"
         txt["n"] = "Studio Mac"
         let endpoint = NWEndpoint.service(name: "Studio Mac", type: HubService.bonjourType, domain: "local.", interface: nil)
         let hub = try #require(HubBrowser.hub(txt: txt, endpoint: endpoint))
-        #expect(hub.id == "hub-0001" && hub.name == "Studio Mac" && hub.protocolVersion == 1 && hub.isCompatible)
+        #expect(hub.id == "hub-0001" && hub.name == "Studio Mac" && hub.protocolVersion == 2 && hub.isCompatible)
         var bad = NWTXTRecord()
         bad["id"] = "../../x"
         #expect(HubBrowser.hub(txt: bad, endpoint: endpoint) == nil)

@@ -67,6 +67,8 @@ public protocol MusicPlayerProviding: AnyObject, Sendable {
     /// Starts `trackID` with `context` deciding what follows (never `.files`).
     func play(trackID: String, context: TrackContext) async throws
     func play(playlistID: String) async throws
+    /// Plays one library track and stops after it (the hub's queue decides what follows).
+    func playOnce(trackID: String) async throws
     func play() async throws
     func pause() async
     func next() async throws
@@ -79,6 +81,12 @@ public protocol MusicPlayerProviding: AnyObject, Sendable {
     /// (`.appleMusic` for MusicKit, `.automation` for the Music app). `HubPermission.appleMusic`
     /// in `HubState` always reports this player's own gate, whichever pane it lives in.
     var settingsPermission: HubPermission { get }
+}
+
+public extension MusicPlayerProviding {
+    /// Plays one library track and then stops (the hub's queue decides what follows). Players
+    /// that can't stop after one track start it as a library song.
+    func playOnce(trackID: String) async throws { try await play(trackID: trackID, context: .songs) }
 }
 
 public extension MusicPlayerProviding {

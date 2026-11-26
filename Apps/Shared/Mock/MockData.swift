@@ -58,10 +58,10 @@ enum MockData {
 
     static var spotifyTracks: [TrackItem] {
         [
-            TrackItem(id: "sp1", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),
-            TrackItem(id: "sp2", title: "Waystation", artist: "Pelle Ash", album: "Waystation", duration: 212, artworkID: MockArtwork.id(.stack)),
-            TrackItem(id: "sp3", title: "Brightwater", artist: "Sola Wren", album: "Coastlines", duration: 255, artworkID: MockArtwork.id(.horizon)),
-            TrackItem(id: "sp4", title: "Second Floor", artist: "Hollis Grey", album: "Rooms", duration: 199, artworkID: MockArtwork.id(.split)),
+            TrackItem(id: "spotify:track:0mockEveningTide00000001", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),
+            TrackItem(id: "spotify:track:0mockWaystation000000002", title: "Waystation", artist: "Pelle Ash", album: "Waystation", duration: 212, artworkID: MockArtwork.id(.stack)),
+            TrackItem(id: "spotify:track:0mockBrightwater00000003", title: "Brightwater", artist: "Sola Wren", album: "Coastlines", duration: 255, artworkID: MockArtwork.id(.horizon)),
+            TrackItem(id: "spotify:track:0mockSecondFloor0000004", title: "Second Floor", artist: "Hollis Grey", album: "Rooms", duration: 199, artworkID: MockArtwork.id(.split)),
         ]
     }
 
@@ -116,6 +116,7 @@ enum MockData {
         s.masterVolume = 0.62
         s.capture = CaptureStatus(apps: apps)
         s.spotify = .running
+        s.pins = pins
         s.health = HubHealth(permissions: .allGranted, extraIssues: [])
         return s
     }
@@ -126,7 +127,32 @@ enum MockData {
         return MockContent(
             songs: songs, playlists: playlists,
             playlistTracks: playlistSongs.mapValues { $0.map { songs[$0] } },
-            upNext: Array(songs[1...4]), files: files, spotifyHistory: Array(spotifyTracks.dropFirst()))
+            upNext: upNext, files: files, spotifyHistory: Array(spotifyTracks.dropFirst()))
+    }
+
+    /// Up Next after the first song: the rest of a playlist with a Spotify song played next.
+    static var upNext: [QueueItem] {
+        let songs = songs
+        return [
+            QueueItem(id: "q1", source: .spotify, track: spotifyTracks[1]),
+            QueueItem(id: "q2", source: .appleMusic, track: songs[4]),
+            QueueItem(id: "q3", source: .appleMusic, track: songs[2]),
+            QueueItem(id: "q4", source: .appleMusic, track: songs[7]),
+            QueueItem(id: "q5", source: .spotify, track: spotifyTracks[3]),
+            QueueItem(id: "q6", source: .files, track: files[2]),
+        ]
+    }
+
+    /// Pinned playlists: two from Apple Music and one Spotify share link.
+    static var pins: [PinnedPlaylist] {
+        [
+            PinnedPlaylist(id: "p1", source: .appleMusic, name: "Sunday morning", artworkID: MockArtwork.id(.sunOverWater),
+                           trackCount: playlistSongs["p1"]?.count),
+            PinnedPlaylist(id: "spotify:playlist:0mockFridayNightMix01", source: .spotify, name: "Friday night mix",
+                           artworkID: MockArtwork.id(.horizon)),
+            PinnedPlaylist(id: "p4", source: .appleMusic, name: "Dinner party", artworkID: MockArtwork.id(.ring),
+                           trackCount: playlistSongs["p4"]?.count),
+        ]
     }
 }
 
@@ -135,7 +161,7 @@ struct MockContent: Equatable, Sendable {
     var songs: [TrackItem] = []
     var playlists: [PlaylistItem] = []
     var playlistTracks: [String: [TrackItem]] = [:]
-    var upNext: [TrackItem] = []
+    var upNext: [QueueItem] = []
     var files: [TrackItem] = []
     /// Tracks seen from Spotify this session, newest first.
     var spotifyHistory: [TrackItem] = []
@@ -151,11 +177,11 @@ struct MockContent: Equatable, Sendable {
 // MARK: - Fixed scenes for snapshots and previews
 
 enum MockScene: String, CaseIterable, Sendable {
-    case idle, appleMusic, spotify, appPicker, firstRun, localNetworkDenied
+    case idle, appleMusic, upNext, spotify, appPicker, firstRun, localNetworkDenied
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .upNext, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -163,7 +189,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -186,10 +212,11 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic:
+        case .appleMusic, .upNext:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)
+            s.queue = QueueStatus(currentID: "q0", currentSource: .appleMusic, upcomingCount: MockData.upNext.count)
             set(MockData.hall, .playing)
             set(MockData.denon, .playing)
             set(MockData.mainBath, .playing)

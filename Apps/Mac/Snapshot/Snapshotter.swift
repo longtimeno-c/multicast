@@ -68,13 +68,15 @@ enum Snapshotter {
         let state = scene.state
         let content = scene.content
         return HubModel(backend: MockHubBackend(state: state, content: content, artwork: artwork), state: state,
-                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing)
+                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing,
+                        section: scene == .upNext ? .upNext : nil)
     }
 
     private static func fileName(_ scene: MockScene) -> String {
         switch scene {
         case .idle: "idle-no-speakers"
         case .appleMusic: "apple-music-playing"
+        case .upNext: "up-next"
         case .spotify: "spotify-capture"
         case .appPicker: "other-app-picker"
         case .firstRun: "first-run-looking-for-speakers"
