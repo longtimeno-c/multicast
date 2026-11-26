@@ -39,6 +39,15 @@ struct MiniPlayer: View {
                              playSize: 19, skipSize: 15, showsPrevious: false, minTarget: 44,
                              onPlayPause: model.togglePlayPause, onNext: model.next, onPrevious: {})
                 .buttonStyle(.plain)
+            Button { session.navigation.showsUpNext = true } label: {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(MC.Ink.body)
+            .accessibilityLabel("Up Next")
         }
         .padding(.leading, MC.Space.m)
         .padding(.trailing, MC.Space.s)
@@ -54,6 +63,7 @@ struct NowPlayingSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showsQueue = false
 
     var body: some View {
         Group {
@@ -63,6 +73,11 @@ struct NowPlayingSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(MC.Surface.canvas)
         .disabled(session.linkProblem != nil)
+        .sheet(isPresented: $showsQueue) {
+            UpNextSheet()
+                .environment(model)
+                .environment(session)
+        }
     }
 
     /// Large accessibility text: everything scrolls, the artwork steps down first, words get
@@ -95,8 +110,7 @@ struct NowPlayingSheet: View {
                 .frame(width: geo.size.width)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                speakersButton
-                    .frame(maxWidth: .infinity)
+                bottomRow
                     .padding(.vertical, MC.Space.m)
                     .background(MC.Surface.canvas)
             }
@@ -134,8 +148,7 @@ struct NowPlayingSheet: View {
                         .buttonStyle(.plain)
                         .frame(maxWidth: .infinity)
                     masterVolume
-                    speakersButton
-                        .frame(maxWidth: .infinity)
+                    bottomRow
                 }
                 .padding(.bottom, MC.Space.l)
             }
@@ -216,6 +229,38 @@ struct NowPlayingSheet: View {
                 .font(.system(size: 13))
                 .foregroundStyle(MC.Ink.tertiary)
                 .accessibilityHidden(true)
+        }
+    }
+
+    /// Shuffle, the speakers, Up Next: the row Music keeps under its volume.
+    private var bottomRow: some View {
+        HStack(spacing: MC.Space.m) {
+            let on = model.queue.isShuffled
+            Button(action: model.toggleShuffle) {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background {
+                        if on { Circle().fill(MC.Surface.well) }
+                    }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(on ? AnyShapeStyle(MC.accent) : AnyShapeStyle(MC.Ink.body))
+            .accessibilityLabel("Shuffle")
+            .accessibilityValue(on ? "On" : "Off")
+            Spacer(minLength: 0)
+            speakersButton
+            Spacer(minLength: 0)
+            Button { showsQueue = true } label: {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(MC.Ink.body)
+            .accessibilityLabel("Up Next")
         }
     }
 
