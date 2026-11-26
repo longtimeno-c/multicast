@@ -129,6 +129,7 @@
 				4D0C10002E00000000000051 /* Sources */,
 				4D0C10002E00000000000050 /* Frameworks */,
 				4D0C10002E00000000000052 /* Resources */,
+				4D0C10002E000000000000A0 /* Stable Debug UUID */,
 			);
 			buildRules = (
 			);
@@ -232,6 +233,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		4D0C10002E000000000000A0 /* Stable Debug UUID */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Scripts/stable-debug-uuid.py",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Stable Debug UUID";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/stable-debug-uuid.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n# Same main-executable UUID for Debug builds from any checkout, so the Local Network\n# grant (keyed on that UUID) survives rebuilds and worktrees. See the script.\nif [ \"$CONFIGURATION\" = \"Debug\" ]; then\n  /usr/bin/python3 -I \"$SRCROOT/Scripts/stable-debug-uuid.py\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\" \"$PRODUCT_BUNDLE_IDENTIFIER\"\nfi\ntouch \"$DERIVED_FILE_DIR/stable-debug-uuid.stamp\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		4D0C10002E00000000000051 /* Sources */ = {
