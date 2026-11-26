@@ -73,6 +73,11 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
         fanout = SnapshotFanout { [weak self] active in
             self?.queue.async { active ? self?.startObserving() : self?.stopObserving() }
         }
+        // Compile now, off every caller's path, when Music is already open: the system
+        // security-scans a script before an app compiles it, which can take tens of seconds in
+        // a fresh process. (Compiling reads Music's terminology from Music itself and would
+        // launch it, so a closed Music is compiled for right after `ensureRunning` opens it.)
+        if Self.isRunning { queue.async { [weak self] in _ = try? self?.compiledScript() } }
     }
 
     deinit {
@@ -475,7 +480,10 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
             throw HubCommandError(.failed, "The Music script could not be created.")
         }
         var err: NSDictionary?
-        guard s.compileAndReturnError(&err) else {
+        let started = MulticastTiming.now
+        let compiled = s.compileAndReturnError(&err)
+        MulticastTiming.log.debug("music.script compile ok=\(compiled) \(MulticastTiming.ms(since: started))ms")
+        guard compiled else {
             let message = (err?[NSAppleScript.errorMessage] as? String) ?? "unknown"
             throw HubCommandError(.failed, "The Music script did not compile: \(message)")
         }
