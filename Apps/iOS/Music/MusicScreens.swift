@@ -265,6 +265,11 @@ private struct AppleMusicView: View {
             if isSearching {
                 searchResults
             } else {
+                if !model.pins.isEmpty {
+                    PinnedShelf(artworkSize: 96)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
                 Picker("Show", selection: $nav.appleMusicSection) {
                     ForEach(RemoteNavigation.AppleMusicSection.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -286,6 +291,7 @@ private struct AppleMusicView: View {
         .animation(MC.Motion.feedback, value: nav.appleMusicSection)
         .toolbar {
             if nav.appleMusicSection == .upNext && !isSearching { UpNextToolbar() }
+            if nav.appleMusicSection == .playlists && !isSearching && model.spotify != .notInstalled { PinSpotifyToolbar() }
         }
     }
 
@@ -777,6 +783,33 @@ struct UpNextToolbar: ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             EditButton()
                 .disabled(model.upNext.items.isEmpty)
+        }
+    }
+}
+
+/// Pin a Spotify playlist from a pasted share link.
+struct PinSpotifyToolbar: ToolbarContent {
+    @Environment(HubModel.self) private var model
+    @State private var asking = false
+    @State private var link = ""
+    @State private var invalid = false
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { link = ""; asking = true } label: { Image(systemName: "pin") }
+                .accessibilityLabel("Pin Spotify Playlist")
+                .alert("Pin Spotify Playlist", isPresented: $asking) {
+                    TextField("Playlist link", text: $link)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button("Pin") { invalid = !model.pinSpotifyLink(link) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("In Spotify, choose Share \u{203A} Copy Link to Playlist, then paste it here. Spotify plays it; its songs aren\u{2019}t listed here.")
+                }
+                .alert("That isn\u{2019}t a Spotify playlist link", isPresented: $invalid) {
+                    Button("OK", role: .cancel) {}
+                }
         }
     }
 }

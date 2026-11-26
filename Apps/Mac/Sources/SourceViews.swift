@@ -274,6 +274,11 @@ struct AppleMusicBrowser: View {
                         .sourceRow()
                         .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
                 }
+                if model.spotify != .notInstalled && !isSearching {
+                    SpotifyLinkField(kind: .playlist)
+                        .selectionDisabled()
+                        .sourceRow()
+                }
             } else {
                 ForEach(tracks) { track in
                     TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id)
@@ -306,6 +311,7 @@ struct AppleMusicBrowser: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             SourceHeader {
+                if !isSearching { PinnedShelf(artworkSize: 64) }
                 SearchField(text: $query, prompt: "Search your library", focusRequest: focusSearch)
                 Picker("Show", selection: Binding(get: { model.librarySection },
                                                   set: { model.librarySection = $0 })) {
@@ -470,6 +476,13 @@ private struct OpenPlaylistBar: View {
                 .help("Play this playlist from the top")
             Button(action: shuffle) { Label("Shuffle", systemImage: "shuffle") }
                 .help("Play this playlist in a random order")
+            let pinned = model.isPinned(playlist.id)
+            Button { pinned ? model.unpin(playlist.id) : model.pin(playlist.id) } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+            }
+            .buttonStyle(.borderless)
+            .help(pinned ? "Unpin" : "Pin to the top of the library")
+            .accessibilityLabel(pinned ? "Unpin" : "Pin to Top")
         }
         .padding(.top, MC.Space.xs)
     }
@@ -551,7 +564,7 @@ struct SpotifySourceView: View {
                         .onAppear { model.loadMoreIfNeeded(.spotifyHistory, after: track.id) }
                 }
             }
-            SpotifyLinkField()
+            SpotifyLinkField(kind: .song)
                 .selectionDisabled()
                 .sourceRow()
         }
@@ -822,27 +835,36 @@ struct QueueRow: View {
     }
 }
 
-/// Paste a Spotify song link to queue it.
+/// Paste a Spotify link: a song to queue it, a playlist to pin it.
 struct SpotifyLinkField: View {
+    enum Kind { case song, playlist }
+
     @Environment(HubModel.self) private var model
+    var kind: Kind
     @State private var text = ""
     @State private var invalid = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: MC.Space.xs) {
-            Text("Queue a Spotify song")
+            Text(kind == .song ? "Queue a Spotify song" : "Pin a Spotify playlist")
                 .font(MC.Font.captionEmphasis)
                 .foregroundStyle(MC.Ink.secondary)
             HStack(spacing: MC.Space.s) {
-                TextField("Paste a link from Share \u{203A} Copy Song Link", text: $text)
+                TextField(kind == .song ? "Paste a link from Share \u{203A} Copy Song Link"
+                                        : "Paste a link from Share \u{203A} Copy Link to Playlist", text: $text)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(add)
                     .onChange(of: text) { invalid = false }
-                Button("Add to Queue", action: add)
+                Button(kind == .song ? "Add to Queue" : "Pin", action: add)
                     .disabled(text.isEmpty)
             }
             if invalid {
-                Text("That isn\u{2019}t a Spotify song link.")
+                Text(kind == .song ? "That isn\u{2019}t a Spotify song link." : "That isn\u{2019}t a Spotify playlist link.")
+                    .font(MC.Font.caption)
+                    .foregroundStyle(MC.Ink.secondary)
+            }
+            if kind == .playlist {
+                Text("Spotify plays it; Multicast can\u{2019}t list its songs.")
                     .font(MC.Font.caption)
                     .foregroundStyle(MC.Ink.secondary)
             }
@@ -851,6 +873,7 @@ struct SpotifyLinkField: View {
     }
 
     private func add() {
-        if model.addSpotifyLink(text) { text = "" } else { invalid = true }
+        let ok = kind == .song ? model.addSpotifyLink(text) : model.pinSpotifyLink(text)
+        if ok { text = "" } else { invalid = true }
     }
 }
