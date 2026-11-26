@@ -34,6 +34,9 @@ import MulticastRemote
 //   clear-queue          empty Up Next
 //   expect-title=TEXT    wait (up to 45 s) until the song playing has TEXT in its title
 //   seek-end=SECONDS     seek to SECONDS before the end of the song playing
+//   keep-upnext=N        remove all but the first N songs of Up Next
+//   queue-spotify=current  queue the song Spotify played most recently this session
+//   expect-advance       wait (up to 60 s) until the queue moves to another song, or ends
 //
 // Exit codes: 0 every step done, 1 a step failed, 2 usage.
 
@@ -328,8 +331,26 @@ func run(hubQuery: String, store: PairingKeyStore, codeFile: URL?, remoteName: S
             } else {
                 await send(.addToQueue(tracks: [t], source: .appleMusic, placement: .last))
             }
+        case "queue-spotify" where arg == "current":
+            let page = (try? await backend.spotifyHistory(PageRequest(limit: 20)))?.items ?? []
+            guard let t = page.first(where: { $0.id.hasPrefix("spotify:track:") }) else { fail("Spotify hasn't played a song this session") }
+            say("  \"\(t.title)\" by \(t.artist) (\(Int(t.duration)) s)")
+            await send(.addToQueue(tracks: [t], source: .spotify, placement: .last))
         case "queue-spotify":
             await send(.addSpotifyLink(link: arg, placement: .last))
+        case "keep-upnext":
+            guard let n = Int(arg) else { throw2() }
+            let page = (try? await backend.upNext(PageRequest(limit: 500)))?.items ?? []
+            let drop = page.dropFirst(n).map(\.id)
+            if !drop.isEmpty { await send(.removeFromQueue(ids: Array(drop))) }
+        case "expect-advance":
+            let before = await current().queue.currentID
+            let started = Date()
+            if !(await log.wait(timeout: 60) { $0.queue.currentID != before }) { fail("the queue never moved on") }
+            let s = await current()
+            say(String(format: "  moved after %.1f s to %@ (%@): %@", Date().timeIntervalSince(started),
+                       s.queue.currentID ?? "end of queue", s.queue.currentSource?.rawValue ?? "-",
+                       s.nowPlaying.map { "\"\($0.title)\"" } ?? "nothing"))
         case "upnext":
             let page = (try? await backend.upNext(PageRequest(limit: 50)))?.items ?? []
             for q in page { say("  \(q.id) [\(q.source.rawValue)] \"\(q.track.title)\" by \(q.track.artist)") }
