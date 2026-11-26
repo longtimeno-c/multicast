@@ -819,5 +819,20 @@ struct LocalHubResponsivenessTests {
         musicTap.evidence.send(.granted)
         try await rig.waitFor("granted") { $0.health.permission(.audioCapture) == .granted }
     }
+
+    @Test func switchingToAppleMusicPausesSpotifyWithNoSpeakerOn() async throws {
+        let rig = Rig()
+        rig.apps.installed.update { _ = $0.insert(spotifyID) }
+        rig.apps.running.update { _ = $0.insert(spotifyID) }
+        await rig.start()
+        let player = FakeMusicPlayer()
+        await rig.hub.setMusicPlayer(player)
+        try await rig.hub.perform(.selectSource(source: .spotify))
+        rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song A", trackID: "a", sampledAt: rig.clock.now))
+        try await rig.waitFor("spotify playing") { $0.transport.isPlaying }
+        try await rig.hub.perform(.playTrack(id: "s1", context: .songs))
+        for _ in 0..<200 where !rig.spotify.commands.get().contains("pause") { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(rig.spotify.commands.get().contains("pause"))
+    }
 }
 

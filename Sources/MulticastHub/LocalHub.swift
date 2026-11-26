@@ -704,7 +704,10 @@ public actor LocalHub: HubBackend {
 
     private func pauseMediaApp(_ source: SourceKind?) async {
         switch source {
-        case .spotify: try? await deps.spotify.pause()
+        case .spotify:
+            do { try await deps.spotify.pause() } catch {
+                MulticastTiming.log.error("hub.pause Spotify failed: \(String(describing: error), privacy: .public)")
+            }
         case .appleMusic: await musicPlayer?.pause()
         default: break
         }
@@ -881,6 +884,7 @@ public actor LocalHub: HubBackend {
         if old != .app { capturedApp = nil }
         endingTask?.cancel()
         endingTask = nil
+        MulticastTiming.log.debug("hub.leaveSource old=\(old.map { "\($0)" } ?? "none", privacy: .public) playing=\(oldPlaying) spotify=\(self.spotifyNow?.state.rawValue ?? "nil", privacy: .public)")
         // Not on the work queue: a media app slow to answer must not hold up the new source.
         if oldPlaying { Task { [weak self] in await self?.pauseMediaApp(old) } }
     }
