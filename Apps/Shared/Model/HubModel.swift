@@ -79,6 +79,9 @@ final class HubModel {
 
     @ObservationIgnored private var loadsInFlight: Set<ListKey> = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// A search already in hand when the model was made (snapshots): the Mac's search field
+    /// takes it once, so the render shows results without anyone typing.
+    @ObservationIgnored var searchSeed: String?
     /// The backend said it has no catalog: it isn't asked again.
     @ObservationIgnored private var catalogUnsupported = false
 
@@ -106,6 +109,8 @@ final class HubModel {
         var upNext: [QueueItem] = []
         var files: [TrackItem] = []
         var spotifyHistory: [TrackItem] = []
+        /// A search with its answers: the query, the library's songs and the catalog's.
+        var search: (query: String, songs: [TrackItem], catalog: [TrackItem])?
     }
 
     nonisolated static let throttle: Duration = .milliseconds(50)
@@ -134,6 +139,12 @@ final class HubModel {
         upNext = PagedList(items: preload.upNext, revision: r.upNext)
         files = PagedList(items: preload.files, revision: r.files)
         spotifyHistory = PagedList(items: preload.spotifyHistory, revision: r.spotifyHistory)
+        if let search = preload.search {
+            searchQuery = search.query
+            searchSeed = search.query
+            searchResults = PagedList(items: search.songs, revision: r.library)
+            catalogResults = search.catalog
+        }
         for (id, data) in artwork {
             artworkCache.insert(data, for: .init(id: id, maxPixel: Self.defaultArtworkPixels))
         }

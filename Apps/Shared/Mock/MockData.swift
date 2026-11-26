@@ -197,11 +197,14 @@ struct MockContent: Equatable, Sendable {
 // MARK: - Fixed scenes for snapshots and previews
 
 enum MockScene: String, CaseIterable, Sendable {
-    case idle, appleMusic, folder, playlist, upNext, spotify, appPicker, firstRun, localNetworkDenied
+    case idle, appleMusic, folder, playlist, upNext, search, spotify, appPicker, firstRun, localNetworkDenied
+
+    /// What the search scene looks for.
+    static let searchQuery = "Juniper"
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .folder, .playlist, .upNext, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .folder, .playlist, .upNext, .search, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -209,7 +212,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .folder, .playlist, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .folder, .playlist, .upNext, .search, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -232,7 +235,7 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic, .folder, .playlist, .upNext:
+        case .appleMusic, .folder, .playlist, .upNext, .search:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)

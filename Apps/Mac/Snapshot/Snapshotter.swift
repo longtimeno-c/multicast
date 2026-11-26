@@ -67,8 +67,14 @@ enum Snapshotter {
     private static func model(for scene: MockScene) -> HubModel {
         let state = scene.state
         let content = scene.content
+        var preload = content.preload
+        if scene == .search {
+            let q = MockScene.searchQuery
+            func matches(_ t: TrackItem) -> Bool { t.title.localizedCaseInsensitiveContains(q) || t.artist.localizedCaseInsensitiveContains(q) }
+            preload.search = (q, content.songs.filter(matches), MockData.catalogSongs.filter(matches))
+        }
         return HubModel(backend: MockHubBackend(state: state, content: content, artwork: artwork), state: state,
-                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing,
+                        preload: preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing,
                         openPlaylist: scene == .playlist ? openPlaylist : nil,
                         playlistTracks: scene == .playlist ? content.playlistTracks[openPlaylist.id] ?? [] : [],
                         showsUpNext: scene == .upNext,
@@ -87,6 +93,7 @@ enum Snapshotter {
         case .folder: "folder-open"
         case .playlist: "playlist-open"
         case .upNext: "up-next"
+        case .search: "search-with-catalog"
         case .spotify: "spotify-capture"
         case .appPicker: "other-app-picker"
         case .firstRun: "first-run-looking-for-speakers"

@@ -80,6 +80,13 @@ private struct LibraryBrowser: View {
         }
         .background(MC.Surface.canvas)
         .onChange(of: query) { _, new in model.search(new) }
+        .onAppear {
+            // A model made with a search in hand (snapshots) shows it.
+            if let seed = model.searchSeed {
+                model.searchSeed = nil
+                query = seed
+            }
+        }
         .background {
             // Command-F reaches the library search, as Music's does.
             Button("Find") { focusSearch += 1 }

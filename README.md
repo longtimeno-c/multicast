@@ -109,7 +109,8 @@ Mac:    Multicast (window, menu bar) ── HubModel ─────────
 - `Sources/MulticastHubModel` — the UI seam described above (no dependencies; macOS and iOS)
 - `Sources/MulticastHub` — `LocalHub`, the hub backend; `AppleMusicHubPlayer` connects the Apple Music player to it
 - `Sources/MulticastAppleMusic` — Apple Music for the hub: `MusicAppPlayer` (the Music app over Apple Events, the
-  default) and `MusicKitPlayer` (MusicKit, unproven, see Limitations)
+  default), `MusicKitPlayer` (MusicKit) and `CatalogRoutingProvider` (the Music app for the library, MusicKit for
+  catalog songs; see Limitations)
 - `Sources/MulticastRemote` — `HubServer`, `RemoteHubBackend`, `HubBrowser`, pairing and the encrypted session
 - `Sources/multicast-cli` — play to speakers from the command line
 - `Sources/multicast-hub` — the hub without its window (same `LocalHub` and `HubServer` as the app)
@@ -148,6 +149,12 @@ across a switch, and only a skip flushes their audio.
 - **The library is playlists**: pinned ones first, then every playlist (artwork tiles on the Mac, a list on the
   iPhone). Opening one shows its artwork, Play and Shuffle, and its songs. Search finds songs and playlists, and
   its results show only while you search.
+- **Apple Music catalog.** When the hub can search the Apple Music catalog, search shows an "Apple Music" section
+  under the library's results: the top 25 catalog songs, which needn't be in your library. They play, Play Next
+  and Add to Queue like any other song, through the same Up Next. The Music app can only be told to play library
+  tracks, so with the Music app as the player a catalog song plays through MusicKit instead (Music is paused for
+  it, and resumed by the next library song), and one capture hears both. The section needs a build registered for
+  MusicKit (see [Permissions](#permissions-the-mac-asks-for)) and is simply absent otherwise.
 - **The player** is the Mac window's title bar, as in Music: transport and Shuffle, then what is playing with its
   scrubber, then an Up Next button (Option-Command-U) that slides Up Next in beside the library. On the iPhone, the
   full player has Shuffle and Up Next either side of the speakers button, and the mini player and the library
@@ -200,6 +207,7 @@ threat model are described in `Sources/MulticastRemote/Crypto.swift`.
 | Local Network | finding AirPlay speakers, and letting iPhones find the Mac | only this Mac's own outputs; remotes can't connect (shown in the speakers list, the menu bar panel and Settings, with a button to the right pane; once it is turned on the Mac picks it up within about 10 s) |
 | System Audio Recording | Spotify, other apps and Apple Music (all captured) | those sources play silence; shown on the source |
 | Automation (Spotify, Music) | now playing and play/pause/skip; the Music app player | Spotify plays but can't be controlled; Apple Music unavailable |
+| Media & Apple Music | the MusicKit player; Apple Music catalog search | no catalog results in search |
 
 Multicast never asks unprompted: each prompt follows a button press ("Allow…"), and a refusal points to the
 right pane of Privacy & Security.
@@ -207,6 +215,15 @@ right pane of Privacy & Security.
 The Mac app is signed "to run locally" (ad hoc). macOS treats every rebuild as a new app, so it may ask again
 for these permissions and for Keychain access to the pairing keys. Signing with your own team avoids that (see
 `Apps/Config/Mac.xcconfig`).
+
+Catalog search also needs a developer token, which MusicKit fetches by itself from Apple for the app's bundle id.
+Apple only issues one when an explicit App ID with that bundle id has the **MusicKit** app service turned on
+(Certificates, Identifiers & Profiles › Identifiers › the App ID › the *App Services* tab, not *Capabilities*).
+Nothing in the project or its signature takes part: no entitlement, no provisioning profile. If the App ID isn't
+registered that way, Apple's token service answers "Client not found", MusicKit reports
+`developerTokenRequestFailed`, and search shows no Apple Music section. To build under your own account, change
+`PRODUCT_BUNDLE_IDENTIFIER` to one you have registered. `Multicast.app --catalog-experiment "<term>" --no-play
+--experiment-log <file>` tries one search and logs the outcome.
 
 Local Network access also follows the main executable's Mach-O UUID (Apple's TN3179). A Debug build's main
 executable is a small stub (the app's code is in `Multicast.debug.dylib`), so its UUID survives rebuilds, but Xcode
@@ -295,8 +312,13 @@ Multicast is a work in progress. There are development builds only: no signed, n
   is −500…500 ms; positive plays later.
 - **Apple Music** plays through the Music app (Apple Events plus a capture of Music's audio), so it needs
   Automation and System Audio Recording. Music doesn't expose its own Up Next to Apple Events, so the hub keeps its
-  own queue and plays Music one track at a time. The MusicKit player is built but unproven (which process renders
-  its audio is unknown).
+  own queue and plays Music one track at a time. MusicKit's `ApplicationMusicPlayer` is rendered by the system
+  process `com.apple.MediaPlayer.RemotePlayerService`, which a process tap captures (measured with library songs).
+- **Apple Music catalog search** is built and unit-tested but has not been run against Apple Music: on the
+  development Mac the developer token request is refused ("Client not found" for the bundle id), so no catalog
+  search has returned results and no catalog song has been played or captured yet. Until the permission for
+  Media & Apple Music has been granted (choose MusicKit under Settings once), the section stays absent too; there
+  is no button for it in search.
 - **The play queue** has been run live from Apple Music to Apple Music: the next song started about 8 s after a seek
   to 8 s before the end, with no foreign track in between. Apple Music to Spotify is verified only as far as the
   switch: the queued Spotify song didn't start while the first AppleScript compile in the Multicast process was
