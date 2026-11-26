@@ -25,3 +25,6 @@ DEVELOPMENT_TEAM =
 ENABLE_USER_SCRIPT_SANDBOXING = NO
 
 #include? "Local.xcconfig"
+
+// The app icon: Apps/Shared/Assets.xcassets, drawn by Apps/Scripts/make-icon.swift.
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
