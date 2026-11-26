@@ -44,6 +44,9 @@ final class HubModel {
     /// Library search results for `searchQuery`.
     private(set) var searchResults = PagedList<TrackItem>()
     private(set) var searchQuery = ""
+    /// Apple Music catalog songs matching `searchQuery`: the top results, shown under the
+    /// library's. Empty when the hub can't search the catalog.
+    private(set) var catalogResults: [TrackItem] = []
     /// The contents of the playlist last opened with `openPlaylist(_:)`.
     private(set) var openPlaylistID: String?
     private(set) var playlistTracks = PagedList<TrackItem>()
@@ -76,6 +79,8 @@ final class HubModel {
 
     @ObservationIgnored private var loadsInFlight: Set<ListKey> = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// The backend said it has no catalog: it isn't asked again.
+    @ObservationIgnored private var catalogUnsupported = false
 
     // Optimistic values held until the backend echoes them (or they go stale).
     @ObservationIgnored private var pendingVolume: [SpeakerID: Pending<Double>] = [:]
@@ -106,6 +111,8 @@ final class HubModel {
     nonisolated static let throttle: Duration = .milliseconds(50)
     nonisolated static let echoWindow: TimeInterval = 0.5
     nonisolated static let searchDebounce: Duration = .milliseconds(250)
+    /// How many catalog songs a search shows.
+    nonisolated static let catalogResultCount = 25
     /// Artwork is requested at this size unless a view asks for another.
     nonisolated static let defaultArtworkPixels = 600
 
@@ -327,7 +334,27 @@ final class HubModel {
             guard !Task.isCancelled, let self else { return }
             self.searchQuery = q
             self.searchResults = PagedList(revision: self.content.library)
-            if !q.isEmpty { self.loadFirstPage(.search) }
+            if !self.catalogResults.isEmpty { self.catalogResults = [] }
+            if !q.isEmpty {
+                self.loadFirstPage(.search)
+                self.loadCatalogResults(q)
+            }
+        }
+    }
+
+    /// The catalog's answer for `q`, if the hub has one. Any error means no catalog results:
+    /// the catalog is an extra under the library, never something to explain.
+    private func loadCatalogResults(_ q: String) {
+        guard !catalogUnsupported else { return }
+        let backend = backend
+        Task { [weak self] in
+            do {
+                let page = try await backend.searchCatalog(q, PageRequest(limit: Self.catalogResultCount))
+                guard let self, self.searchQuery == q else { return }
+                withAnimation(self.structural) { self.catalogResults = page.items }
+            } catch {
+                if (error as? HubCommandError)?.code == .unsupported { self?.catalogUnsupported = true }
+            }
         }
     }
 

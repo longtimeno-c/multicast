@@ -62,6 +62,17 @@ enum MockData {
         ]
     }
 
+    /// What a catalog search finds: songs by the library's artists that aren't in the library.
+    static var catalogSongs: [TrackItem] {
+        [
+            TrackItem(id: CatalogTrackID.make("9001"), title: "Harbour Lights", artist: "Juniper Hale", album: "Saltmarsh", duration: 241, artworkID: MockArtwork.id(.ring)),
+            TrackItem(id: CatalogTrackID.make("9002"), title: "Tidewater (Live)", artist: "Juniper Hale", album: "At the Boathouse", duration: 312, artworkID: MockArtwork.id(.sunOverWater)),
+            TrackItem(id: CatalogTrackID.make("9003"), title: "Night Market Reprise", artist: "The Ostrava Set", album: "Afterhours", duration: 187, artworkID: MockArtwork.id(.dots)),
+            TrackItem(id: CatalogTrackID.make("9004"), title: "Halcyon (Demo)", artist: "Mara Quell", album: "Sketches", duration: 174, artworkID: MockArtwork.id(.arcs)),
+            TrackItem(id: CatalogTrackID.make("9005"), title: "Greenhouse", artist: "Kito Marr", album: "Seedlings", duration: 229, artworkID: MockArtwork.id(.bands)),
+        ]
+    }
+
     static var spotifyTracks: [TrackItem] {
         [
             TrackItem(id: "spotify:track:0mockEveningTide00000001", title: "Evening Tide", artist: "Sola Wren", album: "Coastlines", duration: 238, artworkID: MockArtwork.id(.horizon)),

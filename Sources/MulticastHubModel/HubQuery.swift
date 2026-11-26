@@ -13,6 +13,12 @@ public enum HubQuery: Equatable, Hashable, Sendable, Codable {
     case songs(page: PageRequest)
     /// Library search by title, artist or album. An empty query returns an empty page.
     case search(query: String, page: PageRequest)
+    /// Apple Music catalog search: songs that need not be in the library. Kept apart from
+    /// `search` so clients can show the two lists separately. Track ids come back in the
+    /// `CatalogTrackID` form. Throws `.unsupported` or `.unavailable` when the hub can't search
+    /// the catalog (clients then show no catalog results). A hub from before catalog search
+    /// can't decode this query and answers with an error, which reads the same way.
+    case catalogSearch(query: String, page: PageRequest)
     /// The hub's Up Next (answered with `.queue`).
     case upNext(page: PageRequest)
     case files(page: PageRequest)

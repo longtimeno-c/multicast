@@ -202,7 +202,8 @@ public struct Page<Item: Sendable & Codable & Equatable>: Equatable, Sendable, C
 /// Where a track was chosen, so the hub knows what plays after it.
 ///
 /// Wire form (synthesized): `{"songs":{}}`, `{"playlist":{"id":"p1"}}`, `{"upNext":{}}`,
-/// `{"search":{"query":"tide"}}`, `{"files":{}}`, `{"spotifyHistory":{}}`.
+/// `{"search":{"query":"tide"}}`, `{"files":{}}`, `{"spotifyHistory":{}}`,
+/// `{"catalog":{"query":"tide"}}`.
 ///
 /// Playing a song from a context makes Up Next everything after it in that context.
 public enum TrackContext: Equatable, Hashable, Sendable, Codable {
@@ -218,4 +219,25 @@ public enum TrackContext: Equatable, Hashable, Sendable, Codable {
     case files
     /// Spotify songs heard this session (`id` is a `spotify:track:` URI).
     case spotifyHistory
+    /// An Apple Music catalog search result list (`id` is a `CatalogTrackID`).
+    case catalog(query: String)
+}
+
+/// The id of an Apple Music catalog song in the hub's lists: `catalog:<catalog song id>`.
+/// Library songs keep their bare library ids, so the prefix alone tells the two apart wherever
+/// a `TrackItem` travels (search results, Up Next, now playing).
+public enum CatalogTrackID {
+    public static let prefix = "catalog:"
+
+    public static func make(_ catalogID: String) -> String { prefix + catalogID }
+
+    public static func isCatalog(_ trackID: String) -> Bool { catalogID(from: trackID) != nil }
+
+    /// The catalog's own id, or nil when `trackID` is not a well-formed catalog track id.
+    public static func catalogID(from trackID: String) -> String? {
+        guard trackID.hasPrefix(prefix) else { return nil }
+        let id = String(trackID.dropFirst(prefix.count))
+        guard !id.isEmpty, id.count <= 64, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") }) else { return nil }
+        return id
+    }
 }

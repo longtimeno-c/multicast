@@ -411,6 +411,14 @@ final class FakeMusicPlayer: MusicPlayerProviding, @unchecked Sendable {
         .slice(playlistTracks.get()[playlistID] ?? [], page)
     }
     func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> { .empty }
+    /// Catalog results by query; nil: this player has no catalog.
+    let catalog = Locked<[String: [TrackItem]]?>(nil)
+    let catalogSearches = Locked<[String]>([])
+    func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        guard let catalog = catalog.get() else { throw HubCommandError(.unsupported, "No catalog.") }
+        catalogSearches.update { $0.append(query) }
+        return .slice(catalog[query] ?? [], page)
+    }
     func upNext(_ page: PageRequest) async throws -> Page<TrackItem> { .empty }
     func artwork(id: ArtworkID, maxPixel: Int) async -> Data? { Data("art:\(id)".utf8) }
     func play(trackID: String, context: TrackContext) async throws { commands.update { $0.append("play \(trackID)") } }

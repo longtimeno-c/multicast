@@ -10,7 +10,11 @@ import MulticastHubModel
 //    `MusicAppCaptureProbe`.
 //  - `MusicKitPlayer` uses MusicKit's `ApplicationMusicPlayer` in-process. Needs the app signed
 //    under the MusicKit-enabled team and the Apple Music permission; which process renders its
-//    audio is what `MusicKitRenderProbe` measures. Not proven yet.
+//    audio is what `MusicKitRenderProbe` measures (a system helper, which the hub taps).
+//
+// The Apple Music catalog (songs not in the library) is MusicKit's alone: `searchCatalog` and
+// `CatalogTrackID` ids. With the Music app as the backend, `CatalogRoutingProvider` plays
+// catalog songs through `MusicKitPlayer` and everything else through `MusicAppPlayer`.
 //
 // DRM: neither backend ever sees decoded samples from Apple's APIs. The sound is read from the
 // rendering process with a Core Audio process tap (`AppAudioTapSource`), muted on the Mac while

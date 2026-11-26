@@ -116,6 +116,18 @@ actor MockHubBackend: HubBackend {
         return .slice(hits, page)
     }
 
+    func searchCatalog(_ query: String, _ page: PageRequest) throws -> Page<TrackItem> {
+        guard state.health.permission(.appleMusic) == .granted else {
+            throw HubCommandError(.permissionMissing, "Allow Apple Music access to search the catalog.")
+        }
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return .empty }
+        let hits = MockData.catalogSongs.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q)
+        }
+        return .slice(hits, page)
+    }
+
     func upNext(_ page: PageRequest) -> Page<QueueItem> { .slice(content.upNext, page) }
     func files(_ page: PageRequest) -> Page<TrackItem> { .slice(content.files, page) }
     func spotifyHistory(_ page: PageRequest) -> Page<TrackItem> { .slice(content.spotifyHistory, page) }
@@ -347,6 +359,7 @@ actor MockHubBackend: HubBackend {
         case .playlist(let pid): list = content.playlistTracks[pid] ?? []; source = .appleMusic
         case .files: list = content.files; source = .files
         case .spotifyHistory: list = content.spotifyHistory; source = .spotify
+        case .catalog(let q): list = try searchCatalog(q, PageRequest(limit: 100)).items; source = .appleMusic
         }
         guard let i = list.firstIndex(where: { $0.id == id }) else {
             throw HubCommandError(.notFound, "That track is no longer available.")

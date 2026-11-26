@@ -41,6 +41,11 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
     private var playlistTracks: [String: (index: LibraryIndex, tracks: [Track], builtAt: Date)] = [:]
     private var upNextRevision: UInt64 = 0
     private var lastEntryID: String?
+    /// Catalog songs seen in search results, by catalog id, so playing one needs no second request.
+    private var catalogSongs: [String: Song] = [:]
+    /// The catalog id of the one song the queue was last set to, nil after anything else was
+    /// played: now playing then reports it as a `CatalogTrackID`, as the hub's queue expects.
+    private var soloCatalogID: String?
     private var timer: DispatchSourceTimer?
     private let artworkCache = LockedArtworkCache()
     private var fanout: SnapshotFanout<AppleMusicSnapshot>!
@@ -119,6 +124,30 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
         return MusicKitMapping.page(res.items.map(map), for: page)
     }
 
+    public func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        try requireAuthorized()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return .empty }
+        var req = MusicCatalogSearchRequest(term: q, types: [Song.self])
+        req.limit = min(page.clampedLimit, MusicKitMapping.catalogPageLimit)
+        req.offset = page.offset
+        let res = try await catalog { try await req.response() }
+        let songs = Array(res.songs)
+        lock.withLock {
+            if catalogSongs.count > 2000 { catalogSongs.removeAll(keepingCapacity: true) }
+            for s in songs { catalogSongs[s.id.rawValue] = s }
+        }
+        // A song without play parameters can't be played in this storefront.
+        let items = songs.filter { $0.playParameters != nil }.map { s in
+            remember(s.artwork, for: s.id.rawValue)
+            return MusicKitMapping.catalogTrack(catalogID: s.id.rawValue, title: s.title, artist: s.artistName,
+                                                album: s.albumTitle, duration: s.duration, hasArtwork: s.artwork != nil)
+        }
+        return Page(items: items,
+                    nextCursor: MusicKitMapping.catalogNextCursor(offset: page.offset, count: songs.count, hasMore: res.songs.hasNextBatch),
+                    totalCount: nil)
+    }
+
     public func playlists(_ page: PageRequest) async throws -> Page<PlaylistItem> {
         try requireAuthorized()
         var req = MusicLibraryRequest<Playlist>()
@@ -178,8 +207,14 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
 
     public func play(trackID: String, context: TrackContext) async throws {
         try requireAuthorized()
+        let solo: String?
         switch context {
-        case .songs, .search:
+        case .songs, .search, .catalog: solo = CatalogTrackID.catalogID(from: trackID)
+        default: solo = nil
+        }
+        lock.withLock { soloCatalogID = solo }
+        switch context {
+        case .songs, .search, .catalog:
             let song = try await song(id: trackID)
             await MainActor.run { player.queue = [song] }
         case .playlist(let pid):
@@ -206,6 +241,7 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
         try requireAuthorized()
         let entry = try await playlistIndex(playlistID)
         guard !entry.tracks.isEmpty else { throw HubCommandError(.unavailable, "That playlist is empty.") }
+        lock.withLock { soloCatalogID = nil }
         await MainActor.run {
             player.state.shuffleMode = shuffled ? .songs : .off
             player.queue = ApplicationMusicPlayer.Queue(for: entry.tracks)
@@ -309,12 +345,14 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
         var np: NowPlayingInfo?
         var duration: TimeInterval?
         if let entry {
-            let id = entry.item?.id.rawValue ?? entry.id
+            let (solo, cached): (String?, Song?) = lock.withLock { (soloCatalogID, soloCatalogID.flatMap { catalogSongs[$0] }) }
+            let id = solo ?? entry.item?.id.rawValue ?? entry.id
             if case .song(let s)? = entry.item { duration = s.duration }
+            if duration == nil { duration = cached?.duration }
             if let art = entry.artwork { remember(art, for: id) }
-            np = NowPlayingInfo(title: entry.title, artist: entry.subtitle ?? "", album: nil,
+            np = NowPlayingInfo(title: entry.title, artist: entry.subtitle ?? "", album: cached?.albumTitle,
                                 artworkID: entry.artwork != nil ? AppleMusicArtworkRef.musicKitItem(id: id).artworkID : nil,
-                                artworkIsIcon: false, duration: duration, trackID: id)
+                                artworkIsIcon: false, duration: duration, trackID: solo.map(CatalogTrackID.make) ?? id)
         }
         let snap = AppleMusicSnapshot(
             nowPlaying: np,
@@ -361,6 +399,15 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
     }
 
     private func song(id: String) async throws -> Song {
+        if let catalogID = CatalogTrackID.catalogID(from: id) {
+            if let hit = lock.withLock({ catalogSongs[catalogID] }) { return hit }
+            let req = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(catalogID))
+            guard let s = try await catalog({ try await req.response() }).items.first else {
+                throw HubCommandError(.notFound, "That song is no longer on Apple Music.")
+            }
+            lock.withLock { catalogSongs[catalogID] = s }
+            return s
+        }
         var req = MusicLibraryRequest<Song>()
         req.filter(matching: \.id, equalTo: MusicItemID(id))
         req.limit = 1
@@ -398,6 +445,30 @@ public final class MusicKitPlayer: AppleMusicProviding, @unchecked Sendable {
             playlistTracks[id] = (index, tracks, Date())
         }
         return (index, tracks)
+    }
+
+    /// A catalog request. No developer token means this build isn't registered for MusicKit
+    /// (the App ID for its bundle id needs the MusicKit app service): the catalog is unavailable
+    /// rather than broken.
+    private func catalog<T>(_ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch let e as MusicTokenRequestError {
+            switch e {
+            case .developerTokenRequestFailed:
+                throw HubCommandError(.unavailable, "This copy of Multicast isn\u{2019}t registered with Apple Music, so it can\u{2019}t search the catalog.")
+            case .permissionDenied, .userTokenRevoked:
+                throw HubCommandError(.permissionMissing, "Multicast needs access to Apple Music. Allow it in System Settings \u{203A} Privacy & Security \u{203A} Media & Apple Music.")
+            case .userNotSignedIn:
+                throw HubCommandError(.unavailable, "Sign in to Apple Music on this Mac to search the catalog.")
+            default:
+                throw HubCommandError(.unavailable, "Apple Music didn\u{2019}t accept the request: \(e.localizedDescription)")
+            }
+        } catch let e as HubCommandError {
+            throw e
+        } catch {
+            throw HubCommandError(.failed, error.localizedDescription)
+        }
     }
 
     private func wrap<T>(_ body: () async throws -> T) async throws -> T {

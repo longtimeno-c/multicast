@@ -195,6 +195,10 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     }
     public func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> { try requireAccess(); return try await provider.search(query, page) }
     public func upNext(_ page: PageRequest) async throws -> Page<TrackItem> { try requireAccess(); return try await provider.upNext(page) }
+    public func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        try requireAccess()
+        return try await provider.searchCatalog(query, page)
+    }
     public func artwork(id: ArtworkID, maxPixel: Int) async -> Data? {
         guard (try? requireAccess()) != nil else { return nil }
         return await provider.artwork(id: id, maxPixel: maxPixel)

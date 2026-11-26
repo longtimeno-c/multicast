@@ -785,6 +785,7 @@ enum RemoteInputPolicy {
             switch context {
             case .playlist(let pid) where !idOK(pid): return .failure(notFound)
             case .search(let q): return .success(.playTrack(id: id, context: .search(query: String(q.prefix(maxSearchLength)))))
+            case .catalog(let q): return .success(.playTrack(id: id, context: .catalog(query: String(q.prefix(maxSearchLength)))))
             default: return .success(command)
             }
         case .playPlaylist(let id, _), .pinPlaylist(let id), .unpinPlaylist(let id):
@@ -848,6 +849,9 @@ enum RemoteInputPolicy {
         case .search(let q, let p):
             guard let p = page(p) else { return .failure(bad) }
             return .success(.search(query: String(q.prefix(maxSearchLength)), page: p))
+        case .catalogSearch(let q, let p):
+            guard let p = page(p) else { return .failure(bad) }
+            return .success(.catalogSearch(query: String(q.prefix(maxSearchLength)), page: p))
         case .artwork(let id, let maxPixel):
             guard !id.isEmpty, id.utf8.count <= maxIDLength else { return .failure(bad) }
             let px = maxPixel <= 0 || maxPixel > maxArtworkPixel ? maxArtworkPixel : maxPixel

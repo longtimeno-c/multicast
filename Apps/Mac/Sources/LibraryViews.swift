@@ -370,7 +370,8 @@ private struct LibrarySearchResults: View {
             }
             SourceSectionTitle("Songs", isFirst: playlists.isEmpty && spotifyPins.isEmpty)
             if model.searchResults.isLoaded && model.searchResults.items.isEmpty && spotifySongs.isEmpty {
-                Text("No songs match \u{201C}\(query)\u{201D}.")
+                Text(model.catalogResults.isEmpty ? "No songs match \u{201C}\(query)\u{201D}."
+                     : "No songs in your library match \u{201C}\(query)\u{201D}.")
                     .font(MC.Font.body)
                     .foregroundStyle(MC.Ink.secondary)
                     .selectionDisabled()
@@ -390,6 +391,17 @@ private struct LibrarySearchResults: View {
                     .sourceRow()
                     .onAppear { model.loadMoreIfNeeded(.search, after: track.id) }
             }
+            // The Apple Music catalog: songs that needn't be in the library. Shown only when
+            // the hub found some.
+            if !model.catalogResults.isEmpty {
+                SourceSectionTitle("Apple Music")
+                ForEach(model.catalogResults) { track in
+                    TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id)
+                        .rowClick { play(track.id) }
+                        .tag(track.id)
+                        .sourceRow()
+                }
+            }
         }
         .sourceList()
         .contextMenu(forSelectionType: String.self) { ids in
@@ -402,7 +414,8 @@ private struct LibrarySearchResults: View {
                 QueueMenuItems(tracks: spotifySongs.filter { ids.contains($0.id) }, source: .spotify)
             } else {
                 Button("Play") { ids.first.map(play) }
-                QueueMenuItems(tracks: model.searchResults.items.filter { ids.contains($0.id) }, source: .appleMusic)
+                QueueMenuItems(tracks: (model.searchResults.items + model.catalogResults).filter { ids.contains($0.id) },
+                               source: .appleMusic)
             }
         } primaryAction: { ids in
             guard let id = ids.first else { return }
@@ -418,7 +431,8 @@ private struct LibrarySearchResults: View {
     }
 
     private func play(_ id: String) {
-        activation.once { model.playTrack(id, context: .search(query: model.searchQuery)) }
+        let context: TrackContext = CatalogTrackID.isCatalog(id) ? .catalog(query: model.searchQuery) : .search(query: model.searchQuery)
+        activation.once { model.playTrack(id, context: context) }
     }
 
     /// A folder opens in place (its parent is where Back goes); a playlist opens inside its folder.

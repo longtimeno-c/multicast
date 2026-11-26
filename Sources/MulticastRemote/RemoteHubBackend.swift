@@ -521,8 +521,16 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
         return session
     }
 
+    /// Catalog search is spoken from protocol version 3; an older hub can't decode it.
+    private func requireCatalogSearch() throws {
+        if case .connected(let hub) = connectionState, hub.protocolVersion < RemoteProtocol.catalogSearchVersion {
+            throw HubCommandError(.unsupported, "Update Multicast on the Mac to search Apple Music.")
+        }
+    }
+
     public func perform(_ command: HubCommand) async throws {
         if case .addFiles = command { throw HubCommandError(.unsupported, "Add files on the Mac.") }
+        if case .playTrack(_, .catalog) = command { try requireCatalogSearch() }
         try await liveSession().submit(command)
     }
 
@@ -560,6 +568,10 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
     public func songs(_ page: PageRequest) async throws -> Page<TrackItem> { try await tracks(.songs(page: page)) }
     public func search(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
         try await tracks(.search(query: query, page: page))
+    }
+    public func searchCatalog(_ query: String, _ page: PageRequest) async throws -> Page<TrackItem> {
+        try requireCatalogSearch()
+        return try await tracks(.catalogSearch(query: query, page: page))
     }
     public func upNext(_ page: PageRequest) async throws -> Page<QueueItem> {
         guard let p = try await query(.upNext(page: page)).queue else {

@@ -26,7 +26,14 @@ public enum RemoteProtocol {
     /// 2: the hub's play queue (`QueueItem`, `HubState.queue`, queue commands, Up Next answered
     /// with `.queue`), pinned playlists and `playPlaylist(id:shuffled:)`. Version 1 builds can't
     /// decode version 2 states and vice versa, so neither is spoken across.
-    public static let currentVersion = 2
+    ///
+    /// 3: Apple Music catalog search (`HubQuery.catalogSearch`, `TrackContext.catalog`). States
+    /// are unchanged, so version 2 is still spoken: a remote on a version 2 link never sends the
+    /// two new forms (a version 2 hub can't decode them and would drop the link) and answers
+    /// catalog search with `.unsupported` itself.
+    public static let currentVersion = 3
+    /// The first version with catalog search.
+    public static let catalogSearchVersion = 3
     /// The oldest protocol version this build still speaks.
     public static let oldestVersion = 2
     public static var supportedVersions: ClosedRange<Int> { oldestVersion...currentVersion }
