@@ -4,11 +4,6 @@ import Observation
 import os
 import SwiftUI
 
-enum LibrarySection: String, CaseIterable, Identifiable {
-    case songs = "Songs", playlists = "Playlists", upNext = "Up Next"
-    var id: String { rawValue }
-}
-
 /// A failed transport or source command, shown as an alert.
 struct HubAlert: Identifiable, Equatable {
     let id = UUID()
@@ -55,8 +50,10 @@ final class HubModel {
 
     // Navigation that other surfaces (menu commands, the menu-bar panel) also drive.
     var browsingSource: SourceKind = .appleMusic
-    /// Which part of the library is showing (Mac).
-    var librarySection: LibrarySection = .songs
+    /// Up Next is open beside the library (Mac).
+    var showsUpNext = false
+    /// The playlist open in the library, if any (Mac). `openPlaylist(_:)` loads its songs.
+    var openedPlaylist: PlaylistItem?
     /// A refused transport or source command. Speaker failures show in the speaker's row.
     var alert: HubAlert?
     /// Set by the root views from the environment; structural changes animate with it.
@@ -118,7 +115,7 @@ final class HubModel {
     /// For snapshots and previews: start from a fixed state without subscribing.
     convenience init(backend: HubBackend, state: HubState, preload: Preload = Preload(),
                      artwork: [ArtworkID: Data] = [:], levels: StereoLevels = .silent, browsing: SourceKind? = nil,
-                     section: LibrarySection? = nil) {
+                     openPlaylist: PlaylistItem? = nil, playlistTracks: [TrackItem] = [], showsUpNext: Bool = false) {
         self.init(backend: backend)
         apply(state)
         let r = state.content
@@ -132,7 +129,12 @@ final class HubModel {
         }
         self.levels = levels
         if let browsing { browsingSource = browsing }
-        if let section { librarySection = section }
+        if let openPlaylist {
+            openedPlaylist = openPlaylist
+            openPlaylistID = openPlaylist.id
+            self.playlistTracks = PagedList(items: playlistTracks, revision: r.library)
+        }
+        self.showsUpNext = showsUpNext
     }
 
     func start() {
@@ -551,6 +553,25 @@ final class HubModel {
     // MARK: Queue
 
     /// Plays an Up Next entry now (the entries before it are dropped).
+    /// Shuffles Up Next, or puts it back in order.
+    func toggleShuffle() {
+        queue.isShuffled.toggle()
+        send(.setShuffle(enabled: queue.isShuffled))
+    }
+
+    func toggleUpNext() {
+        withAnimation(structural) { showsUpNext.toggle() }
+    }
+
+    func showPlaylist(_ playlist: PlaylistItem) {
+        openPlaylist(playlist.id)
+        withAnimation(MC.Motion.feedback) { openedPlaylist = playlist }
+    }
+
+    func closePlaylist() {
+        withAnimation(MC.Motion.feedback) { openedPlaylist = nil }
+    }
+
     func playQueued(_ entryID: String) {
         withAnimation(structural) { upNext.removeThrough(entryID) }
         send(.playTrack(id: entryID, context: .upNext))

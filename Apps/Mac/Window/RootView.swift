@@ -15,19 +15,18 @@ struct RootView: View {
     /// Fits "MacBook Air Speakers" on one line beside the 200pt slider track.
     static let detailMin: CGFloat = 560
     static let minWidth: CGFloat = sidebarMin + contentMin + detailMin + 2
+    static let upNextWidth: CGFloat = 300
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: Self.sidebarMin, ideal: 200, max: 260)
-        } content: {
-            SourceBrowser()
-                .navigationSplitViewColumnWidth(min: Self.contentMin, ideal: 330, max: 440)
-        } detail: {
-            SpeakersPanel()
-                .navigationSplitViewColumnWidth(min: Self.detailMin, ideal: 640)
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            // The player is the window's title bar, as in Music: the window buttons sit at its
+            // leading edge, then transport, the display in the middle, Up Next at the end.
+            PlayerBar()
+            split
         }
-        .navigationSplitViewStyle(.balanced)
+        .toolbar(.hidden, for: .windowToolbar)
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear { model.reduceMotion = reduceMotion }
         .onChange(of: reduceMotion) { _, new in model.reduceMotion = new }
         .alert(model.alert?.title ?? "", isPresented: Binding(
@@ -38,6 +37,33 @@ struct RootView: View {
         } message: { alert in
             Text(alert.message)
         }
+    }
+
+    private var split: some View {
+        NavigationSplitView(columnVisibility: $columns) {
+            SidebarView()
+                .toolbar(removing: .sidebarToggle)
+                .navigationSplitViewColumnWidth(min: Self.sidebarMin, ideal: 200, max: 260)
+        } content: {
+            // Up Next slides in on the library's right, inside the same column, which widens to
+            // make room so the playlists keep their size.
+            HStack(spacing: 0) {
+                SourceBrowser()
+                if model.showsUpNext {
+                    Rectangle().fill(MC.Ink.faint).frame(width: 0.5)
+                    UpNextPanel()
+                        .frame(width: Self.upNextWidth)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .navigationSplitViewColumnWidth(min: Self.contentMin + (model.showsUpNext ? Self.upNextWidth : 0),
+                                            ideal: model.showsUpNext ? 420 + Self.upNextWidth : 420,
+                                            max: model.showsUpNext ? 640 + Self.upNextWidth : 640)
+        } detail: {
+            SpeakersPanel()
+                .navigationSplitViewColumnWidth(min: Self.detailMin, ideal: 640)
+        }
+        .navigationSplitViewStyle(.balanced)
     }
 }
 

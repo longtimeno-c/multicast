@@ -33,6 +33,8 @@ struct MulticastApp: App {
                 .task { runtime.start() }
         }
         .defaultSize(width: 1180, height: 780)
+        // The player bar is the title bar (see RootView): no system title bar or toolbar above it.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             PlaybackCommands(model: model)

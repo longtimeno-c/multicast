@@ -177,11 +177,11 @@ struct MockContent: Equatable, Sendable {
 // MARK: - Fixed scenes for snapshots and previews
 
 enum MockScene: String, CaseIterable, Sendable {
-    case idle, appleMusic, upNext, spotify, appPicker, firstRun, localNetworkDenied
+    case idle, appleMusic, playlist, upNext, spotify, appPicker, firstRun, localNetworkDenied
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .upNext, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .playlist, .upNext, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -189,7 +189,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .playlist, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -212,7 +212,7 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic, .upNext:
+        case .appleMusic, .playlist, .upNext:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)
