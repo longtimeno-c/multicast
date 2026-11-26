@@ -107,7 +107,7 @@ across a switch, and only a skip flushes their audio.
   Spotify, made only when a link is pasted; if it fails, the song is queued as "Spotify song".
 - **How a song ends**: the Music app is asked to play one track (`play … once`), and Spotify plays
   `play track "spotify:track:…"`. The hub works out from the app's last report when the song will end, and starts
-  the next one about 0.3 s before that. Otherwise Music carries on into its own next track (it does, even with
+  the next one about 0.15 s before that. Otherwise Music carries on into its own next track (it does, even with
   `once`), and Spotify into its autoplay. The next song also starts if the app reports the song stopped, paused at
   its end, or moved on before the timer fires.
 - **When you play something directly in Music or Spotify**, the app takes over: the hub follows it, as before, and

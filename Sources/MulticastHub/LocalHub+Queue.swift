@@ -33,7 +33,7 @@ struct QueueSample: Equatable, Sendable {
 // stops.
 extension LocalHub {
     /// How long before a song's extrapolated end the next one is started.
-    static let queueEndLead: TimeInterval = 0.3
+    static let queueEndLead: TimeInterval = 0.15
 
     var queueDriving: Bool { playQueue.current != nil && !queueHeld }
 
