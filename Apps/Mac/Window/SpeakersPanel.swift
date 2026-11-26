@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 /// The detail column: what's playing, then every speaker under one master volume.
 struct SpeakersPanel: View {
@@ -11,7 +12,7 @@ struct SpeakersPanel: View {
             VStack(alignment: .leading, spacing: MC.Space.xxl) {
                 NowPlayingStrip(
                     info: model.nowPlaying,
-                    artwork: model.artwork(model.nowPlaying?.artwork),
+                    artwork: model.artwork(model.nowPlaying?.artworkID),
                     transport: model.transport,
                     showsPosition: model.hasPosition,
                     liveCaption: liveCaption,

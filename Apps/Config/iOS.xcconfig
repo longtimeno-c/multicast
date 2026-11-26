@@ -1,0 +1,15 @@
+// Per-target settings for the iOS remote "Multicast Remote". Edit these here, never in
+// project.pbxproj: the project file only says which targets exist and what they compile.
+// Paths are relative to Apps/ (the project directory).
+
+PRODUCT_BUNDLE_IDENTIFIER = io.github.longtimeno-c.multicast.remote
+INFOPLIST_FILE = iOS/Info.plist
+CODE_SIGN_ENTITLEMENTS =
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+
+// Signing: simulator only for now (ad hoc, no team). A device build needs DEVELOPMENT_TEAM and
+// an Apple Development identity set here.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] = -
+DEVELOPMENT_TEAM =

@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import MulticastHubModel
 
 // MARK: - Shared bits
 
@@ -52,6 +53,96 @@ private struct SourceSectionTitle: View {
     }
 }
 
+/// What stands in the way of a source, as the first row of its list: a permission to allow or
+/// an app to open, with the one action that fixes it.
+struct SourceIssueNotice: View {
+    @Environment(HubModel.self) private var model
+    var source: SourceKind
+    /// Leave app-not-open issues to the source's own header (Spotify says it already).
+    var permissionsOnly = false
+
+    var body: some View {
+        if let issue = Self.shown(model.health.shownIssues(for: source), permissionsOnly: permissionsOnly).first {
+            HStack(alignment: .top, spacing: MC.Space.m) {
+                Image(systemName: symbol(issue))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(MC.Ink.body)
+                    .frame(width: 20, height: 18)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: MC.Space.xs) {
+                    Text(title(issue))
+                        .font(MC.Font.bodyEmphasis)
+                        .foregroundStyle(MC.Ink.primary)
+                    Text(message(issue))
+                        .font(MC.Font.caption)
+                        .foregroundStyle(MC.Ink.secondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                    action(issue)
+                        .padding(.top, MC.Space.xs)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(MC.Space.m)
+            .background(RoundedRectangle(cornerRadius: MC.Radius.medium, style: .continuous).fill(MC.Surface.group))
+            .accessibilityElement(children: .contain)
+            .selectionDisabled()
+            .sourceRow()
+        }
+    }
+
+    static func shown(_ issues: [HubIssue], permissionsOnly: Bool) -> [HubIssue] {
+        issues.filter { issue in
+            switch issue {
+            case .permissionMissing: true
+            case .sourceAppNotRunning, .sourceAppNotInstalled: !permissionsOnly
+            }
+        }
+    }
+
+    private func symbol(_ issue: HubIssue) -> String {
+        switch issue {
+        case .permissionMissing: "lock.fill"
+        case .sourceAppNotRunning, .sourceAppNotInstalled: "app.dashed"
+        }
+    }
+
+    private func title(_ issue: HubIssue) -> String {
+        switch issue {
+        case .permissionMissing(let p, let status):
+            status == .denied ? "\(p.title) is turned off for Multicast" : "Allow \(p.title)"
+        case .sourceAppNotRunning(_, _, let name): "\(name) isn\u{2019}t open"
+        case .sourceAppNotInstalled(_, _, let name): "\(name) isn\u{2019}t installed"
+        }
+    }
+
+    private func message(_ issue: HubIssue) -> String {
+        switch issue {
+        case .permissionMissing(let p, let status):
+            let why: String = switch p {
+            case .audioCapture: "Multicast hears an app through System Audio Recording, then plays it on your speakers."
+            case .automation: "Multicast uses Automation to see what\u{2019}s playing and to play, pause and skip."
+            case .appleMusic: "Multicast needs it to read your library and play it."
+            case .localNetwork: "Multicast needs it to find AirPlay speakers."
+            }
+            return status == .denied ? why + " Turn it on in Privacy & Security." : why
+        case .sourceAppNotRunning(_, _, let name): return "Open \(name) to play from it."
+        case .sourceAppNotInstalled(_, _, let name): return "Install \(name) to play from it."
+        }
+    }
+
+    @ViewBuilder private func action(_ issue: HubIssue) -> some View {
+        switch issue {
+        case .permissionMissing(let p, let status):
+            Button(status == .denied ? "Open Settings\u{2026}" : "Allow\u{2026}") { model.requestPermission(p) }
+        case .sourceAppNotRunning(.spotify, _, _):
+            Button("Open Spotify") { model.openSpotify() }
+        case .sourceAppNotRunning, .sourceAppNotInstalled:
+            EmptyView()
+        }
+    }
+}
+
 enum SourceHeaderMetrics {
     /// The inset list's row content edge, so headers line up with the rows below them.
     static let inset: CGFloat = 16
@@ -94,7 +185,7 @@ struct TrackRow: View {
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
-            ArtworkView(data: model.artwork(track.artwork), size: 32, radius: MC.Radius.small)
+            ArtworkView(data: model.artwork(track.artworkID), size: 32, radius: MC.Radius.small)
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(track.title)
                     .font(MC.Font.body)
@@ -129,7 +220,7 @@ struct TrackRow: View {
 
 struct AppleMusicBrowser: View {
     enum Section: String, CaseIterable, Identifiable {
-        case songs = "Songs", playlists = "Playlists", upNext = "Up next"
+        case songs = "Songs", playlists = "Playlists", upNext = "Up Next"
         var id: String { rawValue }
     }
 
@@ -140,7 +231,7 @@ struct AppleMusicBrowser: View {
     @State private var focusSearch = 0
 
     var body: some View {
-        switch model.status.permission(.appleMusic) {
+        switch model.health.permission(.appleMusic) {
         case .granted: library
         case .notDetermined: connect
         case .denied: denied
@@ -149,16 +240,19 @@ struct AppleMusicBrowser: View {
 
     private var library: some View {
         List(selection: $selection) {
+            SourceIssueNotice(source: .appleMusic)
             switch section {
             case .songs, .upNext:
                 ForEach(tracks) { track in
                     TrackRow(track: track, isCurrent: model.activeSource == .appleMusic && model.nowPlaying?.trackID == track.id)
                         .tag(track.id)
                         .sourceRow()
+                        .onAppear { model.loadMoreIfNeeded(trackList, after: track.id) }
                 }
             case .playlists:
-                ForEach(model.library.playlists) { playlist in
+                ForEach(playlists) { playlist in
                     PlaylistRow(playlist: playlist).tag(playlist.id).sourceRow()
+                        .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
                 }
             }
         }
@@ -179,6 +273,7 @@ struct AppleMusicBrowser: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .onChange(of: query) { _, new in model.search(new) }
         .background {
             // Command-F reaches the library search, as Music's does.
             Button("Find") { focusSearch += 1 }
@@ -192,7 +287,9 @@ struct AppleMusicBrowser: View {
         ContentUnavailableView {
             Label("Connect Apple Music", systemImage: "music.note")
         } description: {
-            Text("Multicast plays your library and playlists itself, then sends them to every speaker you choose.")
+            Text(usesMusicApp
+                 ? "Multicast plays your library and playlists through the Music app, then sends them to every speaker you choose. Allow it to control Music."
+                 : "Multicast plays your library and playlists itself, then sends them to every speaker you choose.")
         } actions: {
             Button("Allow Access") { model.requestPermission(.appleMusic) }
                 .buttonStyle(.borderedProminent)
@@ -205,27 +302,55 @@ struct AppleMusicBrowser: View {
         ContentUnavailableView {
             Label("Apple Music is turned off for Multicast", systemImage: "music.note")
         } description: {
-            Text("Allow it under Media & Apple Music in Privacy & Security to see your library here.")
+            Text(usesMusicApp
+                 ? "Allow Multicast to control Music under Automation in Privacy & Security to see your library here."
+                 : "Allow it under Media & Apple Music in Privacy & Security to see your library here.")
         } actions: {
-            Button("Open Settings\u{2026}") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Media") {
-                    NSWorkspace.shared.open(url)
-                }
-            }
+            // The hub opens the pane that holds its Apple Music player's permission.
+            Button("Open Settings\u{2026}") { model.requestPermission(.appleMusic) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MC.Surface.canvas)
     }
 
+    @AppStorage(SettingsKey.appleMusicBackend) private var backend = "musicApp"
+    private var usesMusicApp: Bool { backend != "musicKit" }
+
+    private var isSearching: Bool { !query.isEmpty }
+
+    /// Songs and Up Next show the library search's results while there is a query; the queue
+    /// is short, so it is filtered here.
     private var tracks: [TrackItem] {
-        let base = section == .upNext ? model.library.upNext : model.library.songs
-        guard !query.isEmpty else { return base }
-        return base.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
+        switch section {
+        case .upNext:
+            let base = model.upNext.items
+            guard isSearching else { return base }
+            return base.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
+        default:
+            return isSearching ? model.searchResults.items : model.songs.items
+        }
+    }
+
+    private var trackList: HubModel.ListKey {
+        section == .upNext ? .upNext : (isSearching ? .search : .songs)
+    }
+
+    private var playlists: [PlaylistItem] {
+        let all = model.playlists.items
+        guard isSearching else { return all }
+        return all.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var trackContext: TrackContext {
+        switch section {
+        case .upNext: .upNext
+        default: isSearching ? .search(query: model.searchQuery) : .songs
+        }
     }
 
     private func play(_ ids: Set<String>) {
         guard let id = ids.first else { return }
-        if section == .playlists { model.playPlaylist(id) } else { model.playTrack(id) }
+        if section == .playlists { model.playPlaylist(id) } else { model.playTrack(id, context: trackContext) }
     }
 }
 
@@ -234,7 +359,7 @@ private struct PlaylistRow: View {
     var playlist: PlaylistItem
     var body: some View {
         HStack(spacing: MC.Space.m) {
-            ArtworkView(data: model.artwork(playlist.artwork), size: 32, radius: MC.Radius.small)
+            ArtworkView(data: model.artwork(playlist.artworkID), size: 32, radius: MC.Radius.small)
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(playlist.name).font(MC.Font.body).foregroundStyle(MC.Ink.primary)
                 Text("\(playlist.trackCount) songs").font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
@@ -254,6 +379,7 @@ struct SpotifySourceView: View {
 
     var body: some View {
         List {
+            SourceIssueNotice(source: .spotify, permissionsOnly: true)
             // The source's own header scrolls with its history, as the first row.
             VStack(alignment: .leading, spacing: MC.Space.m) {
                 HStack(spacing: MC.Space.m) {
@@ -287,10 +413,11 @@ struct SpotifySourceView: View {
             .selectionDisabled()
             .sourceRow()
 
-            if !model.spotifyHistory.isEmpty {
+            if !model.spotifyHistory.items.isEmpty {
                 SourceSectionTitle("Earlier this session")
-                ForEach(model.spotifyHistory) { track in
+                ForEach(model.spotifyHistory.items) { track in
                     TrackRow(track: track, isCurrent: false).sourceRow()
+                        .onAppear { model.loadMoreIfNeeded(.spotifyHistory, after: track.id) }
                 }
             }
         }
@@ -318,7 +445,8 @@ struct AppPickerView: View {
             get: { model.activeSource == .app ? model.capturedAppID : nil },
             set: { if let id = $0 { model.captureApp(id) } }
         )) {
-            SourceSectionTitle("Making sound", isFirst: true)
+            SourceIssueNotice(source: .app)
+            SourceSectionTitle("Making sound", isFirst: !hasIssue)
             ForEach(model.capturableApps.filter(\.isMakingSound)) { app in
                 AppRow(app: app, isCaptured: isCaptured(app)).tag(app.id).sourceRow()
             }
@@ -336,6 +464,8 @@ struct AppPickerView: View {
         }
         .sourceList()
     }
+
+    private var hasIssue: Bool { !SourceIssueNotice.shown(model.health.shownIssues(for: .app), permissionsOnly: false).isEmpty }
 
     private func isCaptured(_ app: CapturableApp) -> Bool {
         model.activeSource == .app && model.capturedAppID == app.id
@@ -378,7 +508,7 @@ struct FilesBrowser: View {
 
     var body: some View {
         Group {
-            if model.files.isEmpty {
+            if model.files.isLoaded && model.files.items.isEmpty {
                 ContentUnavailableView {
                     Label("No files yet", systemImage: "music.note")
                 } description: {
@@ -390,19 +520,21 @@ struct FilesBrowser: View {
                 .background(MC.Surface.canvas)
             } else {
                 List(selection: $selection) {
-                    ForEach(model.files) { file in
+                    ForEach(model.files.items) { file in
                         TrackRow(track: file,
                                  isCurrent: model.activeSource == .files && model.nowPlaying?.trackID == file.id,
                                  detail: [file.artist, file.format].compactMap { $0 }.joined(separator: " \u{00B7} "))
                             .tag(file.id)
                             .sourceRow()
+                            .onAppear { model.loadMoreIfNeeded(.files, after: file.id) }
                     }
                 }
                 .sourceList()
                 .contextMenu(forSelectionType: String.self) { ids in
-                    Button("Play") { ids.first.map(model.playTrack) }
+                    Button("Play") { ids.first.map { model.playTrack($0, context: .files) } }
+                    Button("Remove from Files") { model.removeFiles(Array(ids)) }
                 } primaryAction: { ids in
-                    ids.first.map(model.playTrack)
+                    ids.first.map { model.playTrack($0, context: .files) }
                 }
             }
         }

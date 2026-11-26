@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 // MARK: - Volume slider
 
@@ -75,6 +76,14 @@ struct LevelMeter: View {
     static func percent(_ peak: Float) -> String { "\(Int(display(peak) * 100)) percent" }
 }
 
+// MARK: - Stale status
+
+extension EnvironmentValues {
+    /// The status shown is the last known, not live (the link to the hub is down): status
+    /// colours step down to the tertiary ink and spinners stop, so only live state looks live.
+    @Entry var mcStatusIsStale = false
+}
+
 // MARK: - State badge
 
 /// The mark in front of a speaker's status line. Each state owns one shape: a spinner for
@@ -83,6 +92,7 @@ struct StateBadge: View {
     var state: SpeakerState
     static let size: CGFloat = 10
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.mcStatusIsStale) private var isStale
 
     var body: some View {
         ZStack {
@@ -90,16 +100,21 @@ struct StateBadge: View {
             case .off:
                 EmptyView()
             case .connecting:
-                ProgressView()
-                    .controlSize(.mini)
+                if isStale {
+                    Circle().strokeBorder(MC.Ink.tertiary, lineWidth: 1).frame(width: 7, height: 7)
+                } else {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
             case .ready:
                 Circle().fill(MC.Ink.tertiary).frame(width: 6, height: 6)
             case .playing:
-                Circle().fill(MC.Status.playing).frame(width: 6, height: 6)
+                Circle().fill(isStale ? AnyShapeStyle(MC.Ink.tertiary) : AnyShapeStyle(MC.Status.playing))
+                    .frame(width: 6, height: 6)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(MC.Status.failed)
+                    .foregroundStyle(isStale ? AnyShapeStyle(MC.Ink.tertiary) : AnyShapeStyle(MC.Status.failed))
             }
         }
         .frame(width: Self.size, height: Self.size)
@@ -114,6 +129,7 @@ struct SpeakerStatusLine: View {
     var speaker: SpeakerItem
     var onRetry: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.mcStatusIsStale) private var isStale
 
     var body: some View {
         HStack(spacing: MC.Space.xs) {
@@ -121,7 +137,7 @@ struct SpeakerStatusLine: View {
                 StateBadge(state: speaker.state)
             }
             Text(text)
-                .foregroundStyle(isFailed ? AnyShapeStyle(MC.Status.failed) : AnyShapeStyle(MC.Ink.secondary))
+                .foregroundStyle(isFailed && !isStale ? AnyShapeStyle(MC.Status.failed) : AnyShapeStyle(MC.Ink.secondary))
                 .lineLimit(1)
                 .id(text)
                 .transition(reduceMotion ? .opacity : .push(from: .bottom))
@@ -170,18 +186,21 @@ struct SpeakerStatusLine: View {
 struct SpeakerCheckbox: View {
     var isOn: Bool
     var label: String
+    /// 16pt on the Mac; the phone draws it at 22pt (`MC.RowGrid.touch.checkbox`).
+    var size: CGFloat = SpeakerToggleStyle.size
     var onChange: (Bool) -> Void
 
     var body: some View {
         Toggle(isOn: Binding(get: { isOn }, set: onChange)) { Text(label) }
             .labelsHidden()
-            .toggleStyle(SpeakerToggleStyle())
+            .toggleStyle(SpeakerToggleStyle(size: size))
             .accessibilityLabel(label)
     }
 }
 
 struct SpeakerToggleStyle: ToggleStyle {
     static let size: CGFloat = 16
+    var size: CGFloat = SpeakerToggleStyle.size
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
@@ -189,12 +208,12 @@ struct SpeakerToggleStyle: ToggleStyle {
             configuration.isOn.toggle()
         } label: {
             Image(systemName: configuration.isOn ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: Self.size, weight: .regular))
+                .font(.system(size: size, weight: .regular))
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(configuration.isOn ? AnyShapeStyle(Color.white) : AnyShapeStyle(MC.Ink.tertiary),
                                  MC.accent)
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: Self.size, height: Self.size)
+                .frame(width: size, height: size)
                 .contentShape(Rectangle())
                 .opacity(isEnabled ? 1 : 0.5)
         }

@@ -1,6 +1,10 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import CoreGraphics
+import Foundation
 import ImageIO
+import MulticastHubModel
 import UniformTypeIdentifiers
 
 /// Stand-in album covers, drawn once: flat, graphic compositions of the kind real covers use,
@@ -12,7 +16,7 @@ enum MockArtwork {
 
     private static var cache: [String: Data] = [:]
 
-    /// Artwork ids the mock state refers to; bytes are served by `MockHubBackend.artwork(id:)`.
+    /// Artwork ids the mock state refers to; bytes are served by `MockHubBackend.artwork(id:maxPixel:)`.
     static func id(_ design: Design) -> ArtworkID { "cover.\(design)" }
     static func iconID(_ bundleID: String) -> ArtworkID { "icon.\(bundleID)" }
 
@@ -114,8 +118,10 @@ enum MockArtwork {
         return out as Data
     }
 
-    /// An installed app's icon as PNG, for the captured-app source.
+    /// An installed app's icon as PNG, for the captured-app source. Mac only: iOS has no other
+    /// apps' icons to draw, so the remote shows its placeholder.
     static func appIcon(bundleID: String, size: CGFloat = 128) -> Data? {
+        #if canImport(AppKit)
         if let hit = cache[bundleID] { return hit }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let icon = NSWorkspace.shared.icon(forFile: url.path)
@@ -129,5 +135,8 @@ enum MockArtwork {
         let data = rep.representation(using: .png, properties: [:])
         cache[bundleID] = data
         return data
+        #else
+        return nil
+        #endif
     }
 }

@@ -1,0 +1,23 @@
+// Per-target settings for the macOS hub app "Multicast". Edit these here, never in
+// project.pbxproj: the project file only says which targets exist and what they compile.
+// Paths are relative to Apps/ (the project directory).
+
+PRODUCT_BUNDLE_IDENTIFIER = io.github.longtimeno-c.multicast
+INFOPLIST_FILE = Mac/Info.plist
+CODE_SIGN_ENTITLEMENTS = Mac/Multicast.entitlements
+MACOSX_DEPLOYMENT_TARGET = 14.4
+
+// Signing: "Sign to Run Locally" (ad hoc) unless Apps/Config/Local.xcconfig says otherwise.
+// An ad-hoc build is a new identity to macOS after every rebuild, so permissions and the
+// pairing keys' Keychain access are asked for again; a team-signed build keeps them. The
+// MusicKit player also needs the app signed under a team whose App ID for this bundle id has
+// the MusicKit app service. To sign under your team, create Apps/Config/Local.xcconfig (it is
+// git-ignored, so no team id is ever committed) with:
+//   CODE_SIGN_IDENTITY = Apple Development
+//   DEVELOPMENT_TEAM = <your team id>
+// and build with `xcodebuild … -allowProvisioningUpdates`.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

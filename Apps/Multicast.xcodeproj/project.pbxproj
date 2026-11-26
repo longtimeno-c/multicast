@@ -8,10 +8,19 @@
 
 /* Begin PBXBuildFile section */
 		4D0C10002E00000000000001 /* MulticastKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000002 /* MulticastKit */; };
+		4D0C10002E00000000000003 /* MulticastHubModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000004 /* MulticastHubModel */; };
+		4D0C10002E00000000000005 /* MulticastHub in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000006 /* MulticastHub */; };
+		4D0C10002E00000000000007 /* MulticastRemote in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E00000000000008 /* MulticastRemote */; };
+		4D0C10002E00000000000009 /* MulticastAppleMusic in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000A /* MulticastAppleMusic */; };
+		4D0C10002E0000000000000B /* MulticastHubModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000C /* MulticastHubModel */; };
+		4D0C10002E0000000000000D /* MulticastRemote in Frameworks */ = {isa = PBXBuildFile; productRef = 4D0C10002E0000000000000E /* MulticastRemote */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		4D0C10002E00000000000010 /* Multicast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Multicast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4D0C10002E00000000000011 /* Multicast Remote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Multicast Remote.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4D0C10002E00000000000033 /* Mac.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Mac.xcconfig; sourceTree = "<group>"; };
+		4D0C10002E00000000000034 /* iOS.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = iOS.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -22,6 +31,13 @@
 				Multicast.entitlements,
 			);
 			target = 4D0C10002E00000000000040 /* Multicast */;
+		};
+		4D0C10002E00000000000021 /* Exceptions for "iOS" folder in "Multicast Remote" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4D0C10002E00000000000041 /* Multicast Remote */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -39,6 +55,14 @@
 			path = Mac;
 			sourceTree = "<group>";
 		};
+		4D0C10002E00000000000032 /* iOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4D0C10002E00000000000021 /* Exceptions for "iOS" folder in "Multicast Remote" target */,
+			);
+			path = iOS;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +71,19 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D0C10002E00000000000001 /* MulticastKit in Frameworks */,
+				4D0C10002E00000000000003 /* MulticastHubModel in Frameworks */,
+				4D0C10002E00000000000005 /* MulticastHub in Frameworks */,
+				4D0C10002E00000000000007 /* MulticastRemote in Frameworks */,
+				4D0C10002E00000000000009 /* MulticastAppleMusic in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4D0C10002E00000000000054 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D0C10002E0000000000000B /* MulticastHubModel in Frameworks */,
+				4D0C10002E0000000000000D /* MulticastRemote in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -58,6 +95,8 @@
 			children = (
 				4D0C10002E00000000000030 /* Shared */,
 				4D0C10002E00000000000031 /* Mac */,
+				4D0C10002E00000000000032 /* iOS */,
+				4D0C10002E00000000000062 /* Config */,
 				4D0C10002E00000000000061 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -66,8 +105,18 @@
 			isa = PBXGroup;
 			children = (
 				4D0C10002E00000000000010 /* Multicast.app */,
+				4D0C10002E00000000000011 /* Multicast Remote.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		4D0C10002E00000000000062 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				4D0C10002E00000000000033 /* Mac.xcconfig */,
+				4D0C10002E00000000000034 /* iOS.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -92,9 +141,38 @@
 			name = Multicast;
 			packageProductDependencies = (
 				4D0C10002E00000000000002 /* MulticastKit */,
+				4D0C10002E00000000000004 /* MulticastHubModel */,
+				4D0C10002E00000000000006 /* MulticastHub */,
+				4D0C10002E00000000000008 /* MulticastRemote */,
+				4D0C10002E0000000000000A /* MulticastAppleMusic */,
 			);
 			productName = Multicast;
 			productReference = 4D0C10002E00000000000010 /* Multicast.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4D0C10002E00000000000041 /* Multicast Remote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D0C10002E00000000000082 /* Build configuration list for PBXNativeTarget "Multicast Remote" */;
+			buildPhases = (
+				4D0C10002E00000000000053 /* Sources */,
+				4D0C10002E00000000000054 /* Frameworks */,
+				4D0C10002E00000000000055 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4D0C10002E00000000000030 /* Shared */,
+				4D0C10002E00000000000032 /* iOS */,
+			);
+			name = "Multicast Remote";
+			packageProductDependencies = (
+				4D0C10002E0000000000000C /* MulticastHubModel */,
+				4D0C10002E0000000000000E /* MulticastRemote */,
+			);
+			productName = "Multicast Remote";
+			productReference = 4D0C10002E00000000000011 /* Multicast Remote.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -108,6 +186,9 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					4D0C10002E00000000000040 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					4D0C10002E00000000000041 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -130,6 +211,7 @@
 			projectRoot = "";
 			targets = (
 				4D0C10002E00000000000040 /* Multicast */,
+				4D0C10002E00000000000041 /* Multicast Remote */,
 			);
 		};
 /* End PBXProject section */
@@ -142,10 +224,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4D0C10002E00000000000055 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		4D0C10002E00000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4D0C10002E00000000000053 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -217,18 +313,14 @@
 		};
 		4D0C10002E00000000000073 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000033 /* Mac.xcconfig */;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Mac/Multicast.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Mac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -236,29 +328,51 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "io.github.longtimeno-c.multicast";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
+		4D0C10002E00000000000075 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000034 /* iOS.xcconfig */;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
 		4D0C10002E00000000000074 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000033 /* Mac.xcconfig */;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Mac/Multicast.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Mac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -266,12 +380,38 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.4;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "io.github.longtimeno-c.multicast";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		4D0C10002E00000000000076 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4D0C10002E00000000000034 /* iOS.xcconfig */;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicast;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -296,6 +436,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		4D0C10002E00000000000082 /* Build configuration list for PBXNativeTarget "Multicast Remote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4D0C10002E00000000000075 /* Debug */,
+				4D0C10002E00000000000076 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -310,6 +459,36 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
 			productName = MulticastKit;
+		};
+		4D0C10002E00000000000004 /* MulticastHubModel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastHubModel;
+		};
+		4D0C10002E00000000000006 /* MulticastHub */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastHub;
+		};
+		4D0C10002E00000000000008 /* MulticastRemote */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastRemote;
+		};
+		4D0C10002E0000000000000A /* MulticastAppleMusic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastAppleMusic;
+		};
+		4D0C10002E0000000000000C /* MulticastHubModel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastHubModel;
+		};
+		4D0C10002E0000000000000E /* MulticastRemote */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D0C10002E00000000000090 /* XCLocalSwiftPackageReference ".." */;
+			productName = MulticastRemote;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

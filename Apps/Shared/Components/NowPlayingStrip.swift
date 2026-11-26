@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 /// Previous, play/pause, next. The play triangle sits a little toward its point so it reads
 /// centred; pause is symmetric and doesn't move.
@@ -9,12 +10,19 @@ struct TransportButtons: View {
     var playSize: CGFloat = 22
     var skipSize: CGFloat = 15
     var showsPrevious = true
+    /// Room between the buttons; the phone's full player spreads them for thumbs.
+    var spacing: CGFloat = MC.Space.xs
+    /// The smallest side of each button's target (44 on the phone); the glyph stays its size.
+    var minTarget: CGFloat = 0
     var onPlayPause: () -> Void
     var onNext: () -> Void
     var onPrevious: () -> Void
+    /// A disabled ancestor (the phone while its link is down) dims the glyphs too: the explicit
+    /// inks below would otherwise keep them looking live.
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        HStack(spacing: MC.Space.xs) {
+        HStack(spacing: spacing) {
             if showsPrevious {
                 glyphButton("backward.fill", size: skipSize, label: "Previous", enabled: canSkip, action: onPrevious)
             }
@@ -23,11 +31,11 @@ struct TransportButtons: View {
                     .font(.system(size: playSize, weight: .regular))
                     .contentTransition(.symbolEffect(.replace))
                     .offset(x: isPlaying ? 0 : playSize * 0.09)
-                    .frame(width: playSize + 14, height: playSize + 14)
+                    .frame(width: max(minTarget, playSize + 14), height: max(minTarget, playSize + 14))
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(canPlay ? AnyShapeStyle(MC.Ink.primary) : AnyShapeStyle(MC.Ink.tertiary.opacity(0.5)))
+            .foregroundStyle(canPlay && isEnabled ? AnyShapeStyle(MC.Ink.primary) : AnyShapeStyle(MC.Ink.tertiary.opacity(0.5)))
             .disabled(!canPlay)
             .accessibilityLabel(isPlaying ? "Pause" : "Play")
             glyphButton("forward.fill", size: skipSize, label: "Next", enabled: canSkip, action: onNext)
@@ -41,11 +49,11 @@ struct TransportButtons: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .regular))
-                .frame(width: size + 14, height: size + 14)
+                .frame(width: max(minTarget, size + 14), height: max(minTarget, size + 14))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .foregroundStyle(enabled ? AnyShapeStyle(MC.Ink.body) : AnyShapeStyle(MC.Ink.tertiary.opacity(0.5)))
+        .foregroundStyle(enabled && isEnabled ? AnyShapeStyle(MC.Ink.body) : AnyShapeStyle(MC.Ink.tertiary.opacity(0.5)))
         .disabled(!enabled)
         .accessibilityLabel(label)
     }
@@ -99,7 +107,7 @@ struct PlaybackPosition: View {
 /// keeps one height whatever is playing, so the speakers below never jump.
 struct NowPlayingStrip: View {
     var info: NowPlayingInfo?
-    /// The artwork bytes for `info.artwork`, from the model's cache.
+    /// The artwork bytes for `info.artworkID`, from the model's cache.
     var artwork: Data?
     var transport: TransportState
     var showsPosition: Bool
@@ -122,10 +130,10 @@ struct NowPlayingStrip: View {
             ZStack {
                 ArtworkView(data: artwork, size: artworkSize, radius: MC.Radius.medium,
                             isIcon: info?.artworkIsIcon ?? false)
-                    .id(info?.artwork ?? "none")
+                    .id(info?.artworkID ?? "none")
                     .transition(.opacity)
             }
-            .animation(MC.Motion.state(reduceMotion), value: info?.artwork)
+            .animation(MC.Motion.state(reduceMotion), value: info?.artworkID)
             .animation(MC.Motion.feedback, value: artwork != nil)
 
             VStack(alignment: .leading, spacing: MC.Space.s) {

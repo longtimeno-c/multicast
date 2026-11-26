@@ -5,13 +5,29 @@
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Multicast captures the sound of the app you choose, such as Spotify, so it can play it on your speakers.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Multicast asks Spotify what it is playing and sends it play, pause and skip.</string>
+	<string>Multicast asks Spotify and Music what they are playing and sends them play, pause and skip.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Multicast finds AirPlay speakers on your network and streams music to them.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_raop._tcp</string>
 		<string>_airplay._tcp</string>
+		<string>_multicast-hub._tcp</string>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Audio File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Multicast plays your Apple Music library and playlists on your speakers.</string>

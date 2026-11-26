@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import MulticastHubModel
 
 /// Renders the review PNGs off-screen at 2x, without Screen Recording permission: each view is
 /// hosted in an NSHostingView inside a window parked off-screen, laid out at size, and drawn
@@ -51,6 +52,12 @@ enum Snapshotter {
             render(MenuBarPanel(solidBackground: true).environment(menuModel),
                    size: nil, appearance: appearance, to: directory.appendingPathComponent(menu))
             written.append(menu)
+
+            let pairing = "pairing-code-\(suffix).png"
+            render(PairingCodeView(remoteName: "Test iPhone", code: "482915", expiresAt: Date().addingTimeInterval(118),
+                                   onCancel: {}),
+                   size: nil, appearance: appearance, to: directory.appendingPathComponent(pairing))
+            written.append(pairing)
         }
         for file in written { print(directory.appendingPathComponent(file).path) }
     }
@@ -59,8 +66,9 @@ enum Snapshotter {
 
     private static func model(for scene: MockScene) -> HubModel {
         let state = scene.state
-        return HubModel(backend: MockHubBackend(state: state, artwork: artwork), state: state, artwork: artwork,
-                        levels: scene.levels, browsing: scene.browsing)
+        let content = scene.content
+        return HubModel(backend: MockHubBackend(state: state, content: content, artwork: artwork), state: state,
+                        preload: content.preload, artwork: artwork, levels: scene.levels, browsing: scene.browsing)
     }
 
     private static func fileName(_ scene: MockScene) -> String {

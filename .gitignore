@@ -10,3 +10,6 @@ node_modules/
 # Third-party agent skills are restored from skills-lock.json (npx skills install), not committed
 .agents/
 .claude/skills/
+
+# Per-machine signing (team id) stays out of the repository
+Apps/Config/Local.xcconfig

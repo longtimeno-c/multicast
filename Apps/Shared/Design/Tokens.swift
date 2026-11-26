@@ -167,6 +167,10 @@ extension MC {
 
         static let regular = RowGrid(slider: 200)
         static let dense = RowGrid(badge: 10, slider: 112, verticalPadding: MC.Space.s)
+        /// The phone: a 22pt on/off mark, the slider on its own line under the words (so its
+        /// width is the row's, not a track), a 36pt value and a 44pt accessory button.
+        static let touch = RowGrid(checkbox: 22, glyph: 24, slider: 0, value: 36, accessory: 44,
+                                   verticalPadding: MC.Space.s)
     }
 }
 

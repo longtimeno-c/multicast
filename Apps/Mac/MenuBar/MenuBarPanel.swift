@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 /// The menu-bar extra: what's playing and every speaker, for quick toggling without the window.
 struct MenuBarPanel: View {
@@ -9,7 +10,7 @@ struct MenuBarPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MC.Space.m) {
-            NowPlayingCompact(info: model.nowPlaying, artwork: model.artwork(model.nowPlaying?.artwork),
+            NowPlayingCompact(info: model.nowPlaying, artwork: model.artwork(model.nowPlaying?.artworkID),
                               transport: model.transport,
                               onPlayPause: model.togglePlayPause, onNext: model.next)
                 .padding(.horizontal, MC.Space.m)

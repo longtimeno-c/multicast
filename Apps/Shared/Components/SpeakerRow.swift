@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 /// One speaker: checkbox, glyph, name over live status, volume, value, and an accessory slot
 /// (the Mac puts the detail button there). Every row uses the same `RowGrid`, so sliders,
@@ -7,8 +8,13 @@ import SwiftUI
 /// Clicking anywhere on the glyph or the words toggles the speaker, as in Control Center's
 /// sound list; the slider, value and accessory stay separate targets. To VoiceOver the row is
 /// one toggle whose adjustable value is the volume.
+///
+/// `.touch` is the phone's layout: the same parts, with the on/off mark at 22pt, the words and
+/// the accessory on one 44pt line, and the volume slider on its own full-width line under the
+/// words. The slider opens only while the speaker is on (its preset is in the detail sheet), so
+/// the speakers that are playing are the ones with controls.
 struct SpeakerRow<Accessory: View>: View {
-    enum Density { case regular, dense }
+    enum Density { case regular, dense, touch }
 
     var speaker: SpeakerItem
     var grid: MC.RowGrid = .regular
@@ -25,8 +31,120 @@ struct SpeakerRow<Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// The phone's on/off mark and glyph grow with the text, so they never sit tiny beside it.
+    @ScaledMetric(relativeTo: .body) private var touchMark: CGFloat = 22
+    @ScaledMetric(relativeTo: .body) private var touchGlyph: CGFloat = 17
+    /// Counts on/off taps made on this row, so the phone's haptic answers a touch and never a
+    /// change that arrived from the hub.
+    @State private var touchToggles = 0
 
     var body: some View {
+        layout
+            .padding(.horizontal, grid.inset)
+            .padding(.vertical, grid.verticalPadding)
+            .contentShape(Rectangle())
+            .animation(MC.Motion.state(reduceMotion), value: speaker.state)
+            .animation(MC.Motion.state(reduceMotion), value: speaker.isEnabled)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(speaker.name)
+            .accessibilityValue(accessibilityValue)
+            .accessibilityAddTraits(.isToggle)
+            .accessibilityAction { onToggle(!speaker.isEnabled) }
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: onVolume(min(1, speaker.volume + 0.05)); onCommitVolume()
+                case .decrement: onVolume(max(0, speaker.volume - 0.05)); onCommitVolume()
+                @unknown default: break
+                }
+            }
+            .accessibilityActions {
+                if case .failed = speaker.state { Button("Try again", action: onRetry) }
+                if let onDetails { Button("Details", action: onDetails) }
+            }
+    }
+
+    @ViewBuilder private var layout: some View {
+        if density == .touch { touchLayout } else { deskLayout }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = speaker.state { true } else { false }
+    }
+
+    /// Scaled with the text, but capped: past this the marks only take room from the name.
+    private var markSize: CGFloat { min(max(grid.checkbox, touchMark), 30) }
+    private var glyphSize: CGFloat { min(max(17, touchGlyph), 24) }
+
+    private func touchToggle(_ on: Bool) {
+        touchToggles += 1
+        onToggle(on)
+    }
+
+    private var touchLayout: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    SpeakerCheckbox(isOn: speaker.isEnabled, label: "Play on \(speaker.name)",
+                                    size: markSize, onChange: touchToggle)
+                        .frame(width: markSize)
+                        .padding(.trailing, MC.Space.s)
+                    Image(systemName: speaker.glyph.symbolName)
+                        .symbolRenderingMode(.monochrome)
+                        .font(.system(size: glyphSize, weight: speaker.glyph.weight))
+                        .foregroundStyle(speaker.isEnabled ? AnyShapeStyle(MC.Ink.body) : AnyShapeStyle(MC.Ink.tertiary))
+                        .frame(width: max(grid.glyph, glyphSize + 7), height: max(grid.glyph, glyphSize + 7))
+                        .padding(.trailing, MC.Space.s)
+                    VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                        Text(speaker.name)
+                            .font(MC.Font.body)
+                            .foregroundStyle(MC.Ink.primary)
+                            // Large text wraps names rather than cutting "Main Bedroom" and
+                            // "Master Bedroom" to the same few letters.
+                            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                        SpeakerStatusLine(speaker: speaker, onRetry: nil)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+                .onTapGesture { touchToggle(!speaker.isEnabled) }
+
+                if isFailed {
+                    Button("Try Again", action: onRetry)
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .padding(.leading, MC.Space.s)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+                }
+                accessory()
+                    .frame(width: grid.accessory, height: 44)
+            }
+
+            if speaker.isEnabled {
+                HStack(spacing: MC.Space.s) {
+                    VolumeSlider(value: speaker.volume, label: "\(speaker.name) volume",
+                                 onChange: onVolume, onCommit: onCommitVolume)
+                    Text(MC.Format.percent(speaker.volume))
+                        .font(MC.Font.value)
+                        .foregroundStyle(MC.Ink.body)
+                        .contentTransition(.numericText(value: speaker.volume))
+                        .animation(MC.Motion.feedback, value: speaker.volume)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(minWidth: grid.value, alignment: .trailing)
+                }
+                .padding(.leading, grid.textLeading - grid.inset)
+                // The value's last digit sits under the accessory glyph's right edge.
+                .padding(.trailing, (grid.accessory - 20) / 2)
+                .padding(.bottom, MC.Space.xs)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .sensoryFeedback(.selection, trigger: touchToggles)
+    }
+
+    private var deskLayout: some View {
         HStack(spacing: 0) {
             SpeakerCheckbox(isOn: speaker.isEnabled, label: "Play on \(speaker.name)", onChange: onToggle)
                 .frame(width: grid.checkbox, alignment: .leading)
@@ -80,27 +198,6 @@ struct SpeakerRow<Accessory: View>: View {
                     .padding(.leading, MC.Space.s)
             }
         }
-        .padding(.horizontal, grid.inset)
-        .padding(.vertical, grid.verticalPadding)
-        .contentShape(Rectangle())
-        .animation(MC.Motion.state(reduceMotion), value: speaker.state)
-        .animation(MC.Motion.state(reduceMotion), value: speaker.isEnabled)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(speaker.name)
-        .accessibilityValue(accessibilityValue)
-        .accessibilityAddTraits(.isToggle)
-        .accessibilityAction { onToggle(!speaker.isEnabled) }
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: onVolume(min(1, speaker.volume + 0.05)); onCommitVolume()
-            case .decrement: onVolume(max(0, speaker.volume - 0.05)); onCommitVolume()
-            @unknown default: break
-            }
-        }
-        .accessibilityActions {
-            if case .failed = speaker.state { Button("Try again", action: onRetry) }
-            if let onDetails { Button("Details", action: onDetails) }
-        }
     }
 
     private var effective: Int { Int((speaker.effectiveVolume(master: masterVolume) * 100).rounded()) }
@@ -118,7 +215,7 @@ struct SpeakerRow<Accessory: View>: View {
 
     @ViewBuilder private var labels: some View {
         switch density {
-        case .regular:
+        case .regular, .touch:
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(speaker.name)
                     .font(MC.Font.body)

@@ -1,4 +1,5 @@
 import SwiftUI
+import MulticastHubModel
 
 /// Sources on the left, the chosen source's browser in the middle, and the speakers, the
 /// reason this app exists, in the widest column on the right.

@@ -1,4 +1,5 @@
 import Foundation
+import MulticastHubModel
 import Observation
 import SwiftUI
 
@@ -9,10 +10,11 @@ struct HubAlert: Identifiable, Equatable {
     var message: String
 }
 
-/// The one object views read from and send intents to. It mirrors the backend's slices into
+/// The one object views read from and send intents to. It mirrors the backend's state into
 /// observable properties (so a level update only invalidates the meter), applies the obvious
-/// result of a command at once, sends commands to the backend in order through one pipe, and
-/// rolls back to the last published state when a command is refused.
+/// result of a command at once, sends commands to the backend in order through one pipe, rolls
+/// back to the last published state when a command is refused, caches artwork, and loads the
+/// library and file lists page by page.
 @Observable
 @MainActor
 final class HubModel {
@@ -23,15 +25,24 @@ final class HubModel {
     private(set) var activeSource: SourceKind?
     private(set) var nowPlaying: NowPlayingInfo?
     private(set) var transport = TransportState()
-    private(set) var capturedAppID: String?
-    private(set) var library = LibrarySnapshot()
-    private(set) var files: [TrackItem] = []
-    private(set) var capturableApps: [CapturableApp] = []
+    private(set) var capture = CaptureStatus()
     private(set) var spotify: SpotifyStatus = .notRunning
-    private(set) var spotifyHistory: [TrackItem] = []
-    private(set) var status = HubStatus()
+    private(set) var health = HubHealth()
+    private(set) var availability: HubAvailability = .connected
     private(set) var levels: StereoLevels = .silent
-    private(set) var artworkCache: [ArtworkID: Data] = [:]
+
+    // Paged lists, fetched on demand and refetched when `HubState.content` says they changed.
+    private(set) var songs = PagedList<TrackItem>()
+    private(set) var playlists = PagedList<PlaylistItem>()
+    private(set) var upNext = PagedList<TrackItem>()
+    private(set) var files = PagedList<TrackItem>()
+    private(set) var spotifyHistory = PagedList<TrackItem>()
+    /// Library search results for `searchQuery`.
+    private(set) var searchResults = PagedList<TrackItem>()
+    private(set) var searchQuery = ""
+    /// The contents of the playlist last opened with `openPlaylist(_:)`.
+    private(set) var openPlaylistID: String?
+    private(set) var playlistTracks = PagedList<TrackItem>()
 
     // Navigation that other surfaces (menu commands, the menu-bar panel) also drive.
     var browsingSource: SourceKind = .appleMusic
@@ -42,10 +53,19 @@ final class HubModel {
 
     @ObservationIgnored private let backend: HubBackend
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
-    @ObservationIgnored private let commands: AsyncStream<Command>.Continuation
-    @ObservationIgnored private let commandStream: AsyncStream<Command>
+    @ObservationIgnored private let commands: AsyncStream<HubCommand>.Continuation
+    @ObservationIgnored private let commandStream: AsyncStream<HubCommand>
     @ObservationIgnored private var published = HubState()
-    @ObservationIgnored private var artworkRequests: Set<ArtworkID> = []
+    @ObservationIgnored private var content = ContentRevisions()
+
+    // Artwork: bytes live outside observation; views observe `artworkGeneration`, which moves
+    // when bytes arrive.
+    private var artworkGeneration = 0
+    @ObservationIgnored private var artworkCache = ArtworkCache()
+    @ObservationIgnored private var artworkRequests: Set<ArtworkCache.Key> = []
+
+    @ObservationIgnored private var loadsInFlight: Set<ListKey> = []
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
 
     // Optimistic values held until the backend echoes them (or they go stale).
     @ObservationIgnored private var pendingVolume: [SpeakerID: Pending<Double>] = [:]
@@ -59,26 +79,45 @@ final class HubModel {
         var isStale: Bool { Date().timeIntervalSince(at) > HubModel.echoWindow }
     }
 
-    private struct Command: Sendable {
-        var kind: Kind
-        var run: @Sendable (HubBackend) async throws -> Void
-        enum Kind { case speaker, transport, source }
+    /// The paged lists, as keys for in-flight bookkeeping.
+    enum ListKey: Hashable, Sendable {
+        case songs, playlists, upNext, files, spotifyHistory, search, playlist
+    }
+
+    /// Lists already in hand, for snapshots and previews that render without fetching.
+    struct Preload {
+        var songs: [TrackItem] = []
+        var playlists: [PlaylistItem] = []
+        var upNext: [TrackItem] = []
+        var files: [TrackItem] = []
+        var spotifyHistory: [TrackItem] = []
     }
 
     nonisolated static let throttle: Duration = .milliseconds(50)
     nonisolated static let echoWindow: TimeInterval = 0.5
+    nonisolated static let searchDebounce: Duration = .milliseconds(250)
+    /// Artwork is requested at this size unless a view asks for another.
+    nonisolated static let defaultArtworkPixels = 600
 
     init(backend: HubBackend) {
         self.backend = backend
-        (commandStream, commands) = AsyncStream.makeStream(of: Command.self)
+        (commandStream, commands) = AsyncStream.makeStream(of: HubCommand.self)
     }
 
     /// For snapshots and previews: start from a fixed state without subscribing.
-    convenience init(backend: HubBackend, state: HubState, artwork: [ArtworkID: Data] = [:],
-                     levels: StereoLevels = .silent, browsing: SourceKind? = nil) {
+    convenience init(backend: HubBackend, state: HubState, preload: Preload = Preload(),
+                     artwork: [ArtworkID: Data] = [:], levels: StereoLevels = .silent, browsing: SourceKind? = nil) {
         self.init(backend: backend)
-        apply(state.speakers); apply(state.playback); apply(state.sources); apply(state.status)
-        artworkCache = artwork
+        apply(state)
+        let r = state.content
+        songs = PagedList(items: preload.songs, revision: r.library)
+        playlists = PagedList(items: preload.playlists, revision: r.library)
+        upNext = PagedList(items: preload.upNext, revision: r.upNext)
+        files = PagedList(items: preload.files, revision: r.files)
+        spotifyHistory = PagedList(items: preload.spotifyHistory, revision: r.spotifyHistory)
+        for (id, data) in artwork {
+            artworkCache.insert(data, for: .init(id: id, maxPixel: Self.defaultArtworkPixels))
+        }
         self.levels = levels
         if let browsing { browsingSource = browsing }
     }
@@ -88,41 +127,51 @@ final class HubModel {
         let backend = backend
         let commandStream = commandStream
         tasks.append(Task { [weak self] in
-            for await s in await backend.speakerStates() { self?.apply(s) }
-        })
-        tasks.append(Task { [weak self] in
-            for await s in await backend.playbackStates() { self?.apply(s) }
-        })
-        tasks.append(Task { [weak self] in
-            for await s in await backend.sourceStates() { self?.apply(s) }
-        })
-        tasks.append(Task { [weak self] in
-            for await s in await backend.statusStates() { self?.apply(s) }
+            for await s in await backend.states() { self?.apply(s) }
         })
         tasks.append(Task { [weak self] in
             for await levels in await backend.levels() { self?.levels = levels }
         })
+        tasks.append(Task { [weak self] in
+            for await a in await backend.availability() {
+                guard let self else { return }
+                if self.availability != a { withAnimation(self.structural) { self.availability = a } }
+            }
+        })
         // One consumer, so commands reach the backend in the order they were made.
         tasks.append(Task { [weak self] in
             for await command in commandStream {
-                do { try await command.run(backend) } catch {
-                    self?.refused(command.kind, error)
+                do { try await backend.perform(command) } catch {
+                    self?.refused(command, error)
                 }
             }
         })
+        for key in [ListKey.songs, .playlists, .upNext, .files, .spotifyHistory] { loadFirstPage(key) }
     }
 
     func stop() {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
+        searchTask?.cancel()
     }
 
     // MARK: Applying backend state
 
     private var structural: Animation { MC.Motion.state(reduceMotion) }
 
-    private func apply(_ s: SpeakersState) {
-        published.speakers = s
+    private func apply(_ s: HubState) {
+        // A network client may deliver a state late; never step backwards.
+        if s.revision < published.revision, published.revision != 0 { return }
+        published = s
+        applySpeakers(s)
+        applyPlayback(s)
+        if capture != s.capture { withAnimation(structural) { capture = s.capture } }
+        if spotify != s.spotify { spotify = s.spotify }
+        if health != s.health { withAnimation(structural) { health = s.health } }
+        applyContent(s.content)
+    }
+
+    private func applySpeakers(_ s: HubState) {
         var incoming = s.speakers
         for i in incoming.indices {
             let id = incoming[i].id
@@ -150,13 +199,11 @@ final class HubModel {
         if isDiscovering != s.isDiscovering { withAnimation(structural) { isDiscovering = s.isDiscovering } }
     }
 
-    private func apply(_ s: PlaybackState) {
-        published.playback = s
+    private func applyPlayback(_ s: HubState) {
         let newTrack = nowPlaying?.identity != s.nowPlaying?.identity
-        if newTrack || activeSource != s.activeSource || capturedAppID != s.capturedAppID {
+        if newTrack || activeSource != s.activeSource {
             withAnimation(structural) {
                 activeSource = s.activeSource
-                capturedAppID = s.capturedAppID
                 nowPlaying = s.nowPlaying
                 transport = s.transport
             }
@@ -166,47 +213,153 @@ final class HubModel {
         }
     }
 
-    private func apply(_ s: SourcesState) {
-        published.sources = s
-        if library != s.library { library = s.library }
-        if files != s.files { withAnimation(structural) { files = s.files } }
-        if capturableApps != s.capturableApps { withAnimation(structural) { capturableApps = s.capturableApps } }
-        if spotify != s.spotify { spotify = s.spotify }
-        if spotifyHistory != s.spotifyHistory { withAnimation(structural) { spotifyHistory = s.spotifyHistory } }
-    }
-
-    private func apply(_ s: HubStatus) {
-        published.status = s
-        if status != s { withAnimation(structural) { status = s } }
+    /// Lists whose revision moved start again from their first page.
+    private func applyContent(_ r: ContentRevisions) {
+        let old = content
+        content = r
+        if r.library != old.library {
+            songs.invalidate(revision: r.library); loadFirstPage(.songs)
+            playlists.invalidate(revision: r.library); loadFirstPage(.playlists)
+            if !searchQuery.isEmpty { searchResults.invalidate(revision: r.library); loadFirstPage(.search) }
+            if openPlaylistID != nil { playlistTracks.invalidate(revision: r.library); loadFirstPage(.playlist) }
+        }
+        if r.upNext != old.upNext { upNext.invalidate(revision: r.upNext); loadFirstPage(.upNext) }
+        if r.files != old.files { files.invalidate(revision: r.files); loadFirstPage(.files) }
+        if r.spotifyHistory != old.spotifyHistory {
+            spotifyHistory.invalidate(revision: r.spotifyHistory); loadFirstPage(.spotifyHistory)
+        }
     }
 
     /// A command was refused: drop optimistic edits and show the last state the backend published.
-    private func refused(_ kind: Command.Kind, _ error: Error) {
+    private func refused(_ command: HubCommand, _ error: Error) {
         pendingVolume.removeAll(); pendingTrim.removeAll(); pendingMaster = nil
         let last = published
-        apply(last.speakers); apply(last.playback); apply(last.sources)
-        if kind != .speaker {
-            alert = HubAlert(title: kind == .transport ? "Couldn\u{2019}t control playback" : "Couldn\u{2019}t switch source",
-                             message: error.localizedDescription)
+        applySpeakers(last)
+        applyPlayback(last)
+        if capture != last.capture { withAnimation(structural) { capture = last.capture } }
+        switch command.category {
+        case .speaker: break
+        case .transport:
+            alert = HubAlert(title: "Couldn\u{2019}t control playback", message: error.localizedDescription)
+        case .source:
+            alert = HubAlert(title: "Couldn\u{2019}t switch source", message: error.localizedDescription)
         }
     }
 
     // MARK: Artwork
 
     /// Cached artwork bytes; a miss asks the backend once and fills the cache when it answers.
-    func artwork(_ id: ArtworkID?) -> Data? {
+    /// Safe to call from a view body.
+    func artwork(_ id: ArtworkID?, maxPixel: Int = HubModel.defaultArtworkPixels) -> Data? {
         guard let id else { return nil }
-        if let hit = artworkCache[id] { return hit }
-        if !artworkRequests.contains(id) {
-            artworkRequests.insert(id)
+        _ = artworkGeneration   // observe arrivals
+        let key = ArtworkCache.Key(id: id, maxPixel: maxPixel)
+        if let hit = artworkCache.data(for: key) { return hit }
+        if !artworkRequests.contains(key) {
+            artworkRequests.insert(key)
             let backend = backend
             Task { [weak self] in
-                let data = await backend.artwork(id: id)
+                let data = await backend.artwork(id: id, maxPixel: maxPixel)
+                // An unknown id stays marked as requested, so it is not asked for on every render.
                 guard let self, let data else { return }
-                self.artworkCache[id] = data
+                self.artworkRequests.remove(key)
+                self.artworkCache.insert(data, for: key)
+                self.artworkGeneration &+= 1
             }
         }
         return nil
+    }
+
+    // MARK: Paged lists
+
+    /// Call as rows appear: fetches the next page when `itemID` is near the end of `list`.
+    func loadMoreIfNeeded(_ list: ListKey, after itemID: String) {
+        let near: Bool
+        switch list {
+        case .songs: near = songs.shouldLoadMore(after: itemID)
+        case .playlists: near = playlists.shouldLoadMore(after: itemID)
+        case .upNext: near = upNext.shouldLoadMore(after: itemID)
+        case .files: near = files.shouldLoadMore(after: itemID)
+        case .spotifyHistory: near = spotifyHistory.shouldLoadMore(after: itemID)
+        case .search: near = searchResults.shouldLoadMore(after: itemID)
+        case .playlist: near = playlistTracks.shouldLoadMore(after: itemID)
+        }
+        if near { loadNextPage(list) }
+    }
+
+    /// Searches the library, debounced; an empty query clears the results.
+    func search(_ query: String) {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q != searchQuery else { return }
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.searchDebounce)
+            guard !Task.isCancelled, let self else { return }
+            self.searchQuery = q
+            self.searchResults = PagedList(revision: self.content.library)
+            if !q.isEmpty { self.loadFirstPage(.search) }
+        }
+    }
+
+    func openPlaylist(_ id: String) {
+        guard openPlaylistID != id else { return }
+        openPlaylistID = id
+        playlistTracks = PagedList(revision: content.library)
+        loadFirstPage(.playlist)
+    }
+
+    private func loadFirstPage(_ key: ListKey) {
+        // A first page supersedes whatever page was in flight.
+        loadsInFlight.remove(key)
+        loadNextPage(key, first: true)
+    }
+
+    private func loadNextPage(_ key: ListKey, first: Bool = false) {
+        guard !loadsInFlight.contains(key) else { return }
+        let backend = backend
+        switch key {
+        case .songs: fetch(key, \.songs, first: first) { try await backend.songs($0) }
+        case .playlists: fetch(key, \.playlists, first: first) { try await backend.playlists($0) }
+        case .upNext: fetch(key, \.upNext, first: first) { try await backend.upNext($0) }
+        case .files: fetch(key, \.files, first: first) { try await backend.files($0) }
+        case .spotifyHistory: fetch(key, \.spotifyHistory, first: first) { try await backend.spotifyHistory($0) }
+        case .search:
+            let q = searchQuery
+            guard !q.isEmpty else { return }
+            fetch(key, \.searchResults, first: first, while: { [weak self] in self?.searchQuery == q }) {
+                try await backend.search(q, $0)
+            }
+        case .playlist:
+            guard let id = openPlaylistID else { return }
+            fetch(key, \.playlistTracks, first: first, while: { [weak self] in self?.openPlaylistID == id }) {
+                try await backend.tracks(inPlaylist: id, $0)
+            }
+        }
+    }
+
+    /// Fetches the first or next page into `list`. The page is dropped if, when it arrives, the
+    /// list moved to another revision or `stillWanted` says its query or playlist changed.
+    private func fetch<Item>(_ key: ListKey, _ list: ReferenceWritableKeyPath<HubModel, PagedList<Item>>, first: Bool,
+                             while stillWanted: @escaping @MainActor () -> Bool = { true },
+                             _ load: @escaping @Sendable (PageRequest) async throws -> Page<Item>) {
+        let current = self[keyPath: list]
+        guard let request = first ? PageRequest.first : current.nextRequest() else { return }
+        let revision = current.revision
+        loadsInFlight.insert(key)
+        Task { [weak self] in
+            let page = try? await load(request)
+            guard let self else { return }
+            self.loadsInFlight.remove(key)
+            // Errors (no permission yet, hub gone) leave the list as it was; `health` explains why.
+            guard let page, stillWanted() else { return }
+            var updated = self[keyPath: list]
+            guard updated.receive(page, for: request, revision: revision) else { return }
+            if request.cursor == nil, self[keyPath: list].items.map(\.id) != updated.items.map(\.id) {
+                withAnimation(self.structural) { self[keyPath: list] = updated }
+            } else {
+                self[keyPath: list] = updated
+            }
+        }
     }
 
     // MARK: Derived
@@ -214,6 +367,8 @@ final class HubModel {
     var networkSpeakers: [SpeakerItem] { speakers.filter { $0.transport.isNetwork } }
     var localSpeakers: [SpeakerItem] { speakers.filter { !$0.transport.isNetwork } }
     var enabledCount: Int { speakers.filter(\.isEnabled).count }
+    var capturableApps: [CapturableApp] { capture.apps }
+    var capturedAppID: String? { capture.capturedAppID }
 
     func speaker(_ id: SpeakerID) -> SpeakerItem? { speakers.first { $0.id == id } }
 
@@ -238,7 +393,7 @@ final class HubModel {
 
     var canPlay: Bool { activeSource != nil && nowPlaying != nil }
     var hasPosition: Bool { (activeSource?.hasPosition ?? false) && nowPlaying?.duration != nil }
-    var needsLocalNetwork: Bool { status.permission(.localNetwork) == .denied }
+    var needsLocalNetwork: Bool { health.permission(.localNetwork) == .denied }
 
     // MARK: Intents
 
@@ -248,16 +403,16 @@ final class HubModel {
         transport.position = transport.position(at: .now)
         transport.positionAsOf = .now
         transport.isPlaying.toggle()
-        send(.transport) { playing ? try await $0.pause() : try await $0.play() }
+        send(playing ? .pause : .play)
     }
 
-    func next() { send(.transport) { try await $0.next() } }
-    func previous() { send(.transport) { try await $0.previous() } }
+    func next() { send(.next) }
+    func previous() { send(.previous) }
 
     func seek(to position: TimeInterval) {
         transport.position = position
         transport.positionAsOf = .now
-        send(.transport) { try await $0.seek(to: position) }
+        send(.seek(position: position))
     }
 
     func setEnabled(_ enabled: Bool, for id: SpeakerID) {
@@ -265,7 +420,7 @@ final class HubModel {
             $0.isEnabled = enabled
             $0.state = enabled ? .connecting : .off
         }
-        send(.speaker) { try await $0.setSpeaker(id, enabled: enabled) }
+        send(.setSpeakerEnabled(id: id, enabled: enabled))
     }
 
     func toggle(_ id: SpeakerID) {
@@ -274,6 +429,7 @@ final class HubModel {
     }
 
     /// Called at drag rate. The row moves at once; the backend hears at most every 50 ms.
+    /// Works while the speaker is off: the value is its preset.
     func setVolume(_ volume: Double, for id: SpeakerID) {
         let v = volume.clamped(to: 0...1)
         mutateSpeaker(id) { $0.volume = v }
@@ -289,7 +445,7 @@ final class HubModel {
     private func sendVolume(_ id: SpeakerID) {
         guard let v = pendingVolume[id]?.value else { return }
         pendingVolume[id]?.at = .now
-        send(.speaker) { try await $0.setSpeaker(id, volume: v) }
+        send(.setSpeakerVolume(id: id, volume: v))
     }
 
     func nudgeVolume(_ delta: Double, for id: SpeakerID) {
@@ -312,12 +468,12 @@ final class HubModel {
     private func sendTrim(_ id: SpeakerID) {
         guard let v = pendingTrim[id]?.value else { return }
         pendingTrim[id]?.at = .now
-        send(.speaker) { try await $0.setSpeaker(id, syncTrimMs: v) }
+        send(.setSpeakerSyncTrim(id: id, milliseconds: v))
     }
 
     func retry(_ id: SpeakerID) {
         mutateSpeaker(id) { $0.state = .connecting }
-        send(.speaker) { try await $0.retrySpeaker(id) }
+        send(.retrySpeaker(id: id))
     }
 
     func setMasterVolume(_ volume: Double) {
@@ -334,7 +490,7 @@ final class HubModel {
     private func sendMaster() {
         guard let v = pendingMaster?.value else { return }
         pendingMaster?.at = .now
-        send(.speaker) { try await $0.setMasterVolume(v) }
+        send(.setMasterVolume(volume: v))
     }
 
     func nudgeMasterVolume(_ delta: Double) {
@@ -344,20 +500,21 @@ final class HubModel {
 
     func selectSource(_ source: SourceKind) {
         browsingSource = source
-        send(.source) { try await $0.selectSource(source) }
+        send(.selectSource(source: source))
     }
 
-    func playTrack(_ id: String) { send(.source) { try await $0.playTrack(id: id) } }
-    func playPlaylist(_ id: String) { send(.source) { try await $0.playPlaylist(id: id) } }
+    func playTrack(_ id: String, context: TrackContext) { send(.playTrack(id: id, context: context)) }
+    func playPlaylist(_ id: String) { send(.playPlaylist(id: id)) }
 
     func captureApp(_ bundleID: String) {
-        withAnimation(structural) { capturedAppID = bundleID }
-        send(.source) { try await $0.captureApp(bundleID: bundleID) }
+        withAnimation(structural) { capture.capturedAppID = bundleID }
+        send(.captureApp(bundleID: bundleID))
     }
 
-    func addFiles(_ urls: [URL]) { send(.source) { try await $0.addFiles(urls) } }
-    func openSpotify() { send(.source) { try await $0.openSpotify() } }
-    func requestPermission(_ p: HubPermission) { send(.source) { try await $0.requestPermission(p) } }
+    func addFiles(_ urls: [URL]) { send(.addFiles(urls: urls)) }
+    func removeFiles(_ ids: [String]) { send(.removeFiles(ids: ids)) }
+    func openSpotify() { send(.openSpotify) }
+    func requestPermission(_ p: HubPermission) { send(.requestPermission(permission: p)) }
 
     // MARK: Plumbing
 
@@ -366,8 +523,8 @@ final class HubModel {
         change(&speakers[i])
     }
 
-    private func send(_ kind: Command.Kind, _ run: @escaping @Sendable (HubBackend) async throws -> Void) {
-        commands.yield(Command(kind: kind, run: run))
+    private func send(_ command: HubCommand) {
+        commands.yield(command)
     }
 
     /// Runs `action` at most once per throttle interval, on the trailing edge.
@@ -386,11 +543,6 @@ final class HubModel {
         flushes[key] = nil
         action()
     }
-}
-
-private extension NowPlayingInfo {
-    /// What makes it a different item rather than an update to the same one.
-    var identity: String { trackID ?? "\(title)\u{1F}\(artist)" }
 }
 
 extension Comparable {
