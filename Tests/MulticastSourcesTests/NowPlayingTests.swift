@@ -108,7 +108,12 @@ import Testing
             let s = MediaAppController.stateScript(for: app)
             #expect(s.contains("if application id \"\(app.bundleID)\" is running then"))
             let c = MediaAppController.commandScript(for: app, command: "pause")
-            #expect(c.hasPrefix("if application id \"\(app.bundleID)\" is running then"))
+            #expect(c.contains("if application id \"\(app.bundleID)\" is running then"))
+            // A hung app answers within the bound instead of AppleScript's two-minute default.
+            for script in [s, c] {
+                #expect(script.contains("with timeout of 5 seconds"))
+                #expect(script.contains("end timeout"))
+            }
         }
         #expect(MediaAppController.musicArtworkScript().hasPrefix("if application id \"com.apple.Music\" is running"))
     }

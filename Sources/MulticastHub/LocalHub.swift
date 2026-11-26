@@ -90,6 +90,10 @@ public actor LocalHub: HubBackend {
     private var musicPermissionRequest: Task<Void, Never>?
     private var spotifyObserver: Task<Void, Never>?
     private var spotifyHistory: [TrackItem] = []
+    /// A running look-up of the Automation permission for Spotify. It can take most of a minute
+    /// (the system asks Spotify itself, and a Spotify that stopped handling its scripting only
+    /// answers when that times out), so nothing ever waits for it.
+    private var spotifyAutomationCheck: Task<Void, Never>?
 
     // Captured app
     private var capturable: [CapturableApp] = []
@@ -179,6 +183,7 @@ public actor LocalHub: HubBackend {
         for t in tasks { t.cancel() }
         tasks.removeAll()
         spotifyObserver?.cancel()
+        spotifyAutomationCheck?.cancel()
         musicObserver?.cancel()
         captureEvidence?.cancel()
         endingTask?.cancel()
@@ -329,6 +334,7 @@ public actor LocalHub: HubBackend {
             await tail.value
             if metadataTail == tail { break }
         }
+        await spotifyAutomationCheck?.value
     }
 
     private func enqueue(_ op: @escaping @Sendable () async -> Void) {
@@ -397,6 +403,7 @@ public actor LocalHub: HubBackend {
             await deps.session.deselect(speakerID: id)
             return
         }
+        followMediaApp()
         // Presets changed while the select was in flight are applied now.
         let latest = preset(for: id)
         if latest != p {
@@ -405,6 +412,16 @@ public actor LocalHub: HubBackend {
         }
         await reconcileEngine()
         publish()
+    }
+
+    /// For a media-app source, the hub plays exactly when the app plays and a speaker is on
+    /// (an app that started with no speaker on is picked up when one joins).
+    private func followMediaApp() {
+        switch activeSource {
+        case .appleMusic: wantsPlay = musicStatus.isPlaying && hasPlayableSpeaker
+        case .spotify: wantsPlay = spotifyNow?.state == .playing && hasPlayableSpeaker
+        default: break
+        }
     }
 
     private func disable(_ id: String) {
@@ -614,7 +631,11 @@ public actor LocalHub: HubBackend {
                 throw HubCommandError(.unavailable, "Choose something to play first.")
             }
         }
-        guard hasPlayableSpeaker else { throw HubCommandError(.unavailable, Self.needsSpeaker) }
+        // A media app plays on the Mac meanwhile and is captured once a speaker is on; the hub's
+        // own sources have nowhere else to play.
+        if activeSource == .files || activeSource == .app, !hasPlayableSpeaker {
+            throw HubCommandError(.unavailable, Self.needsSpeaker)
+        }
         switch activeSource {
         case .files:
             guard !wantsPlay else { return }
@@ -797,8 +818,14 @@ public actor LocalHub: HubBackend {
             guard deps.apps.isInstalled(Self.spotifyBundleID) else {
                 throw HubCommandError(.unavailable, "Spotify isn\u{2019}t installed on this Mac.")
             }
-            guard deps.apps.isRunning(Self.spotifyBundleID) else {
-                throw HubCommandError(.unavailable, "Spotify isn\u{2019}t open. Open it, then choose it again.")
+            if !deps.apps.isRunning(Self.spotifyBundleID) {
+                // Choosing Spotify means wanting it: open it (behind this window). The capture
+                // waits for its process, and now playing follows once it answers.
+                do { try await deps.apps.launch(Self.spotifyBundleID) } catch {
+                    throw HubCommandError(.failed, "Spotify didn\u{2019}t open.")
+                }
+                refreshApps()
+                guard activeSource != .spotify else { return }
             }
             let source = try makeCapture(bundleID: Self.spotifyBundleID, name: "Spotify")
             leaveActiveSource()
@@ -851,7 +878,8 @@ public actor LocalHub: HubBackend {
         if old != .app { capturedApp = nil }
         endingTask?.cancel()
         endingTask = nil
-        if oldPlaying { enqueue { [self] in await self.pauseMediaApp(old) } }
+        // Not on the work queue: a media app slow to answer must not hold up the new source.
+        if oldPlaying { Task { [weak self] in await self?.pauseMediaApp(old) } }
     }
 
     private func setEngineSource(_ source: AudioSource, kind: SourceKind) {
@@ -996,7 +1024,7 @@ public actor LocalHub: HubBackend {
             let t1 = MulticastTiming.now
             try await player.play(trackID: id, context: context)
             MulticastTiming.log.debug("hub.playTrack player.play \(MulticastTiming.ms(since: t1))ms")
-            if !hasPlayableSpeaker { throw HubCommandError(.unavailable, Self.needsSpeaker) }
+            // No speaker on: Music plays on the Mac, and the hub captures it once one is.
         }
     }
 
@@ -1004,7 +1032,6 @@ public actor LocalHub: HubBackend {
         let player = try requireMusicPlayer()
         if activeSource != .appleMusic { try await selectSource(.appleMusic) }
         try await player.play(playlistID: id)
-        if !hasPlayableSpeaker { throw HubCommandError(.unavailable, Self.needsSpeaker) }
     }
 
     /// Opens the queue's current file and makes it the engine's source (queued, in order).
@@ -1149,7 +1176,8 @@ public actor LocalHub: HubBackend {
         guard deps.apps.isInstalled(Self.spotifyBundleID) else {
             throw HubCommandError(.unavailable, "Spotify isn\u{2019}t installed on this Mac.")
         }
-        do { try await deps.apps.launch(Self.spotifyBundleID) } catch {
+        // Asked for by the person: bring it to the front, running or not.
+        do { try await deps.apps.open(Self.spotifyBundleID) } catch {
             throw HubCommandError(.failed, "Spotify didn\u{2019}t open.")
         }
         refreshApps()
@@ -1203,11 +1231,12 @@ public actor LocalHub: HubBackend {
             || now.timeIntervalSince(startedAt) >= configuration.discoveryMaxSeconds {
             discovering = false
         }
-        if spotifyStatus == .running, permissions.automation != .granted || spotifyObserver == nil {
-            if let status = await deps.spotify.automationStatus(ask: false) {
-                permissions.automation = status
-                // Observing sends Apple Events; start it unprompted only once it is allowed.
-                if status == .granted { startSpotifyObserver() }
+        if spotifyStatus == .running, permissions.automation != .granted || spotifyObserver == nil,
+           spotifyAutomationCheck == nil {
+            let spotify = deps.spotify
+            spotifyAutomationCheck = Task { [weak self] in
+                let status = await spotify.automationStatus(ask: false)
+                await self?.spotifyAutomationChecked(status)
             }
         }
         // Access granted in System Settings while the hub runs: pick it up without prompting.
@@ -1221,6 +1250,15 @@ public actor LocalHub: HubBackend {
                 }
             }
         }
+        publish()
+    }
+
+    private func spotifyAutomationChecked(_ status: PermissionStatus?) {
+        spotifyAutomationCheck = nil
+        guard let status, spotifyStatus == .running else { return }
+        permissions.automation = status
+        // Observing sends Apple Events; start it unprompted only once it is allowed.
+        if status == .granted { startSpotifyObserver() }
         publish()
     }
 

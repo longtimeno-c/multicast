@@ -121,6 +121,11 @@ public final class MediaAppController: @unchecked Sendable {
 
     // MARK: Scripts
 
+    /// How long one script waits for the app to answer. An app that has stopped handling its
+    /// scripting (Spotify does at times while it looks fine) would otherwise hold this
+    /// controller's queue for AppleScript's default two minutes per call.
+    static let appleEventTimeout: TimeInterval = 5
+
     static func stateScript(for app: MediaApp) -> String {
         let id = app.bundleID
         let artworkExpr = app == .spotify ? "artwork url of t" : "\"\""
@@ -135,6 +140,7 @@ public final class MediaAppController: @unchecked Sendable {
             end try
         end txt
         set US to character id 31
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(id)" is running then
             tell application id "\(id)"
                 set st to ""
@@ -179,6 +185,7 @@ public final class MediaAppController: @unchecked Sendable {
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 
@@ -197,12 +204,14 @@ public final class MediaAppController: @unchecked Sendable {
 
     static func commandScript(for app: MediaApp, command: String) -> String {
         """
+        with timeout of \(Int(appleEventTimeout)) seconds
         if application id "\(app.bundleID)" is running then
             tell application id "\(app.bundleID)" to \(command)
             return "\(AppleScriptNowPlayingParser.okMarker)"
         else
             return "\(AppleScriptNowPlayingParser.notRunningMarker)"
         end if
+        end timeout
         """
     }
 

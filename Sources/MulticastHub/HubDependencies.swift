@@ -103,8 +103,14 @@ public protocol AppPresenceMonitoring: Sendable {
     func changes() -> AsyncStream<Void>
     /// Launches without bringing it to the front.
     func launch(_ bundleID: String) async throws
+    /// Opens it in front (launching it if needed), as when the person asks to open it.
+    func open(_ bundleID: String) async throws
     /// The app's icon as PNG, at most `maxPixel` on a side (0 = 512).
     func iconPNG(bundleID: String, maxPixel: Int) -> Data?
+}
+
+public extension AppPresenceMonitoring {
+    func open(_ bundleID: String) async throws { try await launch(bundleID) }
 }
 
 /// Running apps that could be captured, live.

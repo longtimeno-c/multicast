@@ -235,6 +235,17 @@ public final class WorkspaceAppPresence: AppPresenceMonitoring, @unchecked Senda
         _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
     }
 
+    public func open(_ bundleID: String) async throws {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            throw HubCommandError(.unavailable, "Not installed")
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
+        // Already running and hidden or behind other windows: bring it forward as well.
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.activate()
+    }
+
     public func iconPNG(bundleID: String, maxPixel: Int) -> Data? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let image = NSWorkspace.shared.icon(forFile: url.path)
@@ -286,8 +297,14 @@ public final class ProcessTapApps: CapturableAppsProviding, @unchecked Sendable 
 /// Spotify over Apple Events (`MediaAppController`), errors mapped to `HubCommandError`.
 public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable {
     private let controller = MediaAppController(app: .spotify)
+    private let lock = NSLock()
+    private var statusCheck: Task<PermissionStatus?, Never>?
+    /// How long `automationStatus(ask: false)` waits before answering "unknown" (the check runs
+    /// on and is reused by the next caller). The system asks Spotify itself; a Spotify that
+    /// stopped handling its scripting makes that take most of a minute.
+    public let statusWait: TimeInterval
 
-    public init() {}
+    public init(statusWait: TimeInterval = 2) { self.statusWait = statusWait }
 
     public func changes() -> AsyncStream<NowPlaying?> { controller.changes(pollInterval: 2) }
 
@@ -297,7 +314,36 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
     public func previous() async throws { try await map { try await self.controller.previousTrack() } }
 
     public func automationStatus(ask: Bool) async -> PermissionStatus? {
-        switch await controller.automationPermission(askIfNeeded: ask) {
+        // Asking waits on a person; only the silent check is shared and bounded.
+        if ask { return await Self.map(controller.automationPermission(askIfNeeded: true)) }
+        let check: Task<PermissionStatus?, Never> = lock.withLock {
+            if let running = statusCheck { return running }
+            let controller = controller
+            let t = Task<PermissionStatus?, Never> { [weak self] in
+                let status = Self.map(await controller.automationPermission(askIfNeeded: false))
+                self?.lock.withLock { self?.statusCheck = nil }
+                return status
+            }
+            statusCheck = t
+            return t
+        }
+        // Whichever comes first (a task group would wait for the check anyway).
+        let wait = statusWait
+        let once = OnceFlag()
+        return await withCheckedContinuation { (c: CheckedContinuation<PermissionStatus?, Never>) in
+            Task {
+                let status = await check.value
+                if once.claim() { c.resume(returning: status) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+                if once.claim() { c.resume(returning: nil) }
+            }
+        }
+    }
+
+    private static func map(_ permission: MediaAppController.AutomationPermission) -> PermissionStatus? {
+        switch permission {
         case .granted: return .granted
         case .denied: return .denied
         case .notDetermined: return .notDetermined
@@ -313,6 +359,8 @@ public final class SpotifyAppleEvents: MediaAppControlling, @unchecked Sendable 
                                       "Allow Multicast to control Spotify in System Settings \u{203A} Privacy & Security \u{203A} Automation.")
             case .notRunning:
                 throw HubCommandError(.unavailable, "Spotify isn\u{2019}t open.")
+            case .scriptError(code: -1712, _):
+                throw HubCommandError(.failed, "Spotify isn\u{2019}t responding. Quit and reopen Spotify, then try again.")
             default:
                 throw HubCommandError(.failed, "Spotify didn\u{2019}t respond.")
             }
