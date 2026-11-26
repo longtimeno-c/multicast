@@ -383,7 +383,7 @@ struct LocalHubSourceTests {
         #expect(rig.session.calls.filter { $0 == "pause" }.count == before + 1)
         rig.spotify.fanout.send(NowPlaying(app: .spotify, state: .playing, title: "Song B", artist: "Band",
                                            trackID: "spotify:track:b", sampledAt: rig.clock.now))
-        try await rig.waitFor("history") { $0.content.spotifyHistory >= 1 }
+        try await rig.waitFor("history") { $0.nowPlaying?.trackID == "spotify:track:b" && $0.content.spotifyHistory >= 2 }
         // The current song first, then the earlier ones.
         #expect(try await rig.hub.spotifyHistory(.first).items.map(\.id) == ["spotify:track:b", "spotify:track:a"])
 
