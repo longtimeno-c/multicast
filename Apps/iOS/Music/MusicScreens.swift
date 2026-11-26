@@ -17,6 +17,7 @@ struct MusicScreen: View {
                     case .source(.app): OtherAppView()
                     case .source(.files): FilesView()
                     case .playlist(let p): PlaylistView(playlist: p)
+                    case .folder(let f): FolderView(folder: f)
                     }
                 }
         }
@@ -285,7 +286,7 @@ private struct AppleMusicView: View {
                     }
                 }
                 Section {
-                    playlists(model.playlists.items)
+                    playlists(model.playlistTree.items(in: nil))
                     if model.playlists.isLoaded && model.playlists.items.isEmpty {
                         Text("No playlists in your library yet.")
                             .font(MC.Font.body)
@@ -312,7 +313,7 @@ private struct AppleMusicView: View {
         if !matching.isEmpty || !spotifyMatching.isEmpty {
             Section("Playlists") {
                 spotifyPlaylists(spotifyMatching)
-                playlists(matching)
+                playlists(matching, showsLocation: true)
             }
         }
         let spotifySongMatches = combined ? model.spotifySessionSongs.filter {
@@ -377,14 +378,8 @@ private struct AppleMusicView: View {
         }
     }
 
-    private func playlists(_ items: [PlaylistItem]) -> some View {
-        ForEach(items) { playlist in
-            NavigationLink(value: RemoteNavigation.MusicRoute.playlist(playlist)) {
-                PlaylistRow(playlist: playlist)
-            }
-            .listRowBackground(Color.clear)
-            .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
-        }
+    private func playlists(_ items: [PlaylistItem], showsLocation: Bool = false) -> some View {
+        PlaylistRows(items: items, showsLocation: showsLocation)
     }
 
     private func tracks(_ items: [TrackItem], list: HubModel.ListKey, context: TrackContext) -> some View {
@@ -404,25 +399,134 @@ private struct AppleMusicView: View {
     }
 }
 
+/// Playlists and folders as rows: a folder opens to its contents, a playlist to its songs.
+private struct PlaylistRows: View {
+    @Environment(HubModel.self) private var model
+    var items: [PlaylistItem]
+    /// Search results say which folder each one is in.
+    var showsLocation = false
+
+    var body: some View {
+        ForEach(items) { item in
+            NavigationLink(value: item.isFolder ? RemoteNavigation.MusicRoute.folder(item) : .playlist(item)) {
+                PlaylistRow(playlist: item,
+                            within: showsLocation ? model.playlistTree.path(to: item.id).map(\.name) : [])
+            }
+            .contextMenu {
+                Button { model.playPlaylist(item.id) } label: { Label("Play", systemImage: "play") }
+                Button { model.playPlaylist(item.id, shuffled: true) } label: { Label("Shuffle", systemImage: "shuffle") }
+            }
+            .listRowBackground(Color.clear)
+        }
+    }
+}
+
 private struct PlaylistRow: View {
     @Environment(HubModel.self) private var model
     var playlist: PlaylistItem
+    var within: [String] = []
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
-            ArtworkView(data: model.artwork(playlist.artworkID, maxPixel: 200), size: 56, radius: MC.Radius.medium)
+            if playlist.isFolder {
+                FolderArtwork(artworkIDs: model.playlistTree.mosaic(for: playlist.id), side: 56, maxPixel: 200)
+            } else {
+                ArtworkView(data: model.artwork(playlist.artworkID, maxPixel: 200), size: 56, radius: MC.Radius.medium)
+            }
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(playlist.name)
                     .font(MC.Font.body)
                     .foregroundStyle(MC.Ink.primary)
-                Text(playlist.trackCount == 1 ? "1 song" : "\(playlist.trackCount) songs")
-                    .font(MC.Font.caption)
-                    .foregroundStyle(MC.Ink.secondary)
-                    .monospacedDigit()
+                HStack(spacing: MC.Space.xs) {
+                    if playlist.isFolder {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11, weight: .semibold))
+                            .accessibilityLabel("Folder")
+                    }
+                    Text(detail).monospacedDigit()
+                }
+                .font(MC.Font.caption)
+                .foregroundStyle(MC.Ink.secondary)
             }
             .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var detail: String {
+        let base = playlist.isFolder ? model.folderDetail(playlist)
+            : (playlist.trackCount == 1 ? "1 song" : "\(playlist.trackCount) songs")
+        return within.isEmpty ? base : "\(base) \u{00B7} in \(within.joined(separator: " \u{203A} "))"
+    }
+}
+
+/// A playlist folder: its mosaic, Play and Shuffle (everything inside, as Music plays a
+/// folder), then its sub-folders and playlists. The back button names the way out.
+private struct FolderView: View {
+    @Environment(HubModel.self) private var model
+    var folder: PlaylistItem
+
+    var body: some View {
+        List {
+            VStack(spacing: MC.Space.m) {
+                FolderArtwork(artworkIDs: model.playlistTree.mosaic(for: folder.id), side: 200, maxPixel: 600)
+                VStack(spacing: MC.Space.xxs) {
+                    Text(folder.name)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(MC.Ink.primary)
+                    Text("Folder \u{00B7} \(model.folderDetail(folder))")
+                        .font(MC.Font.caption)
+                        .foregroundStyle(MC.Ink.secondary)
+                        .monospacedDigit()
+                }
+                .multilineTextAlignment(.center)
+                HStack(spacing: MC.Space.m) {
+                    Button { model.playPlaylist(folder.id) } label: {
+                        // An explicit icon and title, centred together in the capsule.
+                        HStack(spacing: MC.Space.s) {
+                            Image(systemName: "play.fill").accessibilityHidden(true)
+                            Text("Play")
+                        }
+                        .font(MC.Font.bodyEmphasis)
+                        .frame(minWidth: 112)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Play everything in \(folder.name)")
+                    Button { model.playPlaylist(folder.id, shuffled: true) } label: {
+                        // An explicit icon and title, centred together in the capsule.
+                        HStack(spacing: MC.Space.s) {
+                            Image(systemName: "shuffle").accessibilityHidden(true)
+                            Text("Shuffle")
+                        }
+                        .font(MC.Font.bodyEmphasis)
+                        .frame(minWidth: 112)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Shuffle everything in \(folder.name)")
+                }
+                .controlSize(.large)
+                .buttonBorderShape(.capsule)
+                .padding(.top, MC.Space.xs)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, MC.Space.m)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+
+            let items = model.playlistTree.items(in: folder.id)
+            PlaylistRows(items: items)
+            if items.isEmpty && model.playlists.isLoaded {
+                Text("This folder is empty.")
+                    .font(MC.Font.body)
+                    .foregroundStyle(MC.Ink.secondary)
+                    .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+        .remoteList()
+        .navigationTitle(folder.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) } }
     }
 }
 

@@ -118,12 +118,17 @@ public enum MusicAppParsing {
     public static func playlists(_ d: NSAppleEventDescriptor) throws -> [PlaylistItem] {
         try items(d, "playlists").compactMap { row in
             let f = try items(row, "playlist row")
-            guard f.count == 4 else { throw ParseError("playlist row has \(f.count) fields") }
+            // {id, name, count, firstTrackID} or, with folders, {…, isFolder, parentID}.
+            guard f.count == 4 || f.count == 6 else { throw ParseError("playlist row has \(f.count) fields") }
             guard let id = string(f[0]), !id.isEmpty else { return nil }
             let first = string(f[3]).flatMap(nonEmpty)
+            let isFolder = f.count == 6 && f[4].booleanValue
+            let parent = f.count == 6 ? string(f[5]).flatMap(nonEmpty) : nil
             return PlaylistItem(
-                id: id, name: nonEmpty(string(f[1])) ?? "Untitled Playlist", trackCount: max(0, int(f[2]) ?? 0),
-                artworkID: first.map { AppleMusicArtworkRef.musicAppTrack(persistentID: $0).artworkID })
+                id: id, name: nonEmpty(string(f[1])) ?? (isFolder ? "Untitled Folder" : "Untitled Playlist"),
+                trackCount: max(0, int(f[2]) ?? 0),
+                artworkID: first.map { AppleMusicArtworkRef.musicAppTrack(persistentID: $0).artworkID },
+                isFolder: isFolder, parentID: parent)
         }
     }
 

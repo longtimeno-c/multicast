@@ -12,7 +12,8 @@ import MulticastSources
 /// - Library: the whole song list is read in five bulk Apple Events, sorted by title and kept
 ///   in memory (`LibraryIndex`); songs, search and paging are then local. It is refreshed when
 ///   `libraryTTL` has passed and Music's track count changed, or on `invalidateLibrary()`.
-/// - Playlists: user playlists (regular and smart, not folders), artwork from the first track.
+/// - Playlists: user playlists (regular and smart) and playlist folders, each with the folder
+///   it sits in, artwork from the first track. A folder's tracks are all the tracks inside it.
 /// - Up next: Music does not expose its queue to other apps. This reports the tracks after the
 ///   current one in the playlist Music is playing (nothing while shuffle is on), and
 ///   `insertNext` / `append` throw `.unsupported`.

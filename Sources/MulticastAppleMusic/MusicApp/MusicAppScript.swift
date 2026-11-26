@@ -10,7 +10,8 @@ import Foundation
 ///
 /// Results are plain lists so they parse without terminology:
 ///  - track columns: `{ids, names, artists, albums, durations}` (parallel lists)
-///  - playlists: `{{id, name, trackCount, firstTrackID}, …}`
+///  - playlists: `{{id, name, trackCount, firstTrackID, isFolder, parentID}, …}` (folders included;
+///    a folder's tracks are every track inside it, so it plays and shows artwork like a playlist)
 ///  - state: `{stateText, shuffle, volume, position, {id, name, artist, album, duration} | {}}`
 ///  - up next: `{"ok", remaining, ids, names, artists, albums, durations}` or `{"stopped"|"shuffled"|"unknown"}`
 enum MusicAppScript {
@@ -32,11 +33,16 @@ enum MusicAppScript {
             set out to {}
             repeat with p in (get every user playlist)
                 try
-                    if special kind of p is none then
+                    set k to special kind of p
+                    if k is none or k is folder then
                         set c to count of tracks of p
                         set f to ""
                         if c > 0 then set f to persistent ID of track 1 of p
-                        set end of out to {persistent ID of p, name of p, c, f}
+                        set par to ""
+                        try
+                            set par to persistent ID of parent of p
+                        end try
+                        set end of out to {persistent ID of p, name of p, c, f, (k is folder), par}
                     end if
                 end try
             end repeat

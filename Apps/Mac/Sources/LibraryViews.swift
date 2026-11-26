@@ -60,7 +60,7 @@ private struct LibraryBrowser: View {
     var body: some View {
         Group {
             if isSearching {
-                LibrarySearchResults(query: query)
+                LibrarySearchResults(query: query, clear: { query = "" })
             } else if let playlist = model.openedPlaylist {
                 PlaylistDetail(playlist: playlist)
                     .transition(.opacity)
@@ -89,17 +89,23 @@ private struct LibraryBrowser: View {
 
 // MARK: Playlist grid
 
-/// Pinned playlists, then all playlists, as tiles sized to fill the column.
+/// Pinned playlists, then the playlists and folders at the top of the library, as tiles
+/// sized to fill the column; inside a folder, its playlists and sub-folders under a breadcrumb.
 private struct PlaylistGrid: View {
     @Environment(HubModel.self) private var model
 
     var body: some View {
+        let tree = model.playlistTree
+        let folder = model.openFolderID.flatMap(tree.item)
         GeometryReader { geo in
             let layout = TileLayout(width: geo.size.width - SourceHeaderMetrics.inset * 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: MC.Space.l) {
                     SourceIssueNotice(source: .appleMusic)
-                    if !model.pins.isEmpty {
+                    if let folder {
+                        FolderHeader(folder: folder, path: tree.path(to: folder.id))
+                    }
+                    if folder == nil, !model.pins.isEmpty {
                         GridTitle("Pinned")
                         LazyVGrid(columns: layout.columns, alignment: .leading, spacing: MC.Space.l) {
                             ForEach(model.pins) { pin in
@@ -109,22 +115,23 @@ private struct PlaylistGrid: View {
                             }
                         }
                     }
-                    GridTitle("Playlists")
+                    if folder == nil { GridTitle("Playlists") }
                     LazyVGrid(columns: layout.columns, alignment: .leading, spacing: MC.Space.l) {
-                        ForEach(model.playlists.items) { playlist in
-                            PlaylistTile(name: playlist.name, detail: songs(playlist.trackCount), source: nil,
-                                         artworkID: playlist.artworkID, side: layout.side,
-                                         isPinned: model.isPinned(playlist.id), playlistID: playlist.id,
-                                         open: { model.showPlaylist(playlist) })
-                                .onAppear { model.loadMoreIfNeeded(.playlists, after: playlist.id) }
+                        ForEach(tree.items(in: folder?.id)) { item in
+                            PlaylistTile(name: item.name,
+                                         detail: item.isFolder ? model.folderDetail(item) : songs(item.trackCount),
+                                         source: nil, artworkID: item.artworkID,
+                                         mosaic: item.isFolder ? tree.mosaic(for: item.id) : nil,
+                                         side: layout.side, isPinned: model.isPinned(item.id), playlistID: item.id,
+                                         open: { model.open(item) })
                         }
                     }
-                    if model.playlists.isLoaded && model.playlists.items.isEmpty {
-                        Text("No playlists in your library yet.")
+                    if model.playlists.isLoaded && tree.items(in: folder?.id).isEmpty {
+                        Text(folder == nil ? "No playlists in your library yet." : "This folder is empty.")
                             .font(MC.Font.body)
                             .foregroundStyle(MC.Ink.secondary)
                     }
-                    if model.spotify != .notInstalled {
+                    if folder == nil, model.spotify != .notInstalled {
                         SpotifyLinkField(kind: .playlist)
                     }
                 }
@@ -139,7 +146,7 @@ private struct PlaylistGrid: View {
         if pin.source == .spotify {
             model.playPlaylist(pin.id)
         } else if let p = model.playlists.items.first(where: { $0.id == pin.id }) {
-            model.showPlaylist(p)
+            model.open(p)
         } else {
             model.showPlaylist(PlaylistItem(id: pin.id, name: pin.name, trackCount: pin.trackCount ?? 0,
                                             artworkID: pin.artworkID))
@@ -185,6 +192,8 @@ private struct PlaylistTile: View {
     var detail: String
     var source: SourceKind?
     var artworkID: ArtworkID?
+    /// A folder: the covers of the playlists inside it.
+    var mosaic: [ArtworkID]? = nil
     var side: CGFloat
     var isPinned: Bool
     var playlistID: String
@@ -194,7 +203,11 @@ private struct PlaylistTile: View {
     var body: some View {
         Button { activation.once(open) } label: {
             VStack(alignment: .leading, spacing: MC.Space.s) {
-                ArtworkView(data: model.artwork(artworkID, maxPixel: 400), size: side, radius: MC.Radius.medium)
+                if let mosaic {
+                    FolderArtwork(artworkIDs: mosaic, side: side, maxPixel: 300)
+                } else {
+                    ArtworkView(data: model.artwork(artworkID, maxPixel: 400), size: side, radius: MC.Radius.medium)
+                }
                 VStack(alignment: .leading, spacing: MC.Space.xxs) {
                     Text(name)
                         .font(MC.Font.body)
@@ -204,6 +217,11 @@ private struct PlaylistTile: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: MC.Space.xs) {
                         if source == .spotify { SourceMark(source: .spotify) }
+                        if mosaic != nil {
+                            Image(systemName: "folder")
+                                .font(.system(size: 10, weight: .semibold))
+                                .accessibilityHidden(true)
+                        }
                         Text(detail).monospacedDigit()
                     }
                     .font(MC.Font.caption)
@@ -216,6 +234,7 @@ private struct PlaylistTile: View {
         }
         .buttonStyle(.plain)
         .help(source == .spotify ? "Play \(name) in Spotify" : "Open \(name)")
+        .accessibilityAddTraits(mosaic != nil ? .isButton : [])
         .contextMenu {
             if source != .spotify { Button("Open", action: open) }
             Button("Play") { model.playPlaylist(playlistID) }
@@ -228,7 +247,7 @@ private struct PlaylistTile: View {
                     .disabled(model.pins.count >= PinnedPlaylist.limit)
             }
         }
-        .accessibilityLabel("\(name), \(detail)")
+        .accessibilityLabel(mosaic != nil ? "Folder \(name), \(detail)" : "\(name), \(detail)")
         .accessibilityHint(source == .spotify ? "Plays the playlist in Spotify" : "Opens the playlist")
     }
 }
@@ -271,13 +290,7 @@ private struct PlaylistDetail: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: MC.Space.m) {
-            Button { model.closePlaylist() } label: {
-                Label("Playlists", systemImage: "chevron.left")
-                    .font(MC.Font.body)
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut("[", modifiers: .command)
-            .help("Back to playlists")
+            Breadcrumb(path: model.playlistTree.path(to: playlist.id), current: nil)
 
             HStack(alignment: .bottom, spacing: MC.Space.l) {
                 ArtworkView(data: model.artwork(playlist.artworkID, maxPixel: 600), size: 148, radius: MC.Radius.large)
@@ -322,6 +335,8 @@ private struct PlaylistDetail: View {
 private struct LibrarySearchResults: View {
     @Environment(HubModel.self) private var model
     var query: String
+    /// Ends the search, so what a result opened shows.
+    var clear: () -> Void
     @State private var selection: String?
     @State private var activation = RowActivation()
 
@@ -331,8 +346,11 @@ private struct LibrarySearchResults: View {
             if !playlists.isEmpty {
                 SourceSectionTitle("Playlists", isFirst: true)
                 ForEach(playlists) { playlist in
-                    SearchPlaylistRow(name: playlist.name, detail: songs(playlist.trackCount), artworkID: playlist.artworkID)
-                        .rowClick { activation.once { model.showPlaylist(playlist) } }
+                    SearchPlaylistRow(name: playlist.name,
+                                      detail: playlist.isFolder ? model.folderDetail(playlist) : songs(playlist.trackCount),
+                                      artworkID: playlist.artworkID, isFolder: playlist.isFolder,
+                                      within: model.playlistTree.path(to: playlist.id).map(\.name))
+                        .rowClick { activation.once { openFromSearch(playlist) } }
                         .tag("playlist:" + playlist.id)
                         .sourceRow()
                 }
@@ -385,7 +403,7 @@ private struct LibrarySearchResults: View {
             guard let id = ids.first else { return }
             if id.hasPrefix("playlist:") {
                 let pid = String(id.dropFirst("playlist:".count))
-                if let p = model.playlists.items.first(where: { $0.id == pid }) { model.showPlaylist(p) } else { model.playPlaylist(pid) }
+                if let p = model.playlists.items.first(where: { $0.id == pid }) { openFromSearch(p) } else { model.playPlaylist(pid) }
             } else if id.hasPrefix("spotify:track:") {
                 model.playTrack(id, context: .spotifyHistory)
             } else {
@@ -396,6 +414,17 @@ private struct LibrarySearchResults: View {
 
     private func play(_ id: String) {
         activation.once { model.playTrack(id, context: .search(query: model.searchQuery)) }
+    }
+
+    /// A folder opens in place (its parent is where Back goes); a playlist opens inside its folder.
+    private func openFromSearch(_ item: PlaylistItem) {
+        if item.isFolder {
+            model.openFolder(item.id)
+        } else {
+            model.openFolder(item.parentID)
+            model.showPlaylist(item)
+        }
+        clear()
     }
 
     private var playlists: [PlaylistItem] {
@@ -419,15 +448,23 @@ private struct SearchPlaylistRow: View {
     var detail: String
     var artworkID: ArtworkID?
     var source: SourceKind? = nil
+    var isFolder = false
+    /// The folders it sits in, top first.
+    var within: [String] = []
 
     var body: some View {
         HStack(spacing: MC.Space.m) {
-            ArtworkView(data: model.artwork(artworkID), size: 32, radius: MC.Radius.small)
+            if isFolder {
+                FolderArtwork(artworkIDs: [], side: 32, maxPixel: 100)
+            } else {
+                ArtworkView(data: model.artwork(artworkID), size: 32, radius: MC.Radius.small)
+            }
             VStack(alignment: .leading, spacing: MC.Space.xxs) {
                 Text(name).font(MC.Font.body).foregroundStyle(MC.Ink.primary).lineLimit(1)
                 HStack(spacing: MC.Space.xs) {
                     if let source { SourceMark(source: source) }
-                    Text(detail).monospacedDigit()
+                    Text(within.isEmpty ? detail : "\(detail) \u{00B7} in \(within.joined(separator: " \u{203A} "))")
+                        .monospacedDigit()
                 }
                 .font(MC.Font.caption).foregroundStyle(MC.Ink.secondary)
             }
@@ -435,5 +472,98 @@ private struct SearchPlaylistRow: View {
         }
         .padding(.vertical, MC.Space.xxs)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: Folders
+
+/// Playlists › Folder › Folder: every step but the current one goes back there.
+private struct Breadcrumb: View {
+    @Environment(HubModel.self) private var model
+    var path: [PlaylistItem]
+    /// The open folder, shown last and not clickable; nil inside a playlist.
+    var current: PlaylistItem?
+
+    var body: some View {
+        HStack(spacing: MC.Space.xs) {
+            Button { go(nil) } label: {
+                Label("Playlists", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .help("Back to playlists")
+            ForEach(path) { folder in
+                separator
+                Button(folder.name) { go(folder.id) }
+                    .buttonStyle(.borderless)
+                    .lineLimit(1)
+            }
+            if let current {
+                separator
+                Text(current.name)
+                    .foregroundStyle(MC.Ink.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .font(MC.Font.body)
+        .background {
+            Button("Back") { back() }
+                .keyboardShortcut("[", modifiers: .command)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Location")
+    }
+
+    private var separator: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(MC.Ink.tertiary)
+            .accessibilityHidden(true)
+    }
+
+    private func go(_ folderID: String?) {
+        model.openFolder(folderID)
+    }
+
+    /// Command-[ goes one step up: out of a playlist into its folder, or out of a folder into
+    /// its parent; `path` ends with exactly that folder (or is empty: the top).
+    private func back() { model.openFolder(path.last?.id) }
+}
+
+/// Above an open folder: the breadcrumb, then the folder with Play and Shuffle (everything
+/// inside it, as Music plays a folder).
+private struct FolderHeader: View {
+    @Environment(HubModel.self) private var model
+    var folder: PlaylistItem
+    var path: [PlaylistItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MC.Space.m) {
+            Breadcrumb(path: path, current: folder)
+            HStack(alignment: .bottom, spacing: MC.Space.l) {
+                FolderArtwork(artworkIDs: model.playlistTree.mosaic(for: folder.id), side: 112, maxPixel: 400)
+                VStack(alignment: .leading, spacing: MC.Space.s) {
+                    Text(folder.name)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(MC.Ink.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Folder \u{00B7} \(model.folderDetail(folder))")
+                        .font(MC.Font.caption)
+                        .foregroundStyle(MC.Ink.secondary)
+                        .monospacedDigit()
+                    HStack(spacing: MC.Space.s) {
+                        Button { model.playPlaylist(folder.id) } label: { Label("Play", systemImage: "play.fill") }
+                            .buttonStyle(.borderedProminent)
+                            .help("Play every playlist in this folder")
+                        Button { model.playPlaylist(folder.id, shuffled: true) } label: { Label("Shuffle", systemImage: "shuffle") }
+                            .help("Play everything in this folder in a random order")
+                    }
+                    .padding(.top, MC.Space.xs)
+                }
+            }
+        }
+        .padding(.top, MC.Space.xs)
     }
 }

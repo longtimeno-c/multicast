@@ -75,6 +75,18 @@ private func columns(_ ids: [NSAppleEventDescriptor], _ names: [NSAppleEventDesc
         #expect(throws: MusicAppParsing.ParseError.self) { try MusicAppParsing.playlists(list([list([s("1")])])) }
     }
 
+    @Test func parsesFoldersAndTheirPlaylists() throws {
+        let d = list([
+            list([s("F01DE7AAAAAAAAAA"), s("Evenings"), i(20), s("0A1B2C3D4E5F6071"), b(true), s("")]),
+            list([s("1111AAAA2222BBBB"), s("Dinner"), i(12), s("0A1B2C3D4E5F6071"), b(false), s("F01DE7AAAAAAAAAA")]),
+            list([s("5555EEEE6666FFFF"), s(""), i(0), s(""), b(true), s("F01DE7AAAAAAAAAA")]),
+        ])
+        let p = try MusicAppParsing.playlists(d)
+        #expect(p.map(\.isFolder) == [true, false, true])
+        #expect(p.map(\.parentID) == [nil, "F01DE7AAAAAAAAAA", "F01DE7AAAAAAAAAA"])
+        #expect(p[2].name == "Untitled Folder")
+    }
+
     @Test func parsesPlayingState() throws {
         let d = list([s("playing"), b(true), i(35), r(42.25),
                       list([s("0A1B2C3D4E5F6071"), s("Low Tide"), s("Paper Comets"), s("Shore"), r(201.4)])])

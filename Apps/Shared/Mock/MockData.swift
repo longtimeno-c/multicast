@@ -48,11 +48,17 @@ enum MockData {
 
     private static var playlistsWithoutCounts: [PlaylistItem] {
         [
-            PlaylistItem(id: "p1", name: "Sunday morning", trackCount: 24, artworkID: MockArtwork.id(.sunOverWater)),
-            PlaylistItem(id: "p2", name: "Kitchen", trackCount: 58, artworkID: MockArtwork.id(.dots)),
+            // A folder with a playlist and a nested folder, as Music lists them: in library order.
+            PlaylistItem(id: "f1", name: "Evenings", trackCount: 0, artworkID: MockArtwork.id(.ring), isFolder: true),
+            PlaylistItem(id: "p4", name: "Dinner party", trackCount: 33, artworkID: MockArtwork.id(.ring), parentID: "f1"),
+            PlaylistItem(id: "p2", name: "Kitchen", trackCount: 58, artworkID: MockArtwork.id(.dots), parentID: "f1"),
+            PlaylistItem(id: "f2", name: "Weekends", trackCount: 0, artworkID: MockArtwork.id(.sunOverWater), isFolder: true,
+                         parentID: "f1"),
+            PlaylistItem(id: "p1", name: "Sunday morning", trackCount: 24, artworkID: MockArtwork.id(.sunOverWater), parentID: "f2"),
+            PlaylistItem(id: "p5", name: "Garden", trackCount: 19, artworkID: MockArtwork.id(.arcs), parentID: "f2"),
             PlaylistItem(id: "p3", name: "Hall", trackCount: 41, artworkID: MockArtwork.id(.stack)),
-            PlaylistItem(id: "p4", name: "Dinner party", trackCount: 33, artworkID: MockArtwork.id(.ring)),
-            PlaylistItem(id: "p5", name: "Garden", trackCount: 19, artworkID: MockArtwork.id(.arcs)),
+            PlaylistItem(id: "p6", name: "Late night radio", trackCount: 12, artworkID: MockArtwork.id(.bands)),
+            PlaylistItem(id: "p7", name: "Focus", trackCount: 9, artworkID: MockArtwork.id(.split)),
         ]
     }
 
@@ -99,6 +105,9 @@ enum MockData {
     /// Which songs each playlist holds, by index into `songs`.
     static let playlistSongs: [String: [Int]] = [
         "p1": [0, 4, 2, 7], "p2": [1, 6, 8, 3, 5], "p3": [9, 2, 0], "p4": [3, 5, 1, 7, 9, 4], "p5": [2, 7, 8],
+        "p6": [5, 9, 1], "p7": [8, 3, 6, 0],
+        // A folder holds every song in it, as in Music.
+        "f2": [0, 4, 2, 7, 8], "f1": [3, 5, 1, 7, 9, 4, 6, 8, 0, 2],
     ]
 
     static var playlists: [PlaylistItem] {
@@ -177,11 +186,11 @@ struct MockContent: Equatable, Sendable {
 // MARK: - Fixed scenes for snapshots and previews
 
 enum MockScene: String, CaseIterable, Sendable {
-    case idle, appleMusic, playlist, upNext, spotify, appPicker, firstRun, localNetworkDenied
+    case idle, appleMusic, folder, playlist, upNext, spotify, appPicker, firstRun, localNetworkDenied
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .playlist, .upNext, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .folder, .playlist, .upNext, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -189,7 +198,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .playlist, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .folder, .playlist, .upNext, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -212,7 +221,7 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic, .playlist, .upNext:
+        case .appleMusic, .folder, .playlist, .upNext:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)

@@ -187,7 +187,7 @@ final class RemoteSession {
 @MainActor
 final class RemoteNavigation {
     enum Tab: Hashable { case speakers, music }
-    enum MusicRoute: Hashable { case source(SourceKind), playlist(PlaylistItem) }
+    enum MusicRoute: Hashable { case source(SourceKind), playlist(PlaylistItem), folder(PlaylistItem) }
 
     var tab: Tab = .speakers
     var musicPath: [MusicRoute] = []
