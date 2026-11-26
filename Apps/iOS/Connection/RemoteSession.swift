@@ -202,6 +202,9 @@ final class RemoteNavigation {
     }
     /// The library search text, so a scene can start with a search.
     var librarySearch = ""
+    /// iPhone Only mode (experimental), over whatever else is showing. Not part of `reset()`:
+    /// it does not depend on a hub.
+    var showsPhoneOnly = false
 
     func reset() {
         tab = .speakers

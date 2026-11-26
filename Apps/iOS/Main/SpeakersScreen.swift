@@ -82,7 +82,10 @@ struct SpeakersScreen: View {
                 Label("Refresh Speakers", systemImage: "arrow.clockwise")
             }
             .disabled(session.linkProblem != nil)
-                        Button(role: .destructive) { confirmsForget = true } label: {
+            Button { session.navigation.showsPhoneOnly = true } label: {
+                Label("iPhone Only (Experimental)", systemImage: "iphone")
+            }
+            Button(role: .destructive) { confirmsForget = true } label: {
                 Label("Forget This Mac", systemImage: "xmark.circle")
             }
         } label: {
