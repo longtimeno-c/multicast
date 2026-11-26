@@ -416,9 +416,13 @@ public final class MusicAppPlayer: AppleMusicProviding, @unchecked Sendable {
     private func call(_ handler: String, _ params: NSAppleEventDescriptor...) async throws -> NSAppleEventDescriptor {
         // Descriptors are created here and used only on the queue afterwards.
         let boxed = DescriptorBox(params)
+        let enqueued = MulticastTiming.now
         return try await withCheckedThrowingContinuation { c in
             queue.async {
-                c.resume(with: Result { try self.runSync(handler, boxed.items) }.map(DescriptorBox.one))
+                let started = MulticastTiming.now
+                let result = Result { try self.runSync(handler, boxed.items) }
+                MulticastTiming.log.debug("music.ae \(handler, privacy: .public) wait=\((started &- enqueued) / 1_000_000)ms run=\(MulticastTiming.ms(since: started))ms ok=\((try? result.get()) != nil)")
+                c.resume(with: result.map(DescriptorBox.one))
             }
         }.items[0]
     }

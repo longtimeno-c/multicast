@@ -1,4 +1,5 @@
 import Foundation
+import MulticastAppleMusic
 import MulticastAudio
 import MulticastEngine
 import MulticastHubModel
@@ -99,6 +100,8 @@ public actor LocalHub: HubBackend {
     private var musicPlayer: MusicPlayerProviding?
     private var musicStatus = MusicPlayerStatus()
     private var musicObserver: Task<Void, Never>?
+    /// When the last play-a-track command arrived (timing logs).
+    private var playRequestedAt: UInt64?
 
     // Health and content
     private var permissions = PermissionSet()
@@ -282,6 +285,12 @@ public actor LocalHub: HubBackend {
 
     public func perform(_ command: HubCommand) async throws {
         guard !isShutDown else { throw HubCommandError(.unavailable, "The hub has shut down.") }
+        let started = MulticastTiming.now
+        let name = Self.timingName(command)
+        MulticastTiming.log.debug("hub.perform \(name, privacy: .public) begin")
+        defer { MulticastTiming.log.debug("hub.perform \(name, privacy: .public) end \(MulticastTiming.ms(since: started))ms") }
+        if case .playTrack = command { playRequestedAt = started }
+        if case .playPlaylist = command { playRequestedAt = started }
         switch command {
         case .play: try await play()
         case .pause: await pause()
@@ -304,6 +313,12 @@ public actor LocalHub: HubBackend {
         }
     }
 
+    /// The command's case name, for timing logs (no ids or names).
+    static func timingName(_ command: HubCommand) -> String {
+        let text = String(describing: command)
+        return String(text.prefix { $0 != "(" })
+    }
+
     /// Waits until every queued operation (and any they queued) has run. For tests and live checks.
     public func settle() async {
         while let tail = workTail {
@@ -318,9 +333,12 @@ public actor LocalHub: HubBackend {
 
     private func enqueue(_ op: @escaping @Sendable () async -> Void) {
         let previous = workTail
+        let enqueued = MulticastTiming.now
         workTail = Task {
             await previous?.value
+            let started = MulticastTiming.now
             await op()
+            MulticastTiming.log.debug("hub.queue op wait=\((started &- enqueued) / 1_000_000)ms run=\(MulticastTiming.ms(since: started))ms")
         }
     }
 
@@ -537,6 +555,10 @@ public actor LocalHub: HubBackend {
     }
 
     private func startEngine() async {
+        let started = MulticastTiming.now
+        defer {
+            MulticastTiming.log.debug("hub.engine start took \(MulticastTiming.ms(since: started))ms\(self.playRequestedAt.map { ", \(MulticastTiming.ms(since: $0))ms after play command" } ?? "", privacy: .public)")
+        }
         do {
             try await deps.session.play()
             if activeSource == .files || activeSource == .app {
@@ -968,8 +990,12 @@ public actor LocalHub: HubBackend {
             if !speakers { throw HubCommandError(.unavailable, Self.needsSpeaker) }
         case .songs, .playlist, .upNext, .search:
             let player = try requireMusicPlayer()
+            let t0 = MulticastTiming.now
             if activeSource != .appleMusic { try await selectSource(.appleMusic) }
+            MulticastTiming.log.debug("hub.playTrack selectSource \(MulticastTiming.ms(since: t0))ms")
+            let t1 = MulticastTiming.now
             try await player.play(trackID: id, context: context)
+            MulticastTiming.log.debug("hub.playTrack player.play \(MulticastTiming.ms(since: t1))ms")
             if !hasPlayableSpeaker { throw HubCommandError(.unavailable, Self.needsSpeaker) }
         }
     }
@@ -1132,6 +1158,9 @@ public actor LocalHub: HubBackend {
     // MARK: Apple Music
 
     private func musicChanged(_ s: MusicPlayerStatus) {
+        if s.isPlaying, !musicStatus.isPlaying, let at = playRequestedAt {
+            MulticastTiming.log.debug("hub.music reports playing \(MulticastTiming.ms(since: at))ms after play command")
+        }
         if s.libraryRevision != musicStatus.libraryRevision { content.library &+= 1 }
         if s.upNextRevision != musicStatus.upNextRevision { content.upNext &+= 1 }
         musicStatus = s

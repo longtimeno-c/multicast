@@ -49,6 +49,8 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     /// check runs at a time and a caller waits at most `statusWait` for it; otherwise it gets
     /// the last known status and the running check updates it later.
     public func authorizationStatus() async -> PermissionStatus {
+        let started = MulticastTiming.now
+        defer { MulticastTiming.log.debug("hub.music authorizationStatus \(MulticastTiming.ms(since: started))ms") }
         let check: Task<PermissionStatus, Never> = lock.withLock {
             if let running = statusCheck { return running }
             let provider = provider
@@ -85,7 +87,9 @@ public final class AppleMusicHubPlayer: MusicPlayerProviding, @unchecked Sendabl
     }
 
     public func refreshAuthorization() async -> PermissionStatus {
+        let started = MulticastTiming.now
         let status = await provider.currentAccess()
+        MulticastTiming.log.debug("hub.music refreshAuthorization \(MulticastTiming.ms(since: started))ms")
         lock.withLock { lastStatus = status }
         if status == .granted { startForwarding() }
         return status

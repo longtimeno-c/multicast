@@ -1,6 +1,7 @@
 import Foundation
 import MulticastHubModel
 import Observation
+import os
 import SwiftUI
 
 /// A failed transport or source command, shown as an alert.
@@ -53,8 +54,8 @@ final class HubModel {
 
     @ObservationIgnored private let backend: HubBackend
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
-    @ObservationIgnored private let commands: AsyncStream<HubCommand>.Continuation
-    @ObservationIgnored private let commandStream: AsyncStream<HubCommand>
+    @ObservationIgnored private let commands: AsyncStream<(HubCommand, UInt64)>.Continuation
+    @ObservationIgnored private let commandStream: AsyncStream<(HubCommand, UInt64)>
     @ObservationIgnored private var published = HubState()
     @ObservationIgnored private var content = ContentRevisions()
 
@@ -101,7 +102,7 @@ final class HubModel {
 
     init(backend: HubBackend) {
         self.backend = backend
-        (commandStream, commands) = AsyncStream.makeStream(of: HubCommand.self)
+        (commandStream, commands) = AsyncStream.makeStream(of: (HubCommand, UInt64).self)
     }
 
     /// For snapshots and previews: start from a fixed state without subscribing.
@@ -140,10 +141,13 @@ final class HubModel {
         })
         // One consumer, so commands reach the backend in the order they were made.
         tasks.append(Task { [weak self] in
-            for await command in commandStream {
+            for await (command, sentAt) in commandStream {
+                let started = DispatchTime.now().uptimeNanoseconds
                 do { try await backend.perform(command) } catch {
                     self?.refused(command, error)
                 }
+                let name = String(String(describing: command).prefix { $0 != "(" })
+                Self.timing.debug("model.command \(name, privacy: .public) waited=\((started &- sentAt) / 1_000_000)ms performed=\((DispatchTime.now().uptimeNanoseconds &- started) / 1_000_000)ms")
             }
         })
         for key in [ListKey.songs, .playlists, .upNext, .files, .spotifyHistory] { loadFirstPage(key) }
@@ -523,8 +527,10 @@ final class HubModel {
         change(&speakers[i])
     }
 
+    nonisolated static let timing = Logger(subsystem: "io.github.longtimeno-c.multicast", category: "timing")
+
     private func send(_ command: HubCommand) {
-        commands.yield(command)
+        commands.yield((command, DispatchTime.now().uptimeNanoseconds))
     }
 
     /// Runs `action` at most once per throttle interval, on the trailing edge.
