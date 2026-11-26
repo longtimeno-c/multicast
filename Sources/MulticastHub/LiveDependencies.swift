@@ -278,11 +278,17 @@ public final class WorkspaceAppPresence: AppPresenceMonitoring, @unchecked Senda
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             throw HubCommandError(.unavailable, "Not installed")
         }
+        // Activation is cooperative (macOS 14+): the active app (this one, where the person
+        // clicked) must yield to the other app, or the request is silently ignored.
+        await MainActor.run { NSApp?.yieldActivation(toApplicationWithBundleIdentifier: bundleID) }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
         // Already running and hidden or behind other windows: bring it forward as well.
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.activate()
+        await MainActor.run {
+            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?
+                .activate(from: .current, options: [])
+        }
     }
 
     public func iconPNG(bundleID: String, maxPixel: Int) -> Data? {
