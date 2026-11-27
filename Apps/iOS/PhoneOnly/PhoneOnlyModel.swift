@@ -21,6 +21,8 @@ protocol PhoneOnlyService: AnyObject {
     func save(_ configuration: PhoneBroadcastConfiguration)
     func refresh()
     func stop()
+    /// Asks a speaker once whether it lets this iPhone in, with no audio ("Check Again").
+    func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck
     /// Review scenes only: start or stop the pretend broadcast.
     func toggleMockBroadcast()
 }
@@ -54,6 +56,16 @@ final class PhoneOnlyModel {
     @ObservationIgnored private let service: PhoneOnlyService
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    /// Speakers that turned this iPhone away: their AirPlay access setting admits only their
+    /// owner. Turned off (and saved off) when the refusal arrives, listed apart for the rest of
+    /// this run, and asked again only when the person says so (Check Again) or turns one on.
+    private(set) var restricted: Set<String> = []
+    /// Restricted speakers being asked again right now, each with the token of its check, so a
+    /// check overtaken by a newer one can't answer for it.
+    private var accessChecks: [String: UUID] = [:]
+    /// When the person last turned each speaker on: a status the broadcast wrote before then
+    /// still carries the old refusal and must not turn it straight back off.
+    @ObservationIgnored private var turnedOnAt: [String: Date] = [:]
 
     /// The level a speaker starts at the first time it is turned on: quiet rather than startling.
     static let firstVolume: Float = 0.3
@@ -111,6 +123,15 @@ final class PhoneOnlyModel {
     private func receive(status new: PhoneBroadcastStatus) {
         now = Date()
         guard new != status else { return }
+        // A speaker that admits only its owner: off now, so the broadcast drops it and the next
+        // one doesn't choose it. Retrying won't help, and it isn't a fault to show as one.
+        var fresh = new
+        fresh.speakers.removeAll { speaker in turnedOnAt[speaker.id].map { new.updated <= $0 } ?? false }
+        let refused = configuration.turnOffRefusals(in: fresh)
+        if !refused.isEmpty {
+            withAnimation(MC.Motion.state(reduceMotion)) { restricted.formUnion(refused) }
+            saveNow()
+        }
         if new.phase != status.phase || new.speakers != status.speakers || new.isHearingAudio != status.isHearingAudio {
             withAnimation(MC.Motion.state(reduceMotion)) { status = new }
         } else {
@@ -136,6 +157,9 @@ final class PhoneOnlyModel {
     }
 
     var chosenCount: Int { configuration.chosen.count }
+    /// The speakers this person can play to, then those that admit only their owner.
+    var usableSpeakers: [SpeakerItem] { speakers.filter { !$0.isRestricted } }
+    var restrictedSpeakers: [SpeakerItem] { speakers.filter(\.isRestricted) }
     var playingCount: Int { isRunning ? status.speakers.filter { $0.state == .playing }.count : 0 }
     /// True until the first search has had time to answer.
     var isSearching: Bool { !hasSearched && discovered.isEmpty }
@@ -170,7 +194,9 @@ final class PhoneOnlyModel {
             volume: Double(setting?.volume ?? Self.firstVolume),
             state: state(for: descriptor.id, isOn: isOn),
             syncTrimMs: setting?.offsetMillis ?? 0,
-            notSeenSince: isSeen ? nil : now
+            notSeenSince: isSeen ? nil : now,
+            isRestricted: restricted.contains(descriptor.id),
+            isCheckingAccess: accessChecks[descriptor.id] != nil
         )
     }
 
@@ -180,6 +206,9 @@ final class PhoneOnlyModel {
         guard let live = status.speakers.first(where: { $0.id == id }) else { return .connecting }
         switch live.state {
         case .playing: return .playing
+        // A refusal turns the speaker off as it arrives, so one still on here is a stale report
+        // from before the person turned it on again: it is being tried, not failing.
+        case .failed where live.refusedAccess: return .connecting
         case .failed: return .failed(reason: Self.plain(live.error))
         case .idle, .connecting, .disabled: return .connecting
         }
@@ -188,6 +217,7 @@ final class PhoneOnlyModel {
     /// The engine's reasons are for logs; the row says something a person can act on.
     private static func plain(_ error: String?) -> String {
         guard let error, !error.isEmpty else { return "Not responding" }
+        if SpeakerAccessCheck.isRefusal(error) { return RestrictedSpeakerWording.caption }
         let lower = error.lowercased()
         if lower.contains("password") { return "Needs a password" }
         if lower.contains("timed out") || lower.contains("timeout") || lower.contains("unreachable")
@@ -208,6 +238,9 @@ final class PhoneOnlyModel {
     // MARK: Intents
 
     func setOn(_ on: Bool, for id: SpeakerID) {
+        // Turning one on by hand asks it again: the owner may have let others in.
+        if on, restricted.remove(id.rawValue) != nil { accessChecks[id.rawValue] = nil }
+        if on { turnedOnAt[id.rawValue] = Date() }
         mutate(id) { $0.isOn = on }
         saveNow()
     }
@@ -228,6 +261,30 @@ final class PhoneOnlyModel {
     func commitSyncTrim(for id: SpeakerID) { saveNow() }
 
     func refresh() { service.refresh() }
+
+    /// Asks a restricted speaker once whether it now lets this iPhone in, apart from any
+    /// broadcast, so nothing is heard there. Admitted, it moves back among the speakers, off.
+    func checkAgain(_ id: SpeakerID) {
+        let key = id.rawValue
+        guard restricted.contains(key), accessChecks[key] == nil,
+              let descriptor = discovered.first(where: { $0.id == key })
+                ?? configuration.speakers.first(where: { $0.id == key })?.descriptor else { return }
+        let token = UUID()
+        withAnimation(MC.Motion.state(reduceMotion)) { accessChecks[key] = token }
+        let service = service
+        Task { [weak self] in
+            let result = await service.checkAccess(descriptor)
+            self?.accessChecked(key, token: token, result)
+        }
+    }
+
+    private func accessChecked(_ id: String, token: UUID, _ result: SpeakerAccessCheck) {
+        guard accessChecks[id] == token else { return }
+        withAnimation(MC.Motion.state(reduceMotion)) {
+            accessChecks[id] = nil
+            if result == .admitted { restricted.remove(id) }
+        }
+    }
 
     func toggleMockBroadcast() { service.toggleMockBroadcast() }
 
@@ -314,6 +371,9 @@ final class LivePhoneOnlyService: PhoneOnlyService {
     func save(_ configuration: PhoneBroadcastConfiguration) { store.save(configuration) }
     func refresh() { directory.refresh() }
     func stop() { directory.stop() }
+    func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck {
+        await SpeakerAccessCheck.check(speaker)
+    }
     func toggleMockBroadcast() {}
 }
 
@@ -323,7 +383,7 @@ final class LivePhoneOnlyService: PhoneOnlyService {
 /// nor the App Group.
 @MainActor
 final class MockPhoneOnlyService: PhoneOnlyService {
-    enum Start { case searching, noSpeakers, idle, capturing, silent, unreachable, ended }
+    enum Start { case searching, noSpeakers, idle, capturing, silent, unreachable, ended, restricted }
 
     let usesSystemPicker = false
     let canBroadcast = true
@@ -339,6 +399,9 @@ final class MockPhoneOnlyService: PhoneOnlyService {
     static let livingRoom = descriptor("a1b2c3000002", "Living Room", model: "Denon AVR-X2800H", transport: .airplay2)
     static let bedroom = descriptor("a1b2c3000003", "Bedroom", model: "AirPort Express", transport: .airplay1)
     static let study = descriptor("a1b2c3000004", "Study", model: "HomePod mini", transport: .airplay2)
+    /// Someone else's: its AirPlay access setting admits only its owner.
+    static let neighbours = descriptor("a1b2c3000005", "Neighbour\u{2019}s HomePod", model: "HomePod", transport: .airplay2)
+    static let refusal = "the receiver refused access (403 Forbidden to OPTIONS): its AirPlay access setting does not admit this sender"
 
     private static func descriptor(_ id: String, _ name: String, model: String, transport: SpeakerDescriptor.Transport) -> SpeakerDescriptor {
         SpeakerDescriptor(id: id, name: name, transport: transport, host: "\(name.lowercased().replacingOccurrences(of: " ", with: "-")).local",
@@ -347,19 +410,28 @@ final class MockPhoneOnlyService: PhoneOnlyService {
 
     init(start: Start) {
         self.start = start
-        found = start == .searching || start == .noSpeakers ? [] : [Self.kitchen, Self.livingRoom, Self.bedroom, Self.study]
+        found = start == .searching || start == .noSpeakers ? []
+            : [Self.kitchen, Self.livingRoom, Self.bedroom, Self.study] + (start == .restricted ? [Self.neighbours] : [])
         let on = start != .searching && start != .noSpeakers
         configuration = PhoneBroadcastConfiguration(speakers: on ? [
             .init(descriptor: Self.kitchen, isOn: true, volume: 0.35),
             .init(descriptor: Self.livingRoom, isOn: true, volume: 0.5, offsetMillis: -40),
             .init(descriptor: Self.bedroom, isOn: start == .capturing, volume: 0.25),
-        ] : [])
+        ] + (start == .restricted ? [.init(descriptor: Self.neighbours, isOn: true, volume: 0.3)] : []) : [])
         switch start {
         case .capturing: status = Self.running(configuration, hearing: true)
         case .silent: status = Self.running(configuration, hearing: false)
         case .unreachable:
             var s = Self.running(configuration, hearing: true)
             s.speakers = s.speakers.map { .init(id: $0.id, name: $0.name, state: .failed, error: "connection timed out") }
+            status = s
+        case .restricted:
+            // Playing on two; the neighbour's HomePod turned the broadcast away.
+            var s = Self.running(configuration, hearing: true)
+            s.speakers = s.speakers.map {
+                $0.id == Self.neighbours.id ? .init(id: $0.id, name: $0.name, state: .failed, error: Self.refusal)
+                    : .init(id: $0.id, name: $0.name, state: .playing)
+            }
             status = s
         case .ended:
             status = PhoneBroadcastStatus(phase: .ended, endedReason: PhoneBroadcastError.noSpeakerReachable.errorDescription)
@@ -411,6 +483,12 @@ final class MockPhoneOnlyService: PhoneOnlyService {
 
     func refresh() {}
     func stop() { meter?.cancel() }
+
+    /// The neighbour's HomePod still admits only its owner; anything else lets this iPhone in.
+    func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck {
+        try? await Task.sleep(for: .seconds(1.2))
+        return speaker.id == Self.neighbours.id ? .refused : .admitted
+    }
 
     func toggleMockBroadcast() {
         meter?.cancel()

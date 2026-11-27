@@ -189,12 +189,16 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
 
     /// Holds `checkAccess` answers while closed.
     let accessGate = Gate()
+    /// Scripted checks, taken one per call in the order the calls begin: the answer that call
+    /// gives and the gate it waits on. Empty: `access` after `accessGate`.
+    let scriptedAccess = Locked<[(answer: SpeakerAccessCheck, gate: Gate)]>([])
 
     func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck {
-        await accessGate.wait()
+        let scripted = scriptedAccess.update { $0.isEmpty ? nil : $0.removeFirst() }
+        await (scripted?.gate ?? accessGate).wait()
         return inner.update { i in
             i.calls.append("checkAccess \(speaker.id)")
-            return i.access[speaker.id] ?? .admitted
+            return scripted?.answer ?? i.access[speaker.id] ?? .admitted
         }
     }
 

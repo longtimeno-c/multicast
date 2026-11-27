@@ -86,6 +86,38 @@ private func wait(_ seconds: TimeInterval = 5, until condition: () -> Bool) asyn
         listener.cancel()
     }
 
+    /// A speaker whose AirPlay access setting admits only its owner: the iPhone turns it off
+    /// (so the broadcast drops it and the next one doesn't pick it), and nothing else.
+    @Test func refusingSpeakersAreTurnedOffAndNothingElse() {
+        let refusal = "the receiver refused access (403 Forbidden to OPTIONS): its AirPlay access setting does not admit this sender"
+        let pod = speaker("cccc00000001", "Neighbour\u{2019}s HomePod")
+        let hall = speaker("aaaa00000001", "Hall Sonos")
+        let patio = speaker("aaaa00000002", "Patio")
+        let porch = speaker("aaaa00000003", "Porch")
+        var configuration = PhoneBroadcastConfiguration(speakers: [
+            .init(descriptor: pod, isOn: true, volume: 0.4),
+            .init(descriptor: hall, isOn: true, volume: 0.5),
+            .init(descriptor: patio, isOn: true, volume: 0.5),
+            .init(descriptor: porch, isOn: false, volume: 0.5),
+        ])
+        let status = PhoneBroadcastStatus(phase: .capturing, speakers: [
+            .init(id: pod.id, name: pod.name, state: .failed, error: refusal),
+            .init(id: hall.id, name: hall.name, state: .playing),
+            // Unreachable and password failures are not refusals.
+            .init(id: patio.id, name: patio.name, state: .failed, error: "cannot connect to 192.0.2.9:7000: Connection refused"),
+            .init(id: porch.id, name: porch.name, state: .failed, error: "the speaker requires a password (401) and none was given"),
+        ])
+        #expect(status.speakers[0].refusedAccess)
+        #expect(!status.speakers[2].refusedAccess && !status.speakers[3].refusedAccess)
+        #expect(configuration.turnOffRefusals(in: status) == [pod.id])
+        #expect(configuration.chosen.map(\.id) == [hall.id, patio.id])
+        // Its volume is kept for if the owner lets it in later.
+        #expect(configuration.speakers[0].volume == 0.4)
+        // Already off: nothing more to do.
+        #expect(configuration.turnOffRefusals(in: status).isEmpty)
+        #expect(SpeakerAccessCheck.isRefusal(refusal) && !SpeakerAccessCheck.isRefusal(nil))
+    }
+
     @Test func staleStatusIsNotRunning() {
         var status = PhoneBroadcastStatus(phase: .capturing, updated: Date())
         #expect(status.isRunning())

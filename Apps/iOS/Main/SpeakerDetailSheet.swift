@@ -10,6 +10,7 @@ struct SpeakerDetailSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var speakerID: SpeakerID
     @State private var toggles = 0
+    @State private var restrictedHeight: CGFloat = 0
 
     var body: some View {
         NavigationStack {
@@ -22,7 +23,8 @@ struct SpeakerDetailSheet: View {
                 }
             }
             .background(MC.Surface.canvas)
-            .navigationTitle(model.speaker(speakerID)?.name ?? "")
+            // A restricted speaker's name is the content's title, as on the Mac.
+            .navigationTitle(model.speaker(speakerID).map { $0.isRestricted ? "" : $0.name } ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -30,7 +32,7 @@ struct SpeakerDetailSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(detents)
         .presentationDragIndicator(.visible)
         .presentationBackground(MC.Surface.canvas)
         .sensoryFeedback(.selection, trigger: toggles)
@@ -74,40 +76,27 @@ struct SpeakerDetailSheet: View {
     }
 
     /// A speaker that admits only its owner: what that means and Check Again, nothing to adjust.
+    /// The same shape as the Mac's popover: the speaker's name as the title, the lock and the
+    /// caption under it, then the explanation and the one action. The sheet is as tall as that.
     private func restricted(_ speaker: SpeakerItem) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: MC.Space.xl) {
-                GroupedSection {
-                    HStack(spacing: MC.Space.m) {
-                        Image(systemName: speaker.glyph.symbolName)
-                            .font(.system(size: 20, weight: speaker.glyph.weight))
-                            .foregroundStyle(MC.Ink.tertiary)
-                            .frame(width: 28)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: MC.Space.xxs) {
-                            Text(RestrictedSpeakerWording.groupTitle)
-                                .font(MC.Font.body)
-                                .foregroundStyle(MC.Ink.primary)
-                            Label(RestrictedSpeakerWording.caption, systemImage: "lock.fill")
-                                .font(MC.Font.caption)
-                                .foregroundStyle(MC.Ink.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.horizontal, MC.Space.m)
-                    .padding(.vertical, MC.Space.m)
-                    .accessibilityElement(children: .combine)
-                }
-                RestrictedSpeakerExplanation(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) })
-                    .buttonStyle(.bordered)
-                    .padding(.horizontal, MC.Space.m)
-            }
-            .padding(.horizontal, MC.Space.l)
-            .padding(.top, MC.Space.s)
-            .padding(.bottom, MC.Space.xxl)
-            .animation(MC.Motion.state(reduceMotion), value: speaker.state)
+            RestrictedSpeakerDetail(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) })
+                .padding(.horizontal, MC.Space.l)
+                .padding(.top, MC.Space.s)
+                .padding(.bottom, MC.Space.l)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { restrictedHeight = $0 }
         }
+        .scrollBounceBehavior(.basedOnSize)
     }
+
+    /// The restricted detail fits its words; anything else opens at half height.
+    private var detents: Set<PresentationDetent> {
+        guard model.speaker(speakerID)?.isRestricted == true, restrictedHeight > 0 else { return [.medium, .large] }
+        return [.height(restrictedHeight + Self.navigationBarAllowance), .large]
+    }
+
+    /// The sheet's inline navigation bar (Done) over the content.
+    private static let navigationBarAllowance: CGFloat = 64
 
     // MARK: Rows
 

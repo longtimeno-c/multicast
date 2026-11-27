@@ -335,7 +335,7 @@ then 20, 40 … up to every 5 minutes, and at once when you switch back to Multi
   3 minutes it is removed (a speaker that is on stays listed regardless).
 - While playing, a network speaker that fails is retried by itself after 2, 5, 10, 20 and then every 30 s, and at
   once when it reappears on the network or on Refresh. A wrong password, or picking the same receiver twice, is
-  not retried. "Try again" retries at once. A speaker whose AirPlay access setting admits only its owner isn't a
+  not retried. "Try Again" retries at once. A speaker whose AirPlay access setting admits only its owner isn't a
   failure: see Apple TV, HomePod and Macs under [Status and limitations](#status-and-limitations).
 
 ## Command line
@@ -418,7 +418,8 @@ Multicast is a work in progress. There are development builds only: no signed, n
   Multicast answers `403 Forbidden` to the very first request, and to the guest ("transient") pairing an iPhone
   outside the Home would use. Multicast then turns that speaker off (and doesn't remember it as on), and for the
   rest of the run lists it apart under "Not available to you" with a lock, "Only its owner can play to it" and
-  **Check Again**, on the Mac, the menu bar and the iPhone. It is never tried on its own, isn't counted as failing,
+  **Check Again**, on the Mac, the menu bar and the iPhone, as a remote and in iPhone Only (where the
+  iPhone turns it off in its own saved choice, so the broadcast drops it). It is never tried on its own, isn't counted as failing,
   and isn't turned on at the next launch. Check Again asks it once (a single `OPTIONS`, apart from the group, so
   nothing is heard there); if it now lets Multicast in, it goes back among the other speakers, off. Whether such a receiver plays once its access setting admits everyone has not been
   tried: it would also need the AirPlay 2 handshake (SRP pairing, encrypted RTSP, AirPlay 2 stream setup), which

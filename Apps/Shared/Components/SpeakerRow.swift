@@ -59,7 +59,7 @@ struct SpeakerRow<Accessory: View>: View {
                 }
             }
             .accessibilityActions {
-                if case .failed = speaker.state { Button("Try again", action: onRetry) }
+                if case .failed = speaker.state { Button("Try Again", action: onRetry) }
                 if let onDetails { Button("Details", action: onDetails) }
             }
     }
@@ -236,7 +236,7 @@ struct SpeakerRow<Accessory: View>: View {
                         Text(reason)
                             .foregroundStyle(MC.Status.failed)
                             .lineLimit(1)
-                        Button("Try again", action: onRetry)
+                        Button("Try Again", action: onRetry)
                             .mcLinkButtonStyle()
                     }
                     .font(MC.Font.caption)

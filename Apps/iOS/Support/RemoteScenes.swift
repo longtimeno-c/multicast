@@ -78,6 +78,8 @@ enum RemoteScene: String, CaseIterable {
     case phoneOnlySearching = "phone-only-searching"
     /// iPhone Only: no speakers on the network.
     case phoneOnlyEmpty = "phone-only-empty"
+    /// iPhone Only: playing, and a speaker that admits only its owner set apart.
+    case phoneOnlyRestricted = "phone-only-restricted"
 
     static var current: RemoteScene {
         UserDefaults.standard.string(forKey: "MCScene").flatMap(RemoteScene.init(rawValue:)) ?? .live
@@ -96,7 +98,7 @@ enum RemoteScene: String, CaseIterable {
         switch self {
         case .live, .mock, .pair, .pairing, .pairingError, .searching, .hubNotFound: nil
         case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
-             .phoneOnlySearching, .phoneOnlyEmpty: nil
+             .phoneOnlySearching, .phoneOnlyEmpty, .phoneOnlyRestricted: nil
         case .phoneSpeaker, .phoneSpeakerOff, .phoneSpeakerDetail: .appleMusic
         case .lost, .speakers, .speakerRestricted, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
         case .speakerDetail, .spotify: .spotify
@@ -135,7 +137,7 @@ enum RemoteScene: String, CaseIterable {
             options.discovers = false
             timeout = .seconds(600)
         case .hubNotFound, .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
-             .phoneOnlySearching, .phoneOnlyEmpty:
+             .phoneOnlySearching, .phoneOnlyEmpty, .phoneOnlyRestricted:
             options.discovers = false
             timeout = .zero
         case .lost:
@@ -184,7 +186,7 @@ enum RemoteScene: String, CaseIterable {
             nav.tab = .music
             nav.musicPath = [.source(.files)]
         case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
-             .phoneOnlySearching, .phoneOnlyEmpty:
+             .phoneOnlySearching, .phoneOnlyEmpty, .phoneOnlyRestricted:
             nav.showsPhoneOnly = true
         default:
             break
@@ -211,6 +213,7 @@ enum RemoteScene: String, CaseIterable {
         case .phoneOnlyStopped: MockPhoneOnlyService(start: .ended)
         case .phoneOnlySearching: MockPhoneOnlyService(start: .searching)
         case .phoneOnlyEmpty: MockPhoneOnlyService(start: .noSpeakers)
+        case .phoneOnlyRestricted: MockPhoneOnlyService(start: .restricted)
         default: MockPhoneOnlyService(start: .idle)
         }
     }

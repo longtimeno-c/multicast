@@ -75,7 +75,8 @@ struct MenuBarPanel: View {
             }
 
             if !model.restrictedSpeakers.isEmpty, !(model.needsLocalNetwork || runtime?.localNetworkBlocked == true) {
-                GroupedSection(title: RestrictedSpeakerWording.groupTitle) {
+                GroupedSection(title: RestrictedSpeakerWording.groupTitle,
+                               trailing: RestrictedSpeakerWording.groupCaption(count: model.restrictedSpeakers.count)) {
                     ForEach(Array(model.restrictedSpeakers.enumerated()), id: \.element.id) { index, speaker in
                         VStack(spacing: 0) {
                             if index > 0 { RowDivider(leading: MC.RowGrid.dense.textLeading) }

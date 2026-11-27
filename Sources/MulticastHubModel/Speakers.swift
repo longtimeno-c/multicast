@@ -111,19 +111,25 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     public var notSeenSince: Date?
     /// The speaker turned this hub away: its AirPlay access setting admits only its owner (or
     /// only people in its Home). Not a failure: the hub keeps it off, never turns it on by
-    /// itself, and asks it again only on `retrySpeaker` (shown as "Check Again"), with `state`
-    /// `.connecting` while it asks. Cleared once the speaker lets the hub in.
+    /// itself, and asks it again only on `retrySpeaker` (shown as "Check Again"), with
+    /// `isCheckingAccess` set while it asks. Cleared once the speaker lets the hub in.
     ///
     /// Wire: the key `isRestricted` is present only when true, so builds that predate it read
     /// and write every other speaker unchanged, and read its absence as false.
     public var isRestricted: Bool
+    /// A restricted speaker is being asked again ("Check Again") right now. Its `state` stays
+    /// `.off` meanwhile, so a build that predates this key never shows or counts it as a speaker
+    /// that is connecting.
+    ///
+    /// Wire: the key `isCheckingAccess` is present only when true; absent reads as false.
+    public var isCheckingAccess: Bool
 
     public static let syncTrimRange: ClosedRange<Int> = -500...500
 
     public init(id: SpeakerID, name: String, transport: SpeakerTransport, glyph: SpeakerGlyph,
                 model: String? = nil, address: String? = nil, isEnabled: Bool = false,
                 volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0, notSeenSince: Date? = nil,
-                isRestricted: Bool = false) {
+                isRestricted: Bool = false, isCheckingAccess: Bool = false) {
         self.id = id
         self.name = name
         self.transport = transport
@@ -136,10 +142,11 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         self.syncTrimMs = syncTrimMs
         self.notSeenSince = notSeenSince
         self.isRestricted = isRestricted
+        self.isCheckingAccess = isCheckingAccess
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, transport, glyph, model, address, isEnabled, volume, state, syncTrimMs, notSeenSince, isRestricted
+        case id, name, transport, glyph, model, address, isEnabled, volume, state, syncTrimMs, notSeenSince, isRestricted, isCheckingAccess
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,6 +163,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         syncTrimMs = try c.decode(Int.self, forKey: .syncTrimMs)
         notSeenSince = try c.decodeIfPresent(Date.self, forKey: .notSeenSince)
         isRestricted = try c.decodeIfPresent(Bool.self, forKey: .isRestricted) ?? false
+        isCheckingAccess = try c.decodeIfPresent(Bool.self, forKey: .isCheckingAccess) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -172,6 +180,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         try c.encode(syncTrimMs, forKey: .syncTrimMs)
         try c.encodeIfPresent(notSeenSince, forKey: .notSeenSince)
         if isRestricted { try c.encode(true, forKey: .isRestricted) }
+        if isCheckingAccess { try c.encode(true, forKey: .isCheckingAccess) }
     }
 
     /// What the speaker actually plays at: its own level scaled by the master.

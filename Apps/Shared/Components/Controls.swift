@@ -142,7 +142,7 @@ struct SpeakerStatusLine: View {
                 .id(text)
                 .transition(reduceMotion ? .opacity : .push(from: .bottom))
             if isFailed, let onRetry {
-                Button("Try again", action: onRetry)
+                Button("Try Again", action: onRetry)
                     .mcLinkButtonStyle()
                     .padding(.leading, MC.Space.xs)
                     .transition(.opacity.combined(with: .move(edge: .leading)))
