@@ -50,7 +50,7 @@ let package = Package(
         // The pure parts of the output device driver (Drivers/MulticastDevice), for the tests.
         .target(name: "MulticastDeviceCore", path: "Drivers/MulticastDevice/Core"),
         .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic"]),
-        .target(name: "MulticastRemote", dependencies: ["MulticastHubModel"]),
+        .target(name: "MulticastRemote", dependencies: ["MulticastHubModel", "MulticastAudio"]),
         .target(name: "MulticastAppleMusic", dependencies: ["MulticastHubModel", "MulticastSources", "MulticastAudio"]),
         .executableTarget(name: "multicast-cli", dependencies: ["MulticastKit"]),
         .executableTarget(name: "multicast-hub", dependencies: ["MulticastHub", "MulticastRemote", "MulticastAppleMusic", "MulticastHubModel"]),
