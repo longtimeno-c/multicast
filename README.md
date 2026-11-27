@@ -9,7 +9,7 @@ outputs. It is what iTunes for Windows used to do with several AirPlay speakers,
 Multicast Remote, plays the part of the old iTunes Remote.
 
 <p align="center">
-  <img src="docs/images/mac-library-speakers.png" width="800" alt="The Mac window: the Apple Music library of pinned playlists and playlists on the left, the speakers with per-speaker volumes on the right, and the player in the title bar">
+  <img src="docs/images/mac-library-speakers.png" width="800" alt="The Mac window: the Apple Music library of pinned playlists and playlists on the left, the speakers with per-speaker volumes on the right, including a paired iPhone playing as a speaker, and the player in the title bar">
 </p>
 
 ## What it does
@@ -38,10 +38,17 @@ Up Next slides in beside the library. It is the hub's queue, so the Mac and ever
   <img src="docs/images/mac-up-next.png" width="800" alt="The Mac window with Up Next open between the library and the speakers">
 </p>
 
+Search covers your library and the Apple Music catalog. Speakers that only their owner can play to are listed
+apart, under "Not available to you".
+
+<p align="center">
+  <img src="docs/images/mac-search.png" width="800" alt="The Mac window with search results: songs from the library, then an Apple Music section of catalog songs; the speakers list ends with a group of speakers that are not available to you">
+</p>
+
 The iPhone remote: speakers, now playing, the library and Up Next.
 
 <p align="center">
-  <img src="docs/images/iphone-speakers.png" width="200" alt="iPhone: the speakers list with per-speaker volumes and the master volume">
+  <img src="docs/images/iphone-speakers.png" width="200" alt="iPhone: the speakers list, starting with This iPhone playing through a Bluetooth speaker, with per-speaker volumes and the master volume">
   <img src="docs/images/iphone-now-playing.png" width="200" alt="iPhone: now playing, with transport, volume, Shuffle and the speakers button">
   <img src="docs/images/iphone-playlists.png" width="200" alt="iPhone: the library with pinned playlists and playlists">
   <img src="docs/images/iphone-up-next.png" width="200" alt="iPhone: the Up Next queue with Shuffle and Edit">
