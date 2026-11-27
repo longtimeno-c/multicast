@@ -25,7 +25,8 @@ public struct ReconnectSchedule: Sendable, Equatable {
     /// Whether a failure message is worth retrying on a timer.
     public static func isTransient(_ message: String?) -> Bool {
         let s = (message ?? "").lowercased()
-        let permanent = ["password", "authentication", "same physical device", "not a local output", "no output channels"]
+        let permanent = ["password", "authentication", "same physical device", "not a local output", "no output channels",
+                         "refused access"]
         return !permanent.contains(where: { s.contains($0) })
     }
 

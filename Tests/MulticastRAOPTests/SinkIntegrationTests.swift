@@ -186,6 +186,20 @@ import MulticastAudio
         await right.stop()
     }
 
+    @Test func receiverRefusingAccessFailsWithAccessRefused() async throws {
+        let fake = try FakeReceiver()
+        defer { fake.shutdown() }
+        fake.refuseAccess = true
+        let sink = makeSink(fake)
+        let timeline = StreamTimeline(anchorHostNanos: HostClock.nowNanos() + 2_000_000_000, anchorFrame: 0)
+        await #expect(throws: RAOPError.accessRefused(method: "OPTIONS")) {
+            try await sink.prepare(timeline: timeline)
+        }
+        guard case .failed(let reason) = sink.currentState else { Issue.record("expected failed"); return }
+        #expect(reason.contains("refused access"))
+        #expect(fake.requests.map(\.method) == ["OPTIONS"])
+    }
+
     @Test func failureThenPrepareAgain() async throws {
         let fake = try FakeReceiver()
         defer { fake.shutdown() }
