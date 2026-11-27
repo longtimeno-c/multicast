@@ -116,7 +116,12 @@ final class HubRuntime {
                 await backend.addExternalSpeaker(descriptor, sink: sink, volumeOnDevice: onDevice)
             },
             remove: { [backend] id in await backend.removeExternalSpeaker(id: id) })
-        let server = HubServer(backend: backend, configuration: config, keyStore: keys, speakerHost: phones)
+        // A paired iPhone held next to a speaker is the microphone its sync is tuned with.
+        let microphones = RemoteMicrophoneHost { [backend] speakerID, microphone, microphoneID, name in
+            try await backend.tuneSpeaker(id: speakerID, microphone: microphone, microphoneID: microphoneID, name: name)
+        }
+        let server = HubServer(backend: backend, configuration: config, keyStore: keys, speakerHost: phones,
+                               microphoneHost: microphones)
         self.server = server
         tasks.append(Task { [weak self] in
             await keys.load()

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MulticastCalibration
 import MulticastHubModel
 import Network
 
@@ -126,6 +127,8 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
     let speakerBroadcast = Broadcast<PhoneSpeakerPhase>(replaysLatest: true)
     let speakerMutex = AsyncMutex()
     var currentSession: RemoteSession? { inner.value.session }
+    /// This device's microphone, lent to the Mac while it tunes a speaker.
+    let calibrationMicrophone = Locked<(any CalibrationMicrophone)?>(nil)
 
     public init(configuration: Configuration, keyStore: any PairingKeyStore) {
         self.configuration = configuration
@@ -379,6 +382,9 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
                 levels: { [weak self] in self?.levelsBroadcast.yield($0) },
                 clockSample: { [weak self] sent, received, hubTime in
                     self?.inner.withLock { $0.mirror.clock.add(sent: sent, received: received, hubTime: hubTime) }
+                },
+                microphone: { [weak self] request, received in
+                    await MicrophoneResponder(microphone: self?.calibrationMicrophone.value).answer(request, received: received)
                 }),
             requestTimeout: configuration.requestTimeout, heartbeatInterval: configuration.heartbeatInterval,
             deadAfter: configuration.deadAfter)
@@ -539,7 +545,43 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
     public func perform(_ command: HubCommand) async throws {
         if case .addFiles = command { throw HubCommandError(.unsupported, "Add files on the Mac.") }
         if case .playTrack(_, .catalog) = command { try requireCatalogSearch() }
+        switch command {
+        case .calibrateSync, .calibrateSpeakerSync, .cancelSyncCalibration:
+            // An older hub can't decode these and would drop the link.
+            if case .connected(let hub) = connectionState, hub.protocolVersion < RemoteProtocol.calibrationVersion {
+                throw HubCommandError(.unsupported, "Update Multicast on the Mac to tune speakers.")
+            }
+        default: break
+        }
         try await liveSession().submit(command)
+    }
+
+    // MARK: This device as the microphone of a sync calibration
+
+    /// The microphone the Mac may listen with while this device tunes a speaker (times in this
+    /// device's `HostClock`). Without one, tuning from this device is refused by its answers.
+    public func setCalibrationMicrophone(_ microphone: (any CalibrationMicrophone)?) {
+        calibrationMicrophone.withLock { $0 = microphone }
+    }
+
+    /// Whether the Mac this device is connected to can tune speakers with it.
+    public var canTuneSpeakers: Bool {
+        guard let session = currentSession, !session.hasEnded else { return false }
+        return session.info.version >= RemoteProtocol.calibrationVersion
+    }
+
+    /// Asks the Mac to tune `speakerID`'s sync, listening with this device's microphone.
+    /// Returns once the tuning has begun; its progress and result are in `HubState.calibration`.
+    public func tuneSpeaker(_ speakerID: SpeakerID) async throws {
+        let session = try liveSession()
+        guard session.info.version >= RemoteProtocol.calibrationVersion else {
+            throw HubCommandError(.unsupported, "Update Multicast on the Mac to tune speakers from this \(configuration.deviceKind).")
+        }
+        switch try await session.request({ .tuneSpeaker(id: $0, speakerID: speakerID) }) {
+        case .command(nil): return
+        case .command(let error?): throw error
+        default: throw HubCommandError(.failed, "Unexpected answer from the Mac.")
+        }
     }
 
     private func query(_ query: HubQuery) async throws -> HubQueryResult {

@@ -63,7 +63,7 @@ private struct CalibrationProblem: Error {
 
 extension LocalHub {
     static let microphoneRefused = "Multicast isn\u{2019}t allowed to use the microphone. Allow it in Privacy & Security, then try again."
-    static let hubMicrophoneID = "hub"
+    static let phoneMicrophoneRefused = "Multicast Remote isn\u{2019}t allowed to use the iPhone\u{2019}s microphone. Allow it in Settings on the iPhone, then try again."
 
     // MARK: Commands
 
@@ -146,7 +146,9 @@ extension LocalHub {
             let answer = Locked<MicrophoneAccess?>(nil)
             Task { answer.set(await microphone.access(ask: true)) }
             while answer.get() == nil { try await Task.sleep(nanoseconds: 50_000_000) }
-            guard answer.get() == .granted else { throw CalibrationProblem(message: Self.microphoneRefused) }
+            guard answer.get() == .granted else {
+                throw CalibrationProblem(message: calibrationStatus?.microphone == .hub ? Self.microphoneRefused : Self.phoneMicrophoneRefused)
+            }
 
             calibrationRun?.resumeAfter = wantsPlay
             calibrationRun?.ownsEngine = true

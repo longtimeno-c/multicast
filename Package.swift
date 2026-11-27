@@ -53,7 +53,7 @@ let package = Package(
         // The pure parts of the output device driver (Drivers/MulticastDevice), for the tests.
         .target(name: "MulticastDeviceCore", path: "Drivers/MulticastDevice/Core"),
         .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic", "MulticastCalibration"]),
-        .target(name: "MulticastRemote", dependencies: ["MulticastHubModel", "MulticastAudio"]),
+        .target(name: "MulticastRemote", dependencies: ["MulticastHubModel", "MulticastAudio", "MulticastCalibration"]),
         .target(name: "MulticastAppleMusic", dependencies: ["MulticastHubModel", "MulticastSources", "MulticastAudio"]),
         .executableTarget(name: "multicast-cli", dependencies: ["MulticastKit"]),
         .executableTarget(name: "multicast-hub", dependencies: ["MulticastHub", "MulticastRemote", "MulticastAppleMusic", "MulticastHubModel"]),
@@ -69,7 +69,7 @@ let package = Package(
         .testTarget(name: "MulticastAudioTests", dependencies: ["MulticastAudio"]),
         .testTarget(name: "MulticastHubModelTests", dependencies: ["MulticastHubModel"]),
         .testTarget(name: "MulticastHubTests", dependencies: ["MulticastHub", "MulticastAppleMusic", "MulticastCalibration"]),
-        .testTarget(name: "MulticastRemoteTests", dependencies: ["MulticastRemote"]),
+        .testTarget(name: "MulticastRemoteTests", dependencies: ["MulticastRemote", "MulticastCalibration"]),
         .testTarget(name: "MulticastDeviceCoreTests", dependencies: ["MulticastDeviceCore"]),
         .testTarget(name: "MulticastAppleMusicTests", dependencies: ["MulticastAppleMusic"]),
     ],

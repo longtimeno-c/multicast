@@ -1,4 +1,5 @@
 import Foundation
+import MulticastCalibration
 import MulticastHubModel
 
 // MARK: - Protocol constants
@@ -44,7 +45,15 @@ public enum RemoteProtocol {
     /// No message changed, so version 4 is still spoken both ways: a version 4 phone gets its
     /// whole volume in that field as before, and a phone on a version 4 hub leaves its system
     /// volume alone.
-    public static let currentVersion = 5
+    ///
+    /// 6: a paired iPhone as the microphone of a sync calibration (`ClientMessage.tuneSpeaker`,
+    /// `HubMessage.microphoneRequest` answered with `ClientMessage.microphoneAnswer`), and
+    /// `HubCommand.calibrateSpeakerSync` / `calibrateSync` / `cancelSyncCalibration`. States
+    /// only gained optional keys, so version 5 is still spoken both ways: the new messages and
+    /// commands are never sent on such a link.
+    public static let currentVersion = 6
+    /// The first version in which a remote can tune speakers and lend its microphone.
+    public static let calibrationVersion = 6
     /// The first version in which a phone speaker's volume is the phone's system volume.
     public static let phoneSystemVolumeVersion = 5
     /// The first version in which a remote can offer itself as a speaker.
@@ -234,6 +243,36 @@ enum ClientMessage: Codable, Sendable, Equatable {
     /// The phone's output changed (a Bluetooth speaker connected or left).
     case speakerRoute(route: PhoneRoute)
     case speakerWithdraw
+    // Version 6 and later only:
+    /// "Tune this speaker, listening with my microphone": answered with a `commandResult` once
+    /// the tuning has begun (or was refused). Its progress is `HubState.calibration`.
+    case tuneSpeaker(id: UInt64, speakerID: SpeakerID)
+    /// The answer to `HubMessage.microphoneRequest` `id`.
+    case microphoneAnswer(id: UInt64, answer: MicrophoneAnswer)
+}
+
+/// What the hub asks of a phone that is the microphone of a calibration. Times are on the
+/// PHONE's monotonic clock (`HostClock` there): the hub converts, using `.clock` exchanges.
+enum MicrophoneRequest: Codable, Sendable, Equatable {
+    case access(ask: Bool)
+    case start
+    case stop
+    /// "What time is it on your clock?" One NTP-style exchange.
+    case clock
+    /// Look for `signal` in what you heard for `seconds` from `fromNanos`.
+    case listen(signal: CalibrationSignal, fromNanos: UInt64, seconds: Double)
+}
+
+enum MicrophoneAnswer: Codable, Sendable, Equatable {
+    case access(MicrophoneAccess)
+    /// `error` nil: listening.
+    case started(error: String?)
+    case stopped
+    /// The phone's clock when the request arrived and when this answer left.
+    case clock(receivedNanos: UInt64, sentNanos: UInt64)
+    /// nil: that stretch isn't on record. Never audio: only when the sweep arrived, how
+    /// clearly, and a small picture of the search.
+    case heard(HeardSweep?)
 }
 
 enum HubMessage: Codable, Sendable, Equatable {
@@ -253,6 +292,9 @@ enum HubMessage: Codable, Sendable, Equatable {
     /// the hub's address, keyed with `salt` (see Audio/AudioWire.swift); `speakerID` is the
     /// phone's own row in `HubState.speakers`.
     case speakerAccepted(id: UInt64, port: UInt16, salt: Data, speakerID: String)
+    /// Version 6 and later only, and only to a remote that asked to tune a speaker: answered
+    /// with `ClientMessage.microphoneAnswer` carrying the same `id`.
+    case microphoneRequest(id: UInt64, request: MicrophoneRequest)
 }
 
 extension HubState {

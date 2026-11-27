@@ -69,7 +69,10 @@ config.advertises = true
 let phones = RemoteSpeakerHost(
     add: { descriptor, sink, onDevice in await hub.addExternalSpeaker(descriptor, sink: sink, volumeOnDevice: onDevice) },
     remove: { id in await hub.removeExternalSpeaker(id: id) })
-let server = HubServer(backend: hub, configuration: config, keyStore: store, speakerHost: phones)
+let microphones = RemoteMicrophoneHost { speakerID, microphone, microphoneID, name in
+    try await hub.tuneSpeaker(id: speakerID, microphone: microphone, microphoneID: microphoneID, name: name)
+}
+let server = HubServer(backend: hub, configuration: config, keyStore: store, speakerHost: phones, microphoneHost: microphones)
 if let cached = store as? CachingPairingKeyStore { Task { await cached.load() } }
 let events = server.events()
 let eventTask = Task {
