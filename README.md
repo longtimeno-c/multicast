@@ -217,6 +217,11 @@ volume and a sync trim like any speaker, on the Mac and on every remote.
   or another app that starts playing interrupts it, and it resumes only when iOS says the interruption is over or you
   tap Try Again. If the output that was playing goes away (the Bluetooth speaker is switched off), This iPhone turns
   itself off instead of carrying on from the phone's own speaker.
+- **The Lock Screen.** While This iPhone is on, the song, artist, album, artwork and position show on the Lock
+  Screen and in Control Centre, and play/pause, next, previous and the scrubber there (and headphone buttons) go to
+  the Mac as ordinary hub commands (`LockScreenPlayback` decides what is shown and which controls are live;
+  `LockScreenControls` hands it to iOS). iOS offers these controls only to the app that is playing audio, which is
+  why they need This iPhone on: as a remote alone the app plays nothing, iOS suspends it, and nothing is shown.
 - **Bluetooth.** iOS reports a delay for a Bluetooth output and it is allowed for, but the report is an estimate and
   the speaker adds its own. Set the row's **Sync trim** once by ear (earlier, typically 100 to 250 ms). Volume and
   trim are remembered per phone and per output, so the phone's own speaker and each Bluetooth speaker keep theirs.
@@ -399,11 +404,11 @@ Multicast is a work in progress. There are development builds only: no signed, n
 - **This iPhone as a speaker has run in the simulator only.** The simulator, paired with a headless hub on the same
   Mac, played a tone for 100 s: round trip 0.2 ms, 2.0 s buffered, no packets lost, playback within 0.1 ms of the
   timeline, no dropouts. That proves the pipeline, not a phone: Wi-Fi loss and jitter, a real second clock, the
-  delay iOS reports for Bluetooth, playing with the screen locked, calls and other apps interrupting, and sync by
-  ear are untested on a device. Known limits: the phone drops out of the group if the link to the Mac is lost for
+  delay iOS reports for Bluetooth, playing with the screen locked, the Lock Screen controls, calls and other apps
+  interrupting, and sync by ear are untested on a device. Known limits: the phone drops out of the group if the link to the Mac is lost for
   more than a few seconds (it rejoins by itself while the app is running); after ten minutes of pause the output
-  closes, and iOS may then suspend the app in the background until it is opened again; nothing appears on the lock
-  screen (no now-playing info or controls there).
+  closes, and iOS may then suspend the app in the background until it is opened again; the Lock Screen shows what
+  is playing only while This iPhone is on (a remote that plays nothing gets no Lock Screen controls from iOS).
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
 - **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand,** and sync across bridges has not

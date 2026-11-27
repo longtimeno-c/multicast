@@ -189,7 +189,7 @@ final class PhoneSpeakerModel {
             }
             return "Plays \(hubName)\u{2019}s music through \(route.name), in time with the other speakers. Bluetooth adds a delay, so its Sync trim may need setting once by ear."
         default:
-            return isOn ? "Keeps playing with the screen locked." : "Plays \(hubName)\u{2019}s music through this iPhone, in time with the other speakers."
+            return isOn ? "Keeps playing with the screen locked. What\u{2019}s playing and its controls are on the Lock Screen." : "Plays \(hubName)\u{2019}s music through this iPhone, in time with the other speakers."
         }
     }
 }
