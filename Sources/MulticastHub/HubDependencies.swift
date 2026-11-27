@@ -74,6 +74,34 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func sendProgress(elapsed: TimeInterval, duration: TimeInterval, toSpeaker id: String) async -> Bool
 }
 
+// MARK: - Device volumes
+
+/// Speakers whose volume is a real device volume: the slider moves the device's own volume
+/// (for a Mac output, the one the volume keys and the menu bar move) instead of scaling the
+/// audio inside Multicast. The hub holds such a speaker's gain at full, so only the master
+/// volume attenuates it, shows the device's volume as the speaker's, and never writes a
+/// remembered value to the device on its own.
+public protocol SpeakerDeviceVolumeProviding: Sendable {
+    /// The device's volume now, 0…1, whether or not the speaker is on. nil: this speaker has
+    /// no device volume (or none that can be set) and keeps its volume inside Multicast.
+    /// Called often (every published state): answer from memory.
+    func deviceVolume(of speaker: SpeakerDescriptor) -> Double?
+    /// Sets the device's volume. `deviceVolume(of:)` answers the new value from then on, even
+    /// if the device takes a moment to follow.
+    func setDeviceVolume(_ volume: Double, of speaker: SpeakerDescriptor)
+    /// Fires (no payload) when a volume was changed somewhere else (volume keys, Control
+    /// Centre) or a device gained or lost its volume control. Coalesced by the provider.
+    func deviceVolumeChanges() -> AsyncStream<Void>
+}
+
+/// No speaker has a device volume (tests, other platforms).
+public struct NoDeviceVolumes: SpeakerDeviceVolumeProviding {
+    public init() {}
+    public func deviceVolume(of speaker: SpeakerDescriptor) -> Double? { nil }
+    public func setDeviceVolume(_ volume: Double, of speaker: SpeakerDescriptor) {}
+    public func deviceVolumeChanges() -> AsyncStream<Void> { AsyncStream { $0.finish() } }
+}
+
 // MARK: - Sources
 
 /// A finite, seekable file source (`FileSource` conforms).
@@ -214,12 +242,16 @@ public struct HubDependencies: Sendable {
     public var spotify: MediaAppControlling
     public var system: HubSystemServices
     public var settings: HubSettingsStore
+    /// Which speakers' sliders are a real device volume, and that volume.
+    public var deviceVolumes: SpeakerDeviceVolumeProviding
     /// The hub's clock (tests pin it).
     public var now: @Sendable () -> Date
 
     public init(session: HubSessionControlling, sources: HubSourceMaking, apps: AppPresenceMonitoring,
                 capturableApps: CapturableAppsProviding, spotify: MediaAppControlling, system: HubSystemServices,
-                settings: HubSettingsStore, now: @escaping @Sendable () -> Date = { Date() }) {
+                settings: HubSettingsStore, deviceVolumes: SpeakerDeviceVolumeProviding = NoDeviceVolumes(),
+                now: @escaping @Sendable () -> Date = { Date() }) {
+        self.deviceVolumes = deviceVolumes
         self.session = session
         self.sources = sources
         self.apps = apps

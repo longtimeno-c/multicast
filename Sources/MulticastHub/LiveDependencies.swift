@@ -8,6 +8,7 @@ import MulticastAudio
 import MulticastEngine
 import MulticastHubModel
 import MulticastKit
+import MulticastLocalOutput
 import MulticastRAOP
 import MulticastSources
 import os
@@ -31,7 +32,8 @@ public extension LocalHub {
             capturableApps: ProcessTapApps(),
             spotify: SpotifyAppleEvents(),
             system: LiveSystemServices(),
-            settings: settings
+            settings: settings,
+            deviceVolumes: MacOutputVolumes()
         )
         return LocalHub(dependencies: deps, configuration: configuration)
     }
@@ -134,6 +136,28 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
         await raop.setProgress(elapsedSeconds: elapsed, durationSeconds: duration)
         return true
     }
+}
+
+// MARK: - Device volumes
+
+/// This Mac's outputs: a local speaker's slider is the output device's own volume, where the
+/// device has one that can be set. Network speakers have none here.
+public final class MacOutputVolumes: SpeakerDeviceVolumeProviding, @unchecked Sendable {
+    private let volumes = OutputDeviceVolumes()
+
+    public init() {}
+
+    public func deviceVolume(of speaker: SpeakerDescriptor) -> Double? {
+        guard speaker.transport == .local, let uid = speaker.localDeviceUID else { return nil }
+        return volumes.volume(forDeviceUID: uid).map(Double.init)
+    }
+
+    public func setDeviceVolume(_ volume: Double, of speaker: SpeakerDescriptor) {
+        guard speaker.transport == .local, let uid = speaker.localDeviceUID else { return }
+        volumes.setVolume(Float(volume), forDeviceUID: uid)
+    }
+
+    public func deviceVolumeChanges() -> AsyncStream<Void> { volumes.changes }
 }
 
 // MARK: - Sources

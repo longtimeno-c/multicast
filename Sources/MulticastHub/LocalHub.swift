@@ -10,7 +10,8 @@ import MulticastSources
 ///
 /// - Speakers mirror the session's directory and engine. Enabling selects the speaker's sink
 ///   live (mid-stream included); volume and sync trim are presets kept while it is off and
-///   applied when it joins; two advertisements of one physical receiver are never enabled
+///   applied when it joins (a speaker with a device volume, such as a Mac output, has that as
+///   its volume instead: see "Device-volume speakers"); two advertisements of one physical receiver are never enabled
 ///   together (the second shows a failed state saying why). Presets, the enabled set and the
 ///   master volume persist through `HubSettingsStore`.
 /// - The engine runs only while the active source wants to play AND at least one speaker is
@@ -68,6 +69,9 @@ public actor LocalHub: HubBackend {
     private var restricted: Set<String> = []
     /// Speakers that came with a device (a paired iPhone) and are listed while it offers itself.
     private var externalIDs: Set<String> = []
+    /// Speakers whose gain in the session was last set to full because their volume is a
+    /// device volume (see "Device-volume speakers").
+    private var heldAtFullGain: Set<String> = []
     /// Restricted speakers being asked again right now. Each check carries a token, so a check
     /// that was cancelled (its blocking `OPTIONS` still finishes) can't apply its answer to, or
     /// end, a later one.
@@ -183,11 +187,13 @@ public actor LocalHub: HubBackend {
         let events = session.eventUpdates()
         let apps = deps.capturableApps.updates()
         let presence = deps.apps.changes()
+        let deviceVolumes = deps.deviceVolumes.deviceVolumeChanges()
         tasks.append(Task { [weak self] in for await s in sessionStates { await self?.sessionChanged(s) } })
         tasks.append(Task { [weak self] in for await m in meters { await self?.meter(m) } })
         tasks.append(Task { [weak self] in for await e in events { await self?.engineEvent(e) } })
         tasks.append(Task { [weak self] in for await list in apps { await self?.capturableChanged(list) } })
         tasks.append(Task { [weak self] in for await _ in presence { await self?.refreshApps() } })
+        tasks.append(Task { [weak self] in for await _ in deviceVolumes { await self?.deviceVolumesChanged() } })
         if configuration.pollSeconds > 0 {
             let period = UInt64(configuration.pollSeconds * 1e9)
             tasks.append(Task { [weak self] in
@@ -438,9 +444,8 @@ public actor LocalHub: HubBackend {
         } else if presetKey(id) != oldKey, enabledOrder.contains(id) {
             // Another output on the same phone: its own volume and trim, and it stays on.
             updatePreset(id) { $0.isEnabled = true }
-            let p = preset(for: id)
-            session.setVolume(Float(p.volume), forSpeaker: id)
-            session.setOffset(millis: p.syncTrimMs, forSpeaker: id)
+            applySessionGain(id)
+            session.setOffset(millis: preset(for: id).syncTrimMs, forSpeaker: id)
         }
         publish()
     }
@@ -502,8 +507,10 @@ public actor LocalHub: HubBackend {
     private func selectNow(_ id: String) async {
         guard enabledOrder.contains(id), blocked[id] == nil, let d = descriptors[id] else { return }
         let p = preset(for: id)
+        let gain = sessionGain(for: id)
+        noteSessionGain(id)
         do {
-            try await deps.session.select(d, volume: Float(p.volume), offsetMillis: p.syncTrimMs)
+            try await deps.session.select(d, volume: gain, offsetMillis: p.syncTrimMs)
         } catch {
             let raw = String(describing: error)
             if FailureWording.isAccessRefusal(raw), enabledOrder.contains(id) {
@@ -520,8 +527,8 @@ public actor LocalHub: HubBackend {
         followMediaApp()
         // Presets changed while the select was in flight are applied now.
         let latest = preset(for: id)
-        if latest != p {
-            deps.session.setVolume(Float(latest.volume), forSpeaker: id)
+        if latest != p || sessionGain(for: id) != gain {
+            applySessionGain(id)
             deps.session.setOffset(millis: latest.syncTrimMs, forSpeaker: id)
         }
         await reconcileEngine()
@@ -644,9 +651,61 @@ public actor LocalHub: HubBackend {
     private func setSpeakerVolume(_ id: String, _ volume: Double) throws {
         guard descriptors[id] != nil else { throw HubCommandError(.notFound, "That speaker is no longer on the network.") }
         let v = volume.isFinite ? min(1, max(0, volume)) : 0
-        updatePreset(id) { $0.volume = v }
-        deps.session.setVolume(Float(v), forSpeaker: id)
+        if deviceVolume(of: id) != nil {
+            // The slider is the device's own volume: the gain stays at full and the preset
+            // (a gain, should the device ever lose its volume control) is left as it was.
+            setDeviceVolume(v, of: id)
+        } else {
+            updatePreset(id) { $0.volume = v }
+            applySessionGain(id)
+        }
         publish()
+    }
+
+    // MARK: Device-volume speakers
+
+    // For some speakers the slider is a real device volume rather than a gain applied inside
+    // Multicast: a Mac output's slider is that output's own volume. The three functions below
+    // are the only place that decides which speakers those are and how their volume is read
+    // and set; everything else asks them.
+    //
+    //  - Such a speaker's gain in the session is held at 1, so its sink's software gain carries
+    //    the master volume only (the master still attenuates the whole group).
+    //  - `SpeakerItem.volume` is the device's volume, on or off, and `setSpeakerVolume` sets it.
+    //  - Turning the speaker on never writes a remembered value to the device.
+
+    /// The speaker's device volume (0…1), or nil if its volume is a gain inside Multicast.
+    private func deviceVolume(of id: String) -> Double? {
+        guard let d = descriptors[id], let v = deps.deviceVolumes.deviceVolume(of: d) else { return nil }
+        return v.isFinite ? min(1, max(0, v)) : 0
+    }
+
+    private func setDeviceVolume(_ volume: Double, of id: String) {
+        guard let d = descriptors[id] else { return }
+        deps.deviceVolumes.setDeviceVolume(volume, of: d)
+    }
+
+    /// A device volume moved somewhere else (volume keys, Control Centre), or a device gained
+    /// or lost its volume control: show it, and move the gain of a speaker that changed kind.
+    private func deviceVolumesChanged() {
+        guard !isShutDown else { return }
+        for id in enabledOrder where heldAtFullGain.contains(id) != (deviceVolume(of: id) != nil) { applySessionGain(id) }
+        publish()
+    }
+
+    /// The per-speaker gain the session applies: the preset volume, or 1 for a device-volume
+    /// speaker.
+    private func sessionGain(for id: String) -> Float {
+        deviceVolume(of: id) != nil ? 1 : Float(preset(for: id).volume)
+    }
+
+    private func noteSessionGain(_ id: String) {
+        if deviceVolume(of: id) != nil { heldAtFullGain.insert(id) } else { heldAtFullGain.remove(id) }
+    }
+
+    private func applySessionGain(_ id: String) {
+        noteSessionGain(id)
+        deps.session.setVolume(sessionGain(for: id), forSpeaker: id)
     }
 
     private func setSpeakerTrim(_ id: String, _ ms: Int) throws {
@@ -1525,6 +1584,7 @@ public actor LocalHub: HubBackend {
         let speakers: [SpeakerItem] = ids.compactMap { id in
             guard let d = descriptors[id] else { return nil }
             let p = preset(for: id)
+            let volume = deviceVolume(of: id) ?? p.volume
             let enabled = enabledOrder.contains(id)
             let state: SpeakerState
             if !enabled {
@@ -1539,7 +1599,7 @@ public actor LocalHub: HubBackend {
             return SpeakerItem(id: SpeakerID(id), name: d.name, transport: SpeakerPresentation.transport(for: d),
                                glyph: SpeakerPresentation.glyph(for: d, hostIsLaptop: laptop),
                                model: SpeakerPresentation.modelName(for: d), address: SpeakerPresentation.address(for: d),
-                               isEnabled: enabled, volume: p.volume, state: state, syncTrimMs: p.syncTrimMs,
+                               isEnabled: enabled, volume: volume, state: state, syncTrimMs: p.syncTrimMs,
                                notSeenSince: session.notSeenSince[id], isRestricted: restricted.contains(id),
                                isCheckingAccess: restricted.contains(id) && accessChecks[id] != nil)
         }

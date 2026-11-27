@@ -89,6 +89,11 @@ final class HubModel {
     @ObservationIgnored private var pendingVolume: [SpeakerID: Pending<Double>] = [:]
     @ObservationIgnored private var pendingTrim: [SpeakerID: Pending<Int>] = [:]
     @ObservationIgnored private var pendingMaster: Pending<Double>?
+    /// Speakers whose volume slider is being dragged (between the first change and the commit).
+    /// The hub may publish a volume of its own meanwhile (a device rounds to its own steps, or
+    /// its volume is changed somewhere else): the knob stays under the pointer until the drag
+    /// ends, then follows the hub again.
+    @ObservationIgnored private var draggingVolume: Set<SpeakerID> = []
     @ObservationIgnored private var flushes: [String: Task<Void, Never>] = [:]
 
     private struct Pending<Value: Equatable> {
@@ -218,7 +223,9 @@ final class HubModel {
         for i in incoming.indices {
             let id = incoming[i].id
             if let p = pendingVolume[id] {
-                if p.value == incoming[i].volume || p.isStale { pendingVolume[id] = nil }
+                // Mid-drag an echo that matches is not the end of it: only staleness lets go.
+                let echoed = p.value == incoming[i].volume && !draggingVolume.contains(id)
+                if echoed || p.isStale { pendingVolume[id] = nil }
                 else { incoming[i].volume = p.value }
             }
             if let p = pendingTrim[id] {
@@ -275,6 +282,7 @@ final class HubModel {
     /// A command was refused: drop optimistic edits and show the last state the backend published.
     private func refused(_ command: HubCommand, _ error: Error) {
         pendingVolume.removeAll(); pendingTrim.removeAll(); pendingMaster = nil
+        draggingVolume.removeAll()
         let last = published
         applySpeakers(last)
         applyPlayback(last)
@@ -508,11 +516,13 @@ final class HubModel {
         let v = volume.clamped(to: 0...1)
         mutateSpeaker(id) { $0.volume = v }
         pendingVolume[id] = Pending(value: v, at: .now)
+        draggingVolume.insert(id)
         throttle("volume.\(id)") { [weak self] in self?.sendVolume(id) }
     }
 
     /// The end of a drag: send the final value now.
     func commitVolume(for id: SpeakerID) {
+        draggingVolume.remove(id)
         flush("volume.\(id)") { [weak self] in self?.sendVolume(id) }
     }
 

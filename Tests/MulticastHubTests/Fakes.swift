@@ -253,6 +253,29 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
     }
 }
 
+/// Device volumes by speaker id (made up). A speaker without an entry has no device volume.
+final class FakeDeviceVolumes: SpeakerDeviceVolumeProviding, @unchecked Sendable {
+    let volumes = Locked<[String: Double]>([:])
+    /// Every `setDeviceVolume`, in order.
+    let sets = Locked<[(id: String, volume: Double)]>([])
+    private let fanout = Fanout<Void>()
+
+    func deviceVolume(of speaker: SpeakerDescriptor) -> Double? { volumes.get()[speaker.id] }
+
+    func setDeviceVolume(_ volume: Double, of speaker: SpeakerDescriptor) {
+        sets.update { $0.append((speaker.id, volume)) }
+        volumes.update { $0[speaker.id] = volume }
+    }
+
+    func deviceVolumeChanges() -> AsyncStream<Void> { fanout.stream() }
+
+    /// The volume was changed outside the hub (volume keys); nil takes the control away.
+    func changeOutside(_ id: String, to volume: Double?) {
+        volumes.update { $0[id] = volume }
+        fanout.send(())
+    }
+}
+
 final class FakeFileSource: HubFileSource, @unchecked Sendable {
     let url: URL
     let displayName: String
@@ -499,6 +522,7 @@ struct Rig {
     let spotify = FakeSpotify()
     let system = FakeSystem()
     let settings: InMemorySettingsStore
+    let deviceVolumes = FakeDeviceVolumes()
     let clock = ManualClock()
     let hub: LocalHub
 
@@ -509,7 +533,8 @@ struct Rig {
         config.levelInterval = 0
         let clock = self.clock
         let deps = HubDependencies(session: session, sources: sources, apps: apps, capturableApps: capturable,
-                                   spotify: spotify, system: system, settings: settings, now: { clock.now })
+                                   spotify: spotify, system: system, settings: settings, deviceVolumes: deviceVolumes,
+                                   now: { clock.now })
         hub = LocalHub(dependencies: deps, configuration: config)
         session.setSpeakers(speakers)
     }
