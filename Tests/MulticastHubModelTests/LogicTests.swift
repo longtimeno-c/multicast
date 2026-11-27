@@ -319,3 +319,29 @@ private final class RecordingBackend: HubBackend, @unchecked Sendable {
         #expect(t.playlistCount(in: "a") == 0)
     }
 }
+
+@Suite struct SpeakerCountsTests {
+    private func speaker(_ n: Int, _ state: SpeakerState, restricted: Bool = false) -> SpeakerItem {
+        SpeakerItem(id: SpeakerID("s\(n)"), name: "Speaker \(n)", transport: .airPlay2, glyph: .speaker,
+                    isEnabled: state != .off, volume: 0.5, state: state, isRestricted: restricted)
+    }
+
+    @Test func countsLiveStatesAndSaysThemInOrder() {
+        let c = SpeakerCounts([speaker(1, .playing), speaker(2, .playing), speaker(3, .connecting),
+                               speaker(4, .failed(reason: "Not responding")), speaker(5, .off), speaker(6, .ready)])
+        #expect(c == { var e = SpeakerCounts(); e.playing = 2; e.ready = 1; e.connecting = 1; e.failed = 1; return e }())
+        #expect(c.on == 5)
+        #expect(c.summary == "2 playing \u{00B7} 1 ready \u{00B7} 1 connecting \u{00B7} 1 not responding")
+        #expect(SpeakerCounts([speaker(1, .off)]).summary == nil)
+    }
+
+    /// A speaker that turned the hub away is neither failing nor on, even while it is asked again.
+    @Test func restrictedSpeakersAreLeftOut() {
+        let c = SpeakerCounts([speaker(1, .playing), speaker(2, .off, restricted: true),
+                               speaker(3, .connecting, restricted: true),
+                               speaker(4, .failed(reason: "Blocked by its AirPlay access setting"), restricted: true)])
+        #expect(c.playing == 1 && c.connecting == 0 && c.failed == 0)
+        #expect(c.summary == "1 playing")
+        #expect(SpeakerCounts([speaker(2, .off, restricted: true)]).isEmpty)
+    }
+}

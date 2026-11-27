@@ -47,6 +47,10 @@ struct SpeakersPanel: View {
                         if !model.localSpeakers.isEmpty {
                             speakerGroup("This Mac", model.localSpeakers)
                         }
+                        if !localNetworkOff, !model.restrictedSpeakers.isEmpty {
+                            restrictedGroup(model.restrictedSpeakers)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
             }
@@ -83,7 +87,7 @@ struct SpeakersPanel: View {
                         RowDivider(leading: MC.RowGrid.regular.textLeading)
                     }
                     FocusableSpeakerRow(speaker: speaker, focused: $focusedSpeaker,
-                                        order: model.speakers.map(\.id))
+                                        order: model.usableSpeakers.map(\.id))
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -91,9 +95,55 @@ struct SpeakersPanel: View {
     }
 }
 
+extension SpeakersPanel {
+    /// Speakers that admit only their owner: last, quiet, out of the keyboard order of the
+    /// speakers above.
+    fileprivate func restrictedGroup(_ speakers: [SpeakerItem]) -> some View {
+        GroupedSection(title: RestrictedSpeakerWording.groupTitle) {
+            ForEach(Array(speakers.enumerated()), id: \.element.id) { index, speaker in
+                VStack(spacing: 0) {
+                    if index > 0 {
+                        RowDivider(leading: MC.RowGrid.regular.textLeading)
+                    }
+                    RestrictedRowWithDetail(speaker: speaker)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+/// A restricted speaker's row and its info button, which opens what the restriction means.
+private struct RestrictedRowWithDetail: View {
+    @Environment(HubModel.self) private var model
+    var speaker: SpeakerItem
+    @State private var showsDetail = false
+
+    var body: some View {
+        RestrictedSpeakerRow(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) },
+                             onDetails: { showsDetail = true }) {
+            Button {
+                showsDetail.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(MC.Ink.tertiary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Why it isn\u{2019}t available")
+            .popover(isPresented: $showsDetail, arrowEdge: .trailing) {
+                SpeakerDetailView(speakerID: speaker.id)
+                    .environment(model)
+            }
+        }
+    }
+}
+
 /// "4 playing · 1 connecting · 1 not responding". Digits roll; the line holds its right edge.
 private struct SpeakerSummary: View {
-    var counts: HubModel.SpeakerCounts
+    var counts: SpeakerCounts
     var isDiscovering: Bool
     var playingOnMacOnly = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -110,16 +160,11 @@ private struct SpeakerSummary: View {
     }
 
     private var text: String {
-        var parts: [String] = []
-        if counts.playing > 0 { parts.append("\(counts.playing) playing") }
-        if counts.ready > 0 { parts.append("\(counts.ready) ready") }
-        if counts.connecting > 0 { parts.append("\(counts.connecting) connecting") }
-        if counts.failed > 0 { parts.append("\(counts.failed) not responding") }
-        if parts.isEmpty {
+        guard let summary = counts.summary else {
             if playingOnMacOnly { return "Playing on this Mac only \u{00B7} turn on a speaker" }
             return isDiscovering ? "Searching" : "None selected"
         }
-        return parts.joined(separator: " \u{00B7} ")
+        return summary
     }
 }
 
@@ -284,9 +329,35 @@ struct SpeakerDetailView: View {
 
     var body: some View {
         if let speaker = model.speaker(speakerID) {
-            content(speaker)
-                .onRaisedSurface()
+            Group {
+                if speaker.isRestricted { restricted(speaker) } else { content(speaker) }
+            }
+            .onRaisedSurface()
         }
+    }
+
+    /// A speaker that admits only its owner: what that means and Check Again, nothing to adjust.
+    private func restricted(_ speaker: SpeakerItem) -> some View {
+        VStack(alignment: .leading, spacing: MC.Space.l) {
+            HStack(spacing: MC.Space.m) {
+                Image(systemName: speaker.glyph.symbolName)
+                    .font(.system(size: 18, weight: speaker.glyph.weight))
+                    .foregroundStyle(MC.Ink.tertiary)
+                    .frame(width: 20, height: 28, alignment: .leading)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                    Text(speaker.name)
+                        .font(MC.Font.title)
+                        .foregroundStyle(MC.Ink.primary)
+                    Label(RestrictedSpeakerWording.caption, systemImage: "lock.fill")
+                        .font(MC.Font.caption)
+                        .foregroundStyle(MC.Ink.secondary)
+                }
+            }
+            RestrictedSpeakerExplanation(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) })
+        }
+        .padding(MC.Space.l)
+        .frame(width: 320)
     }
 
     private func content(_ speaker: SpeakerItem) -> some View {

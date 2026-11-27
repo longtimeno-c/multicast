@@ -14,7 +14,7 @@ struct SpeakerDetailSheet: View {
         NavigationStack {
             Group {
                 if let speaker = model.speaker(speakerID) {
-                    content(speaker)
+                    if speaker.isRestricted { restricted(speaker) } else { content(speaker) }
                 } else {
                     ContentUnavailableView("Speaker Gone", systemImage: "hifispeaker",
                                            description: Text("The hub no longer sees this speaker."))
@@ -57,6 +57,42 @@ struct SpeakerDetailSheet: View {
                     RowDivider()
                     detailRow(speaker.transport.isNetwork ? "Address" : "Device", speaker.address ?? "\u{2014}")
                 }
+            }
+            .padding(.horizontal, MC.Space.l)
+            .padding(.top, MC.Space.s)
+            .padding(.bottom, MC.Space.xxl)
+            .animation(MC.Motion.state(reduceMotion), value: speaker.state)
+        }
+    }
+
+    /// A speaker that admits only its owner: what that means and Check Again, nothing to adjust.
+    private func restricted(_ speaker: SpeakerItem) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MC.Space.xl) {
+                GroupedSection {
+                    HStack(spacing: MC.Space.m) {
+                        Image(systemName: speaker.glyph.symbolName)
+                            .font(.system(size: 20, weight: speaker.glyph.weight))
+                            .foregroundStyle(MC.Ink.tertiary)
+                            .frame(width: 28)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                            Text(RestrictedSpeakerWording.groupTitle)
+                                .font(MC.Font.body)
+                                .foregroundStyle(MC.Ink.primary)
+                            Label(RestrictedSpeakerWording.caption, systemImage: "lock.fill")
+                                .font(MC.Font.caption)
+                                .foregroundStyle(MC.Ink.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, MC.Space.m)
+                    .padding(.vertical, MC.Space.m)
+                    .accessibilityElement(children: .combine)
+                }
+                RestrictedSpeakerExplanation(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) })
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal, MC.Space.m)
             }
             .padding(.horizontal, MC.Space.l)
             .padding(.top, MC.Space.s)

@@ -106,6 +106,7 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
     }
     public func deselect(speakerID: String) async { await session.deselect(speakerID: speakerID) }
     public func retry(speakerID: String) async { await session.retry(speakerID: speakerID) }
+    public func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck { await session.checkAccess(speaker) }
     public func refreshSpeakers() { session.refreshSpeakers() }
 
     public func setSource(_ source: AudioSource) async throws { try await session.setSource(.custom(source)) }

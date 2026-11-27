@@ -63,6 +63,9 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     case setSpeakerVolume(id: SpeakerID, volume: Double)
     /// Milliseconds within `SpeakerItem.syncTrimRange`. Legal while off, like volume.
     case setSpeakerSyncTrim(id: SpeakerID, milliseconds: Int)
+    /// A speaker that is on but failed: try it again now. A speaker that turned the hub away
+    /// (`SpeakerItem.isRestricted`): ask it once more whether it lets the hub in ("Check Again"),
+    /// without turning it on.
     case retrySpeaker(id: SpeakerID)
     /// 0…1.
     case setMasterVolume(volume: Double)

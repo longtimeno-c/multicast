@@ -47,28 +47,43 @@ struct MenuBarPanel: View {
                 }
             }
 
-            GroupedSection {
-                if model.speakers.isEmpty {
-                    HStack(spacing: MC.Space.s) {
-                        ProgressView().controlSize(.small)
-                        Text("Looking for speakers\u{2026}")
-                            .font(MC.Font.body)
-                            .foregroundStyle(MC.Ink.secondary)
+            if model.speakers.isEmpty || !model.usableSpeakers.isEmpty {
+                GroupedSection {
+                    if model.speakers.isEmpty {
+                        HStack(spacing: MC.Space.s) {
+                            ProgressView().controlSize(.small)
+                            Text("Looking for speakers\u{2026}")
+                                .font(MC.Font.body)
+                                .foregroundStyle(MC.Ink.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(MC.Space.m)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(MC.Space.m)
+                    ForEach(Array(model.usableSpeakers.enumerated()), id: \.element.id) { index, speaker in
+                        VStack(spacing: 0) {
+                            if index > 0 { RowDivider(leading: MC.RowGrid.dense.textLeading) }
+                            SpeakerRow(speaker: speaker, grid: .dense, density: .dense,
+                                       masterVolume: model.masterVolume,
+                                       onToggle: { model.setEnabled($0, for: speaker.id) },
+                                       onVolume: { model.setVolume($0, for: speaker.id) },
+                                       onCommitVolume: { model.commitVolume(for: speaker.id) },
+                                       onRetry: { model.retry(speaker.id) })
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
-                ForEach(Array(model.speakers.enumerated()), id: \.element.id) { index, speaker in
-                    VStack(spacing: 0) {
-                        if index > 0 { RowDivider(leading: MC.RowGrid.dense.textLeading) }
-                        SpeakerRow(speaker: speaker, grid: .dense, density: .dense,
-                                   masterVolume: model.masterVolume,
-                                   onToggle: { model.setEnabled($0, for: speaker.id) },
-                                   onVolume: { model.setVolume($0, for: speaker.id) },
-                                   onCommitVolume: { model.commitVolume(for: speaker.id) },
-                                   onRetry: { model.retry(speaker.id) })
+            }
+
+            if !model.restrictedSpeakers.isEmpty, !(model.needsLocalNetwork || runtime?.localNetworkBlocked == true) {
+                GroupedSection(title: RestrictedSpeakerWording.groupTitle) {
+                    ForEach(Array(model.restrictedSpeakers.enumerated()), id: \.element.id) { index, speaker in
+                        VStack(spacing: 0) {
+                            if index > 0 { RowDivider(leading: MC.RowGrid.dense.textLeading) }
+                            RestrictedSpeakerRow(speaker: speaker, grid: .dense, density: .dense,
+                                                 onCheckAgain: { model.checkAgain(speaker.id) })
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 

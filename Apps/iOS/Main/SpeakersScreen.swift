@@ -32,6 +32,10 @@ struct SpeakersScreen: View {
                         if !model.localSpeakers.isEmpty {
                             speakerGroup("On \(hubName)", model.localSpeakers)
                         }
+                        if !model.needsLocalNetwork, !model.restrictedSpeakers.isEmpty {
+                            restrictedGroup(model.restrictedSpeakers)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
                 .padding(.horizontal, MC.Space.l)
@@ -132,6 +136,31 @@ struct SpeakersScreen: View {
         }
     }
 
+    /// Speakers that admit only their owner: last, quiet, nothing to switch or slide.
+    private func restrictedGroup(_ speakers: [SpeakerItem]) -> some View {
+        GroupedSection(title: RestrictedSpeakerWording.groupTitle) {
+            ForEach(Array(speakers.enumerated()), id: \.element.id) { index, speaker in
+                VStack(spacing: 0) {
+                    if index > 0 { RowDivider(leading: grid.textLeading) }
+                    RestrictedSpeakerRow(speaker: speaker, grid: grid, density: .touch,
+                                         onCheckAgain: { model.checkAgain(speaker.id) },
+                                         onDetails: { showDetail(speaker.id) }) {
+                        Button { showDetail(speaker.id) } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(MC.Ink.tertiary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(speaker.name) details")
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
     private func showDetail(_ id: SpeakerID) {
         session.navigation.speakerDetail = .init(id: id)
     }
@@ -139,7 +168,7 @@ struct SpeakersScreen: View {
 
 /// "4 playing · 1 connecting · 1 not responding", under the title. Digits roll in place.
 private struct SpeakerSummary: View {
-    var counts: HubModel.SpeakerCounts
+    var counts: SpeakerCounts
     var isDiscovering: Bool
     /// The link is down: these are the last counts the phone saw.
     var isLastKnown = false
@@ -156,13 +185,8 @@ private struct SpeakerSummary: View {
     }
 
     private var text: String {
-        var parts: [String] = []
-        if counts.playing > 0 { parts.append("\(counts.playing) playing") }
-        if counts.ready > 0 { parts.append("\(counts.ready) ready") }
-        if counts.connecting > 0 { parts.append("\(counts.connecting) connecting") }
-        if counts.failed > 0 { parts.append("\(counts.failed) not responding") }
-        if parts.isEmpty { return isDiscovering ? "Looking for speakers" : "No speakers on. Tap one to play there." }
-        return parts.joined(separator: " \u{00B7} ")
+        guard let summary = counts.summary else { return isDiscovering ? "Looking for speakers" : "No speakers on. Tap one to play there." }
+        return summary
     }
 }
 

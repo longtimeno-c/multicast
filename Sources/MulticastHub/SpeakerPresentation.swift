@@ -149,6 +149,12 @@ public enum SpeakerPresentation {
 /// speaker row. Unit-tested against the messages MulticastEngine, MulticastRAOP,
 /// MulticastLocalOutput and MulticastKit actually produce.
 public enum FailureWording {
+    /// The speaker's AirPlay access setting turned this sender away (`RAOPError.accessRefused`):
+    /// not a fault to retry or show as one, but a speaker this person may not use.
+    public static func isAccessRefusal(_ raw: String?) -> Bool {
+        (raw ?? "").lowercased().contains("refused access")
+    }
+
     public static func plain(_ raw: String) -> String {
         let s = raw.lowercased()
         func has(_ words: String...) -> Bool { words.contains(where: { s.contains($0) }) }

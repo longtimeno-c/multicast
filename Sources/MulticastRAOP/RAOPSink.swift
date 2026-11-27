@@ -269,7 +269,44 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         }
     }
 
-    private func connect(timeline: StreamTimeline) throws -> Session {
+    /// Asks the receiver whether it lets this sender in, without pairing, audio or volume: one
+    /// TCP connection, one `OPTIONS`, closed again. An Apple TV or HomePod whose AirPlay access
+    /// setting doesn't admit this sender answers 403 to it, exactly as it does to a real
+    /// session's first request. A password challenge counts as admitted (the access setting is
+    /// not what stands in the way). With a session already up, the answer is admitted at once.
+    public func checkAccess() async -> AccessCheck {
+        await withCheckedContinuation { (c: CheckedContinuation<AccessCheck, Never>) in
+            controlQueue.async { c.resume(returning: self.checkAccessOnControl()) }
+        }
+    }
+
+    /// What `checkAccess()` found.
+    public enum AccessCheck: Equatable, Sendable {
+        case admitted
+        /// 403 Forbidden: the access setting turns this sender away.
+        case refused
+        /// No answer worth trusting (unreachable, timed out, a malformed reply): `reason` says why.
+        case inconclusive(String)
+    }
+
+    private func checkAccessOnControl() -> AccessCheck {
+        if session != nil { return .admitted }
+        do {
+            let (_, rtsp) = try openControl()
+            defer { rtsp.close() }
+            _ = try rtsp.send(RTSPRequest(method: "OPTIONS", uri: "*"), expectOK: false)
+            return .admitted
+        } catch RAOPError.accessRefused {
+            return .refused
+        } catch RAOPError.passwordRequired, RAOPError.authenticationFailed {
+            return .admitted
+        } catch {
+            return .inconclusive("\(error)")
+        }
+    }
+
+    /// Opens the RTSP control connection (TCP and the client with this sender's base headers).
+    private func openControl() throws -> (TCPConnection, RTSPClient) {
         let (host, port) = endpoint
         guard let host, !host.isEmpty, let port else { throw RAOPError.missingAddress(displayName) }
         let connection: TCPConnection
@@ -286,10 +323,7 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         }
         log("connected to \(connection.peer) from \(connection.local)")
 
-        let sessionNumber = UInt32.random(in: 1...UInt32.max)
         let clientInstance = String(format: "%016llX", UInt64.random(in: 1...UInt64.max))
-        let localHost = connection.local.family == AF_INET6 ? "[\(connection.local.ipString)]" : connection.local.ipString
-        let uri = "rtsp://\(localHost)/\(sessionNumber)"
         let baseHeaders = [
             RTSPHeader("User-Agent", options.userAgent),
             RTSPHeader("Client-Instance", clientInstance),
@@ -301,6 +335,14 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         let rtsp = RTSPClient(connection: connection, baseHeaders: baseHeaders, password: options.password,
                               timeout: options.requestTimeout,
                               log: logger.map { l in { l("[\(name)] \($0)") } })
+        return (connection, rtsp)
+    }
+
+    private func connect(timeline: StreamTimeline) throws -> Session {
+        let (connection, rtsp) = try openControl()
+        let sessionNumber = UInt32.random(in: 1...UInt32.max)
+        let localHost = connection.local.family == AF_INET6 ? "[\(connection.local.ipString)]" : connection.local.ipString
+        let uri = "rtsp://\(localHost)/\(sessionNumber)"
         let session = Session(rtsp: rtsp, uri: uri)
 
         _ = try rtsp.send(RTSPRequest(method: "OPTIONS", uri: "*"))

@@ -102,12 +102,21 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     /// Set while a network speaker has stopped answering on the network (it stays listed for a
     /// while in case it comes back): when it was last heard. nil = answering, or a local output.
     public var notSeenSince: Date?
+    /// The speaker turned this hub away: its AirPlay access setting admits only its owner (or
+    /// only people in its Home). Not a failure: the hub keeps it off, never turns it on by
+    /// itself, and asks it again only on `retrySpeaker` (shown as "Check Again"), with `state`
+    /// `.connecting` while it asks. Cleared once the speaker lets the hub in.
+    ///
+    /// Wire: the key `isRestricted` is present only when true, so builds that predate it read
+    /// and write every other speaker unchanged, and read its absence as false.
+    public var isRestricted: Bool
 
     public static let syncTrimRange: ClosedRange<Int> = -500...500
 
     public init(id: SpeakerID, name: String, transport: SpeakerTransport, glyph: SpeakerGlyph,
                 model: String? = nil, address: String? = nil, isEnabled: Bool = false,
-                volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0, notSeenSince: Date? = nil) {
+                volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0, notSeenSince: Date? = nil,
+                isRestricted: Bool = false) {
         self.id = id
         self.name = name
         self.transport = transport
@@ -119,6 +128,43 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         self.state = state
         self.syncTrimMs = syncTrimMs
         self.notSeenSince = notSeenSince
+        self.isRestricted = isRestricted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, transport, glyph, model, address, isEnabled, volume, state, syncTrimMs, notSeenSince, isRestricted
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(SpeakerID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        transport = try c.decode(SpeakerTransport.self, forKey: .transport)
+        glyph = try c.decode(SpeakerGlyph.self, forKey: .glyph)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        address = try c.decodeIfPresent(String.self, forKey: .address)
+        isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
+        volume = try c.decode(Double.self, forKey: .volume)
+        state = try c.decode(SpeakerState.self, forKey: .state)
+        syncTrimMs = try c.decode(Int.self, forKey: .syncTrimMs)
+        notSeenSince = try c.decodeIfPresent(Date.self, forKey: .notSeenSince)
+        isRestricted = try c.decodeIfPresent(Bool.self, forKey: .isRestricted) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(transport, forKey: .transport)
+        try c.encode(glyph, forKey: .glyph)
+        try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(address, forKey: .address)
+        try c.encode(isEnabled, forKey: .isEnabled)
+        try c.encode(volume, forKey: .volume)
+        try c.encode(state, forKey: .state)
+        try c.encode(syncTrimMs, forKey: .syncTrimMs)
+        try c.encodeIfPresent(notSeenSince, forKey: .notSeenSince)
+        if isRestricted { try c.encode(true, forKey: .isRestricted) }
     }
 
     /// What the speaker actually plays at: its own level scaled by the master.
@@ -127,5 +173,40 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     public var kindDescription: String {
         if let model { return "\(transport.label) · \(model)" }
         return transport.label
+    }
+}
+
+/// How many speakers are in each live state, for the summary line over a speakers list.
+/// Speakers that turned the hub away (`isRestricted`) are left out: they aren't failing, they
+/// aren't this person's to use. Pure; unit-tested.
+public struct SpeakerCounts: Equatable, Sendable {
+    public var playing = 0, ready = 0, connecting = 0, failed = 0
+
+    public init() {}
+
+    public init(_ speakers: [SpeakerItem]) {
+        for s in speakers where !s.isRestricted {
+            switch s.state {
+            case .playing: playing += 1
+            case .ready: ready += 1
+            case .connecting: connecting += 1
+            case .failed: failed += 1
+            case .off: break
+            }
+        }
+    }
+
+    /// Speakers that are on, whatever their state.
+    public var on: Int { playing + ready + connecting + failed }
+    public var isEmpty: Bool { on == 0 }
+
+    /// "4 playing · 1 connecting · 1 not responding"; nil while none is on.
+    public var summary: String? {
+        var parts: [String] = []
+        if playing > 0 { parts.append("\(playing) playing") }
+        if ready > 0 { parts.append("\(ready) ready") }
+        if connecting > 0 { parts.append("\(connecting) connecting") }
+        if failed > 0 { parts.append("\(failed) not responding") }
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
     }
 }

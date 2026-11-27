@@ -62,6 +62,12 @@ public actor LocalHub: HubBackend {
     private var selectFailures: [String: String] = [:]
     /// Remembered-enabled speakers restored this launch (each at most once).
     private var restored: Set<String> = []
+    /// Speakers whose AirPlay access setting turned this hub away, this run. They are kept off
+    /// (and not remembered as on), never turned on by the hub, and asked again only when the
+    /// person says so (`retrySpeaker`: "Check Again") or turns one on themselves.
+    private var restricted: Set<String> = []
+    /// Restricted speakers being asked again right now.
+    private var accessChecks: [String: Task<Void, Never>] = [:]
     private var startedAt: Date
     private var lastSpeakerListChange: Date
     private var discovering = false
@@ -205,6 +211,8 @@ public actor LocalHub: HubBackend {
         endingTask?.cancel()
         queueEndTimer?.cancel()
         musicPermissionRequest?.cancel()
+        for t in accessChecks.values { t.cancel() }
+        accessChecks.removeAll()
         await workTail?.value
         // Removing the tap unmutes a media app: one still playing would carry on out of the
         // Mac's own speakers. Pause it first, within a bound that fits the app's quit cap.
@@ -372,6 +380,7 @@ public actor LocalHub: HubBackend {
             if metadataTail == tail { break }
         }
         await spotifyAutomationCheck?.value
+        while let check = accessChecks.values.first { await check.value }
     }
 
     func enqueue(_ op: @escaping @Sendable () async -> Void) {
@@ -409,6 +418,13 @@ public actor LocalHub: HubBackend {
 
     private func enable(_ id: String, remember: Bool) {
         guard let d = descriptors[id], !enabledOrder.contains(id) else { return }
+        // Only the person turns on a speaker that turned the hub away (an older remote shows it
+        // as an ordinary speaker); a restore never does.
+        if restricted.contains(id) {
+            guard remember else { return }
+            restricted.remove(id)
+            accessChecks.removeValue(forKey: id)?.cancel()
+        }
         enabledOrder.append(id)
         selectFailures[id] = nil
         if let other = physicalConflict(for: d) {
@@ -433,7 +449,12 @@ public actor LocalHub: HubBackend {
         do {
             try await deps.session.select(d, volume: Float(p.volume), offsetMillis: p.syncTrimMs)
         } catch {
-            selectFailures[id] = FailureWording.plain(String(describing: error))
+            let raw = String(describing: error)
+            if FailureWording.isAccessRefusal(raw), enabledOrder.contains(id) {
+                restrict(id)
+                return
+            }
+            selectFailures[id] = FailureWording.plain(raw)
         }
         guard enabledOrder.contains(id) else {
             // Turned off while the select was in flight.
@@ -498,6 +519,10 @@ public actor LocalHub: HubBackend {
 
     private func retrySpeaker(_ id: String) throws {
         guard descriptors[id] != nil else { throw HubCommandError(.notFound, "That speaker is no longer on the network.") }
+        if restricted.contains(id) {
+            checkAccessAgain(id)
+            return
+        }
         guard enabledOrder.contains(id) else { return }
         if blocked[id] != nil {
             guard let d = descriptors[id], physicalConflict(for: d) == nil else { publish(); return }
@@ -516,6 +541,44 @@ public actor LocalHub: HubBackend {
                 await self.publish()
             }
         }
+    }
+
+    // MARK: Speakers that turn the hub away
+
+    /// The speaker answered that its AirPlay access setting doesn't admit this hub: turn it off
+    /// (remembered as off, so the next launch doesn't try it either) and keep it apart for this
+    /// run. Waiting doesn't change that answer, so nothing retries it.
+    private func restrict(_ id: String) {
+        restricted.insert(id)
+        if enabledOrder.contains(id) { disable(id) } else { publish() }
+    }
+
+    /// Looks for refusals in what the engine reports about the speakers that are on.
+    private func noteRefusals(_ sinks: [EngineSnapshot.SinkEntry]) {
+        for e in sinks where e.state == .failed && enabledOrder.contains(e.id) && FailureWording.isAccessRefusal(e.error) {
+            restrict(e.id)
+        }
+    }
+
+    /// "Check Again": asks the speaker once, apart from the group so nothing is heard there, and
+    /// reports through the state. Admitted: it is an ordinary speaker again, off until the
+    /// person turns it on. Refused, or no answer: it stays where it is.
+    private func checkAccessAgain(_ id: String) {
+        guard accessChecks[id] == nil, let d = descriptors[id] else { return }
+        let session = deps.session
+        // Off the work queue: an unreachable speaker takes seconds to give up, and other
+        // commands must not wait behind it.
+        accessChecks[id] = Task { [weak self] in
+            let result = await session.checkAccess(d)
+            await self?.accessChecked(id, result)
+        }
+        publish()
+    }
+
+    private func accessChecked(_ id: String, _ result: SpeakerAccessCheck) {
+        guard accessChecks.removeValue(forKey: id) != nil else { return }
+        if result == .admitted { restricted.remove(id) }
+        publish()
     }
 
     private func setSpeakerVolume(_ id: String, _ volume: Double) throws {
@@ -557,7 +620,9 @@ public actor LocalHub: HubBackend {
             listChanged = true
         }
         if listChanged { lastSpeakerListChange = deps.now() }
-        for d in s.speakers where settings.speakers[d.id]?.isEnabled == true && !restored.contains(d.id) {
+        noteRefusals(s.engine.sinks)
+        for d in s.speakers where settings.speakers[d.id]?.isEnabled == true && !restored.contains(d.id)
+            && !restricted.contains(d.id) {
             restored.insert(d.id)
             enable(d.id, remember: false)
         }
@@ -1401,7 +1466,9 @@ public actor LocalHub: HubBackend {
             let p = preset(for: id)
             let enabled = enabledOrder.contains(id)
             let state: SpeakerState
-            if !enabled {
+            if accessChecks[id] != nil {
+                state = .connecting
+            } else if !enabled {
                 state = .off
             } else if let reason = blocked[id] ?? selectFailures[id] {
                 state = .failed(reason: reason)
@@ -1414,7 +1481,7 @@ public actor LocalHub: HubBackend {
                                glyph: SpeakerPresentation.glyph(for: d, hostIsLaptop: laptop),
                                model: SpeakerPresentation.modelName(for: d), address: SpeakerPresentation.address(for: d),
                                isEnabled: enabled, volume: p.volume, state: state, syncTrimMs: p.syncTrimMs,
-                               notSeenSince: session.notSeenSince[id])
+                               notSeenSince: session.notSeenSince[id], isRestricted: restricted.contains(id))
         }
         var extra: [HubIssue] = []
         switch spotifyStatus {

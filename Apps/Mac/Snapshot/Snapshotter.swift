@@ -47,6 +47,13 @@ enum Snapshotter {
                    size: nil, appearance: appearance, to: directory.appendingPathComponent(popover))
             written.append(popover)
 
+            let restricted = "popover-speaker-restricted-\(suffix).png"
+            render(SpeakerDetailView(speakerID: MockData.neighbourHomePod)
+                    .environment(model(for: .appleMusic))
+                    .background(MC.Surface.raised),
+                   size: nil, appearance: appearance, to: directory.appendingPathComponent(restricted))
+            written.append(restricted)
+
             let menuModel = model(for: .appleMusic)
             let menu = "menubar-panel-\(suffix).png"
             render(MenuBarPanel(solidBackground: true).environment(menuModel),

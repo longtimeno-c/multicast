@@ -11,6 +11,9 @@ enum MockData {
     static let patio: SpeakerID = "airplay.patio"
     static let macBook: SpeakerID = "local.builtin"
     static let jbl: SpeakerID = "local.jbl"
+    /// Someone else's speakers, set to admit only their owner.
+    static let neighbourHomePod: SpeakerID = "airplay.neighbour-homepod"
+    static let upstairsTV: SpeakerID = "airplay.upstairs-tv"
 
     static var speakers: [SpeakerItem] {
         [
@@ -24,6 +27,10 @@ enum MockData {
                         model: nil, address: "192.0.2.41", isEnabled: false, volume: 0.40, state: .off, syncTrimMs: 40),
             SpeakerItem(id: patio, name: "Patio", transport: .airPlay1, glyph: .airportExpress,
                         model: nil, address: "192.0.2.47", isEnabled: false, volume: 0.70, state: .off, syncTrimMs: 0),
+            SpeakerItem(id: neighbourHomePod, name: "Neighbour\u{2019}s HomePod", transport: .airPlay2, glyph: .smartSpeaker,
+                        model: "HomePod mini", address: "192.0.2.70", isEnabled: false, volume: 0.50, state: .off, syncTrimMs: 0),
+            SpeakerItem(id: upstairsTV, name: "Upstairs Apple TV", transport: .airPlay2, glyph: .display,
+                        model: "Apple TV", address: "192.0.2.71", isEnabled: false, volume: 0.50, state: .off, syncTrimMs: 0),
             SpeakerItem(id: macBook, name: "MacBook Air Speakers", transport: .builtIn, glyph: .laptop,
                         model: nil, address: "BuiltInSpeakerDevice", isEnabled: false, volume: 0.30, state: .off, syncTrimMs: 0),
             SpeakerItem(id: jbl, name: "JBL Flip 6", transport: .bluetooth, glyph: .portable,
@@ -246,6 +253,11 @@ enum MockScene: String, CaseIterable, Sendable {
             set(MockData.macBook, .playing)
             set(MockData.masterBath, .connecting)
             set(MockData.patio, .failed(reason: "Not responding"))
+            // Tried, and turned away by their access setting: off and listed apart.
+            for id in [MockData.neighbourHomePod, MockData.upstairsTV] {
+                guard let i = s.speakers.firstIndex(where: { $0.id == id }) else { continue }
+                s.speakers[i].isRestricted = true
+            }
         case .spotify:
             s.activeSource = .spotify
             s.nowPlaying = MockData.nowPlaying(MockData.spotifyTracks[0])

@@ -435,32 +435,21 @@ final class HubModel {
 
     // MARK: Derived
 
-    var networkSpeakers: [SpeakerItem] { speakers.filter { $0.transport.isNetwork } }
-    var localSpeakers: [SpeakerItem] { speakers.filter { !$0.transport.isNetwork } }
+    /// The speakers this person can play to, network and local; the ones that turned the hub
+    /// away are `restrictedSpeakers`, listed apart.
+    var usableSpeakers: [SpeakerItem] { speakers.filter { !$0.isRestricted } }
+    var networkSpeakers: [SpeakerItem] { usableSpeakers.filter { $0.transport.isNetwork } }
+    var localSpeakers: [SpeakerItem] { usableSpeakers.filter { !$0.transport.isNetwork } }
+    /// Speakers whose AirPlay access setting doesn't admit this hub (they admit only their owner).
+    var restrictedSpeakers: [SpeakerItem] { speakers.filter(\.isRestricted) }
     var enabledCount: Int { speakers.filter(\.isEnabled).count }
     var capturableApps: [CapturableApp] { capture.apps }
     var capturedAppID: String? { capture.capturedAppID }
 
     func speaker(_ id: SpeakerID) -> SpeakerItem? { speakers.first { $0.id == id } }
 
-    struct SpeakerCounts: Equatable {
-        var playing = 0, ready = 0, connecting = 0, failed = 0
-        var isEmpty: Bool { playing + ready + connecting + failed == 0 }
-    }
-
-    var speakerCounts: SpeakerCounts {
-        var c = SpeakerCounts()
-        for s in speakers {
-            switch s.state {
-            case .playing: c.playing += 1
-            case .ready: c.ready += 1
-            case .connecting: c.connecting += 1
-            case .failed: c.failed += 1
-            case .off: break
-            }
-        }
-        return c
-    }
+    /// The summary line's counts; restricted speakers are not in them.
+    var speakerCounts: SpeakerCounts { SpeakerCounts(speakers) }
 
     var canPlay: Bool { activeSource != nil && nowPlaying != nil }
 
@@ -561,6 +550,15 @@ final class HubModel {
     }
 
     func retry(_ id: SpeakerID) {
+        mutateSpeaker(id) { $0.state = .connecting }
+        send(.retrySpeaker(id: id))
+    }
+
+    /// Asks a speaker that turned the hub away whether it lets the hub in now (its owner may
+    /// have changed its AirPlay access setting). It stays off either way; if it is admitted the
+    /// hub lists it with the others again.
+    func checkAgain(_ id: SpeakerID) {
+        guard speaker(id)?.isRestricted == true else { return }
         mutateSpeaker(id) { $0.state = .connecting }
         send(.retrySpeaker(id: id))
     }

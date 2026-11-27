@@ -122,6 +122,42 @@ import Testing
         #expect(try json(SpeakerID("542a1b001122")) == #""542a1b001122""#)
     }
 
+    /// A speaker that turned the hub away travels as one optional key: absent when false, so
+    /// older remotes and hubs read and write every other speaker exactly as before.
+    @Test func restrictedSpeakerIsOneOptionalKey() throws {
+        let plain = SpeakerItem(id: "542a1b001122", name: "Hall Sonos", transport: .airPlay2, glyph: .smartSpeaker,
+                                volume: 0.5)
+        #expect(try json(plain)
+                == #"{"glyph":"smartSpeaker","id":"542a1b001122","isEnabled":false,"name":"Hall Sonos","state":{"off":{}},"syncTrimMs":0,"transport":"airPlay2","volume":0.5}"#)
+
+        let restricted = SpeakerItem(id: "cccc00000001", name: "Neighbour\u{2019}s HomePod", transport: .airPlay2,
+                                     glyph: .smartSpeaker, model: "HomePod mini", address: "192.0.2.70:7000",
+                                     volume: 0.5, isRestricted: true)
+        #expect(try json(restricted).contains(#""isRestricted":true"#))
+        try roundTrip(restricted)
+        var checking = restricted
+        checking.state = .connecting
+        checking.notSeenSince = Date(timeIntervalSinceReferenceDate: 500)
+        try roundTrip(checking)
+
+        // What an older hub sends: no key, so not restricted.
+        let old = try JSONDecoder().decode(SpeakerItem.self, from: Data(
+            #"{"id":"bbbb58000010","name":"Patio","transport":"airPlay1","glyph":"airportExpress","isEnabled":true,"volume":0.7,"state":{"failed":{"reason":"Not responding"}},"syncTrimMs":40}"#.utf8))
+        #expect(!old.isRestricted && old.isEnabled && old.state == .failed(reason: "Not responding") && old.syncTrimMs == 40)
+        #expect(old.model == nil && old.address == nil && old.notSeenSince == nil)
+
+        // What an older remote does with a new hub's speaker: synthesized decoding skips the key.
+        struct OlderSpeakerItem: Decodable {
+            var id: SpeakerID, name: String, isEnabled: Bool, state: SpeakerState
+        }
+        let seenByOld = try JSONDecoder().decode(OlderSpeakerItem.self, from: JSONEncoder().encode(restricted))
+        #expect(seenByOld.name == "Neighbour\u{2019}s HomePod" && !seenByOld.isEnabled && seenByOld.state == .off)
+
+        var s = HubState(revision: 3)
+        s.speakers = [plain, restricted]
+        try roundTrip(s)
+    }
+
     @Test func stateStaysSmall() throws {
         // A busy house: 16 speakers, 20 capturable apps, every issue. Must stay a few KB.
         var s = HubState()

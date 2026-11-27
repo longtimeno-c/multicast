@@ -280,8 +280,7 @@ struct NowPlayingSheet: View {
     }
 
     private var speakersText: String {
-        let c = model.speakerCounts
-        let on = c.playing + c.ready + c.connecting + c.failed
+        let on = model.speakerCounts.on
         if on == 0 { return "Choose Speakers" }
         return on == 1 ? "1 Speaker" : "\(on) Speakers"
     }

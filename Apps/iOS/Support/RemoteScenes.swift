@@ -30,12 +30,15 @@ enum RemoteScene: String, CaseIterable {
     case hubNotFound = "hub-not-found"
     /// Connected, then the link drops after a second: banner over the last state.
     case lost
-    /// Apple Music playing on four speakers, one connecting, Patio failed.
+    /// Apple Music playing on four speakers, one connecting, Patio failed, two not available.
     case speakers
     /// The same, with the full player open.
     case nowPlaying = "now-playing"
     /// Spotify playing; the JBL's detail sheet with its -180 ms sync trim.
     case speakerDetail = "speaker-detail"
+    /// The speakers scene with the detail sheet of the neighbour's HomePod, which admits only
+    /// its owner.
+    case speakerRestricted = "speaker-restricted"
     /// Music tab, Apple Music, playlists.
     case playlists
     /// A playlist's songs.
@@ -87,7 +90,7 @@ enum RemoteScene: String, CaseIterable {
         case .live, .mock, .pair, .pairing, .pairingError, .searching, .hubNotFound: nil
         case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
              .phoneOnlySearching, .phoneOnlyEmpty: nil
-        case .lost, .speakers, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
+        case .lost, .speakers, .speakerRestricted, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
         case .speakerDetail, .spotify: .spotify
         case .otherApp: .appPicker
         case .firstRun: .firstRun
@@ -137,6 +140,7 @@ enum RemoteScene: String, CaseIterable {
         switch self {
         case .nowPlaying: nav.showsNowPlaying = true
         case .speakerDetail: nav.speakerDetail = .init(id: MockData.jbl)
+        case .speakerRestricted: nav.speakerDetail = .init(id: MockData.neighbourHomePod)
         case .playlists:
             nav.tab = .music
             nav.musicPath = [.source(.appleMusic)]

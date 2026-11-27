@@ -525,6 +525,23 @@ public final class MulticastSession: @unchecked Sendable {
     public func setOffset(millis: Int, forSpeaker id: String) { engine.setOffset(millis: millis, forSink: id) }
     public func retry(speakerID id: String) async { await engine.retrySink(id: id) }
 
+    /// Whether a speaker lets this sender in, asked without joining the group, so no audio
+    /// reaches it whatever is playing: a network speaker gets one `OPTIONS` on a connection of
+    /// its own (with its password, if one is set); a local output is always admitted. The
+    /// speaker's current advertisement is used when discovery has a newer one.
+    public func checkAccess(_ descriptor: SpeakerDescriptor) async -> SpeakerAccessCheck {
+        guard descriptor.transport != .local else { return .admitted }
+        let current = directory.speaker(id: descriptor.id) ?? descriptor
+        let sink: AudioSink
+        do { sink = try factory.makeSink(for: current) } catch { return .inconclusive(String(describing: error)) }
+        guard let raop = sink as? RAOPSink else { return .admitted }
+        switch await raop.checkAccess() {
+        case .admitted: return .admitted
+        case .refused: return .refused
+        case .inconclusive(let why): return .inconclusive(why)
+        }
+    }
+
     // MARK: Diagnostics
 
     public func diagnostics() -> [SinkDiagnostics] {
@@ -555,4 +572,13 @@ public final class MulticastSession: @unchecked Sendable {
         }
         return d
     }
+}
+
+/// What asking a speaker whether it admits this sender found (`MulticastSession.checkAccess`).
+public enum SpeakerAccessCheck: Equatable, Sendable {
+    case admitted
+    /// Its AirPlay access setting turns this sender away (403 Forbidden).
+    case refused
+    /// No trustworthy answer (unreachable, timed out): `reason` says why.
+    case inconclusive(String)
 }

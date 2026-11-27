@@ -45,6 +45,8 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func select(_ speaker: SpeakerDescriptor, volume: Float, offsetMillis: Int) async throws
     func deselect(speakerID: String) async
     func retry(speakerID: String) async
+    /// Asks a speaker whether it lets this hub in, without selecting it or sending audio.
+    func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck
     /// Browse for speakers again and retry failed ones (default: nothing).
     func refreshSpeakers()
 

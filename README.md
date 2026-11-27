@@ -140,7 +140,7 @@ Settings: menu-bar extra, buffer (1–3 s), which Apple Music player to use, and
 with Remove (after a confirmation it is disconnected at once and must pair again).
 
 **iPhone app (`Multicast Remote`).** Lists the Macs on the network; choose one to pair. With no launch arguments it
-is the real remote. `-MCScene <name>` (`mock`, `pair`, `pairing`, `speakers`, `now-playing`, `playlists`, … see
+is the real remote. `-MCScene <name>` (`mock`, `pair`, `pairing`, `speakers`, `speaker-restricted`, `now-playing`, `playlists`, … see
 `Apps/iOS/Support/RemoteScenes.swift`) and `-MCAppearance light|dark` launch fixed review scenes on the mock hub.
 
 ### A TestFlight build of the iPhone app
@@ -298,7 +298,8 @@ then 20, 40 … up to every 5 minutes, and at once when you switch back to Multi
   3 minutes it is removed (a speaker that is on stays listed regardless).
 - While playing, a network speaker that fails is retried by itself after 2, 5, 10, 20 and then every 30 s, and at
   once when it reappears on the network or on Refresh. A wrong password, or picking the same receiver twice, is
-  not retried. "Try again" retries at once.
+  not retried. "Try again" retries at once. A speaker whose AirPlay access setting admits only its owner isn't a
+  failure: see Apple TV, HomePod and Macs under [Status and limitations](#status-and-limitations).
 
 ## Command line
 
@@ -370,8 +371,11 @@ Multicast is a work in progress. There are development builds only: no signed, n
 - **Apple TV, HomePod and Macs as receivers:** Multicast speaks classic AirPlay (RAOP), which Sonos and other
   third-party AirPlay 2 speakers accept. An Apple TV or HomePod whose AirPlay access setting doesn't admit
   Multicast answers `403 Forbidden` to the very first request, and to the guest ("transient") pairing an iPhone
-  outside the Home would use; its row then says "Blocked by its AirPlay access setting" and it isn't retried on its
-  own ("Try again" still works). Whether such a receiver plays once its access setting admits everyone has not been
+  outside the Home would use. Multicast then turns that speaker off (and doesn't remember it as on), and for the
+  rest of the run lists it apart under "Not available to you" with a lock, "Only its owner can play to it" and
+  **Check Again**, on the Mac, the menu bar and the iPhone. It is never tried on its own, isn't counted as failing,
+  and isn't turned on at the next launch. Check Again asks it once (a single `OPTIONS`, apart from the group, so
+  nothing is heard there); if it now lets Multicast in, it goes back among the other speakers, off. Whether such a receiver plays once its access setting admits everyone has not been
   tried: it would also need the AirPlay 2 handshake (SRP pairing, encrypted RTSP, AirPlay 2 stream setup), which
   Multicast doesn't have yet. A Mac's own AirPlay receiver has not been examined.
 - **Apple Music** plays through the Music app (Apple Events plus a capture of Music's audio), so it needs

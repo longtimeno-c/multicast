@@ -52,6 +52,12 @@ enum Fixtures {
     static let hallSonos = SpeakerDescriptor(
         id: "542a1b003344", name: "Hall Sonos", transport: .airplay2, host: "192.0.2.20", port: 7000,
         raopTXT: ["am": "One"], airplayTXT: ["model": "One", "manufacturer": "Sonos"])
+    /// Someone else's HomePod, set to admit only its owner (made up).
+    static let neighboursHomePod = SpeakerDescriptor(
+        id: "cccc00000001", name: "Neighbour\u{2019}s HomePod", transport: .airplay2, host: "192.0.2.70", port: 7000,
+        airplayTXT: ["model": "AudioAccessory5,1", "manufacturer": "Apple Inc."])
+    /// What `RAOPError.accessRefused` reads as by the time the engine reports it.
+    static let refusal = "the receiver refused access (403 Forbidden to OPTIONS): its AirPlay access setting does not admit this sender"
     /// An AirConnect bridge and the native advertisement of one made-up receiver.
     static let denonBridge = SpeakerDescriptor(
         id: "bbbb0a0b0c0d", name: "Lounge Receiver+", transport: .airplay1, host: "192.0.2.30", port: 49152,
@@ -75,6 +81,8 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
         /// Speakers that fail to prepare (message) on the next play/join.
         var failing: [String: String] = [:]
         var selectErrors: [String: Error] = [:]
+        /// What `checkAccess` answers per speaker (default: admitted).
+        var access: [String: SpeakerAccessCheck] = [:]
         var calls: [String] = []
         var seeks: [TimeInterval] = []
         var selectVolumes: [String: Float] = [:]
@@ -162,6 +170,17 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
         change("retry \(speakerID)") { i in
             guard i.selected.contains(speakerID) else { return }
             if i.transport == .playing { Self.join(&i, speakerID) } else { i.sinks[speakerID] = Self.entry(speakerID, .idle) }
+        }
+    }
+
+    /// Holds `checkAccess` answers while closed.
+    let accessGate = Gate()
+
+    func checkAccess(_ speaker: SpeakerDescriptor) async -> SpeakerAccessCheck {
+        await accessGate.wait()
+        return inner.update { i in
+            i.calls.append("checkAccess \(speaker.id)")
+            return i.access[speaker.id] ?? .admitted
         }
     }
 

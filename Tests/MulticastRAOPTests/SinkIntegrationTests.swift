@@ -200,6 +200,37 @@ import MulticastAudio
         #expect(fake.requests.map(\.method) == ["OPTIONS"])
     }
 
+    @Test func accessCheckAsksOnceAndSendsNoAudio() async throws {
+        let fake = try FakeReceiver()
+        defer { fake.shutdown() }
+        fake.refuseAccess = true
+        let sink = makeSink(fake)
+        #expect(await sink.checkAccess() == .refused)
+        #expect(fake.requests.map(\.method) == ["OPTIONS"])
+        #expect(sink.currentState == .idle)
+
+        // The owner changed the setting: admitted, still nothing but OPTIONS.
+        fake.refuseAccess = false
+        #expect(await sink.checkAccess() == .admitted)
+        #expect(fake.requests.map(\.method) == ["OPTIONS", "OPTIONS"])
+        #expect(fake.audioPackets.isEmpty)
+
+        // A password is not the access setting.
+        let locked = try FakeReceiver()
+        defer { locked.shutdown() }
+        locked.password = "s3cret"
+        #expect(await makeSink(locked).checkAccess() == .admitted)
+
+        // Nobody answering is no answer at all.
+        let gonePort = fake.port
+        fake.shutdown()
+        var options = RAOPSink.Options()
+        options.connectTimeout = 1
+        options.requestTimeout = 1
+        let gone = RAOPSink(host: "127.0.0.1", port: gonePort, name: "AABBCCDDEEFF@Gone", txt: ["et": "0"], options: options)
+        guard case .inconclusive = await gone.checkAccess() else { Issue.record("expected inconclusive"); return }
+    }
+
     @Test func failureThenPrepareAgain() async throws {
         let fake = try FakeReceiver()
         defer { fake.shutdown() }

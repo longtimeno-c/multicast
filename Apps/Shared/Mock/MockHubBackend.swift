@@ -2,8 +2,9 @@ import Foundation
 import MulticastHubModel
 
 /// A believable hub with no audio behind it: speakers are discovered over the first couple of
-/// seconds and take about a second to connect, Patio fails once with a reason, levels move
-/// while playing, tracks advance at their end. Compiles for macOS and iOS.
+/// seconds and take about a second to connect, Patio fails once with a reason, the neighbour's
+/// HomePod and the upstairs Apple TV turn the hub away (Check Again lets the Apple TV in),
+/// levels move while playing, tracks advance at their end. Compiles for macOS and iOS.
 actor MockHubBackend: HubBackend {
     private nonisolated let broadcaster: HubStateBroadcaster
     private var state: HubState {
@@ -14,6 +15,8 @@ actor MockHubBackend: HubBackend {
     private var ticker: Task<Void, Never>?
     private var connecting: [SpeakerID: Task<Void, Never>] = [:]
     private var patioAttempts = 0
+    /// Turned-away speakers that let the hub in when asked again.
+    private var admittedAfterCheck: Set<SpeakerID> = []
     private var phase: Double = 0
 
     // Drawn on the main thread by the caller so the actor never touches drawing.
@@ -234,7 +237,9 @@ actor MockHubBackend: HubBackend {
         case .setSpeakerVolume(let id, let volume): mutateSpeaker(id) { $0.volume = volume }
         case .setSpeakerSyncTrim(let id, let ms): mutateSpeaker(id) { $0.syncTrimMs = ms }
         case .retrySpeaker(let id):
-            guard let s = state.speaker(id), s.isEnabled else { return }
+            guard let s = state.speaker(id) else { return }
+            if s.isRestricted { beginCheckingAccess(id); return }
+            guard s.isEnabled else { return }
             beginConnecting(id)
         case .setMasterVolume(let volume): update { $0.masterVolume = volume }
         case .refreshSpeakers: break
@@ -420,7 +425,7 @@ actor MockHubBackend: HubBackend {
         guard state.speaker(id) != nil else { return }
         connecting[id]?.cancel()
         if enabled {
-            mutateSpeaker(id) { $0.isEnabled = true }
+            mutateSpeaker(id) { $0.isEnabled = true; $0.isRestricted = false }
             beginConnecting(id)
         } else {
             mutateSpeaker(id) { $0.isEnabled = false; $0.state = .off }
@@ -438,8 +443,38 @@ actor MockHubBackend: HubBackend {
         }
     }
 
+    /// The neighbour's HomePod always turns the hub away; the upstairs Apple TV's owner lets
+    /// the hub in once it has been refused once.
+    private static func refuses(_ id: SpeakerID) -> Bool { id == MockData.neighbourHomePod || id == MockData.upstairsTV }
+
+    private func beginCheckingAccess(_ id: SpeakerID) {
+        guard connecting[id] == nil else { return }
+        mutateSpeaker(id) { $0.state = .connecting }
+        connecting[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            await self?.finishCheckingAccess(id)
+        }
+    }
+
+    private func finishCheckingAccess(_ id: SpeakerID) {
+        connecting[id] = nil
+        let admitted = id == MockData.upstairsTV
+        if admitted { admittedAfterCheck.insert(id) }
+        mutateSpeaker(id) {
+            $0.state = .off
+            $0.isRestricted = !admitted
+        }
+    }
+
     private func finishConnecting(_ id: SpeakerID, failed: Bool) {
         guard let s = state.speaker(id), s.isEnabled else { return }
+        if Self.refuses(id), !admittedAfterCheck.contains(id) {
+            // Turned away: the hub switches it off and lists it apart.
+            connecting[id] = nil
+            mutateSpeaker(id) { $0.isEnabled = false; $0.state = .off; $0.isRestricted = true }
+            return
+        }
         if failed { patioAttempts += 1 }
         let playing = state.transport.isPlaying
         mutateSpeaker(id) { $0.state = failed ? .failed(reason: "Not responding") : (playing ? .playing : .ready) }
