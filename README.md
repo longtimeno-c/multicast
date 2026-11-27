@@ -143,6 +143,24 @@ with Remove (after a confirmation it is disconnected at once and must pair again
 is the real remote. `-MCScene <name>` (`mock`, `pair`, `pairing`, `speakers`, `now-playing`, `playlists`, … see
 `Apps/iOS/Support/RemoteScenes.swift`) and `-MCAppearance light|dark` launch fixed review scenes on the mock hub.
 
+### A TestFlight build of the iPhone app
+
+With your team in `Apps/Config/Local.xcconfig`, archive the app (the broadcast extension is archived with it)
+and export it for App Store Connect. Each upload needs a new build number.
+
+```bash
+xcodebuild -project Apps/Multicast.xcodeproj -scheme "Multicast Remote" -configuration Release \
+    -destination 'generic/platform=iOS' -archivePath .build-xcode-archive/MulticastRemote.xcarchive \
+    -allowProvisioningUpdates CURRENT_PROJECT_VERSION=1 archive
+xcodebuild -exportArchive -archivePath .build-xcode-archive/MulticastRemote.xcarchive \
+    -exportOptionsPlist Apps/Config/ExportOptions-AppStore.plist -exportPath .build-xcode-archive/export \
+    -allowProvisioningUpdates
+```
+
+The export step creates an Apple Distribution certificate and App Store profiles under your team if there are
+none. The app needs a record in App Store Connect with the bundle id `io.github.longtimeno-c.multicast.remote`
+before a build can be uploaded.
+
 ### iPhone Only (experimental)
 
 With no Mac, the iPhone app can play what the iPhone itself is playing on AirPlay speakers. Open it from

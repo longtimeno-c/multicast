@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Export compliance: the link to the Mac (ChaCha20-Poly1305, Curve25519) and AirPlay's
+	     own handshake use only the operating system's standard cryptography (CryptoKit), which
+	     Apple treats as exempt from export documentation. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Multicast Remote finds the Mac that plays your music and controls it over your network. In iPhone Only mode it finds your AirPlay speakers and plays to them.</string>
 	<key>NSBonjourServices</key>
