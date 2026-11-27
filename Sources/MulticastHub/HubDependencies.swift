@@ -59,6 +59,11 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     /// Seeks the current file source (flush + re-anchor while playing).
     func seek(toSeconds seconds: TimeInterval) async throws
 
+    /// A speaker that brings its own sink (a paired iPhone); see `MulticastSession`. Defaults:
+    /// nothing.
+    func addExternalSpeaker(_ speaker: SpeakerDescriptor, sink: any AudioSink) async
+    func removeExternalSpeaker(id: String) async
+
     func setMasterVolume(_ volume: Float)
     func setVolume(_ volume: Float, forSpeaker id: String)
     func setOffset(millis: Int, forSpeaker id: String)
@@ -227,5 +232,7 @@ public struct HubDependencies: Sendable {
 }
 
 extension HubSessionControlling {
+    public func addExternalSpeaker(_ speaker: SpeakerDescriptor, sink: any AudioSink) async {}
+    public func removeExternalSpeaker(id: String) async {}
     public func refreshSpeakers() {}
 }

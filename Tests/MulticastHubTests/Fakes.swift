@@ -159,6 +159,20 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
         }
     }
 
+    func addExternalSpeaker(_ speaker: SpeakerDescriptor, sink: any AudioSink) async {
+        change("addExternal \(speaker.id) \(speaker.model ?? "")") { i in
+            if let at = i.speakers.firstIndex(where: { $0.id == speaker.id }) { i.speakers[at] = speaker } else { i.speakers.append(speaker) }
+        }
+    }
+
+    func removeExternalSpeaker(id: String) async {
+        change("removeExternal \(id)") { i in
+            i.speakers.removeAll { $0.id == id }
+            i.selected.removeAll { $0 == id }
+            i.sinks[id] = nil
+        }
+    }
+
     func deselect(speakerID: String) async {
         change("deselect \(speakerID)") { i in
             i.selected.removeAll { $0 == speakerID }

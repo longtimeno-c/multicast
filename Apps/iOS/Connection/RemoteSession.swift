@@ -1,5 +1,6 @@
 import Foundation
 import MulticastHubModel
+import MulticastRemote
 import Observation
 import SwiftUI
 
@@ -22,6 +23,8 @@ final class RemoteSession {
     private(set) var isSubmittingCode = false
 
     let navigation: RemoteNavigation
+    /// "Play on this iPhone": this device as one of the hub's speakers.
+    let phoneSpeaker: PhoneSpeakerModel
     var reduceMotion = false
 
     @ObservationIgnored private let connector: HubConnector
@@ -32,8 +35,10 @@ final class RemoteSession {
     @ObservationIgnored private let prepare: @MainActor (HubModel) -> Void
 
     /// `prepare` runs once on each new `HubModel` before it starts (review scenes use it).
-    init(connector: HubConnector, navigation: RemoteNavigation? = nil,
+    init(connector: HubConnector, navigation: RemoteNavigation? = nil, phoneSpeaker: PhoneSpeakerModel? = nil,
          searchTimeout: Duration = .seconds(10), prepare: @escaping @MainActor (HubModel) -> Void = { _ in }) {
+        self.phoneSpeaker = phoneSpeaker
+            ?? PhoneSpeakerModel(routes: FixedRouteMonitor(PhoneRoute(name: "Speaker", kind: .builtIn)), output: SilentPhoneOutput())
         self.connector = connector
         self.navigation = navigation ?? RemoteNavigation()
         self.searchTimeout = searchTimeout
@@ -103,6 +108,8 @@ final class RemoteSession {
             adopted = m
             backendID = ObjectIdentifier(backend as AnyObject)
             hub = h
+            // The real link can carry audio; a scene's mock hub is attached by the scene.
+            if let audio = backend as? any PhoneSpeakerBackend { phoneSpeaker.attach(audio) }
         }
         let apply = {
             if let adopted {
@@ -171,6 +178,7 @@ final class RemoteSession {
 
     /// Forget this Mac: drop its pairing and go back to choosing one.
     func forget() {
+        phoneSpeaker.attach(nil)
         model?.stop()
         model = nil
         backendID = nil

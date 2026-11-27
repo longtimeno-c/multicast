@@ -45,6 +45,7 @@ struct RemoteMainView: View {
         .sheet(item: $nav.speakerDetail) { target in
             SpeakerDetailSheet(speakerID: target.id)
                 .environment(model)
+                .environment(session)
         }
         .alert(model.alert?.title ?? "", isPresented: Binding(
             get: { model.alert != nil },
@@ -55,6 +56,8 @@ struct RemoteMainView: View {
             Text(alert.message)
         }
         .environment(model)
+        // This device's own row turned off on the Mac turns "This iPhone" off here.
+        .onChange(of: model.speakers) { _, speakers in session.phoneSpeaker.hubSpeakersChanged(speakers) }
         .onAppear { model.reduceMotion = reduceMotion }
         .onChange(of: reduceMotion) { _, new in model.reduceMotion = new }
     }

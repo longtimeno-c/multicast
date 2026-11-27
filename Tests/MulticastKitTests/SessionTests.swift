@@ -98,6 +98,48 @@ private func makeSession(_ factory: RecordingFactory) -> MulticastSession {
         #expect(session.selectedSpeakerIDs.isEmpty)
     }
 
+    @Test func aSpeakerThatBringsItsOwnSinkIsListedSelectedAndRemoved() async throws {
+        let factory = RecordingFactory()
+        let session = makeSession(factory)
+        session.start()
+        let phone = SpeakerDescriptor(id: "phone:remote-a", name: "Sample iPhone", transport: .remote, model: "Speaker", localKind: .builtIn)
+        // Nothing can build it: without its device it can't be selected.
+        await #expect(throws: MulticastSession.SessionError.self) { try await session.select(phone) }
+        #expect(session.selectedSpeakerIDs.isEmpty)
+
+        let sink = RecordingSink(phone)
+        await session.addExternalSpeaker(phone, sink: sink)
+        #expect(session.state.speakers.map(\.id) == [phone.id])
+        try await session.setSource(.tone(frequency: 440, amplitude: 0.1, duration: nil))
+        try await session.select(phone, volume: 0.1)
+        try await session.play()
+        try await Task.sleep(nanoseconds: 500_000_000)
+        #expect(sink.log.withLock { $0.packets.count } > 20)
+        #expect(factory.sink(phone.id) == nil)                 // the factory was never asked
+
+        // Its output changed: same sink, new descriptor, still playing.
+        var moved = phone
+        moved.model = "Sample Speaker"
+        moved.localKind = .bluetooth
+        await session.addExternalSpeaker(moved, sink: sink)
+        #expect(session.state.speakers.first?.model == "Sample Speaker")
+        #expect(session.selectedSpeakerIDs == [phone.id])
+
+        // A new link to the same phone: the old sink leaves the group.
+        let second = RecordingSink(phone)
+        await session.addExternalSpeaker(moved, sink: second)
+        #expect(session.selectedSpeakerIDs.isEmpty)
+        #expect(sink.log.withLock { $0.calls }.last == "stop")
+        try await session.select(moved, volume: 0.1)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(second.log.withLock { $0.packets.count } > 5)
+
+        await session.removeExternalSpeaker(id: phone.id)
+        #expect(session.state.speakers.isEmpty && session.selectedSpeakerIDs.isEmpty)
+        #expect(second.log.withLock { $0.calls }.last == "stop")
+        await session.shutdown()
+    }
+
     @Test func samePhysicalDeviceIsRefused() async throws {
         let factory = RecordingFactory()
         let session = makeSession(factory)

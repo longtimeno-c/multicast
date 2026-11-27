@@ -25,6 +25,7 @@ final class FramedConnection: @unchecked Sendable {
     private let ready = Locked(ReadyState())
     private let sendState = Locked(SendState())
     private let opener = Locked<FrameOpener?>(nil)
+    private let sessionKeys = Locked<(send: SymmetricKey, receive: SymmetricKey)?>(nil)
 
     init(_ connection: NWConnection, label: String) {
         self.connection = connection
@@ -174,6 +175,24 @@ final class FramedConnection: @unchecked Sendable {
     func startEncryption(sendKey: SymmetricKey, sendLabel: String, receiveKey: SymmetricKey, receiveLabel: String) {
         sendState.withLock { $0.sealer = FrameSealer(key: sendKey, direction: sendLabel) }
         opener.withLock { $0 = FrameOpener(key: receiveKey, direction: receiveLabel) }
+        sessionKeys.withLock { $0 = (sendKey, receiveKey) }
+    }
+
+    /// Keys for one offer's audio channel, derived from this session's keys and the offer's
+    /// salt. nil before the session is sealed. `asHub` says which end this is.
+    func audioChannelKeys(salt: Data, asHub: Bool) -> AudioChannelKeys? {
+        guard let keys = sessionKeys.value else { return nil }
+        let outgoing = asHub ? AudioChannel.hubToPhone : AudioChannel.phoneToHub
+        let incoming = asHub ? AudioChannel.phoneToHub : AudioChannel.hubToPhone
+        return AudioChannelKeys(send: AudioChannel.key(from: keys.send, salt: salt, direction: outgoing),
+                                receive: AudioChannel.key(from: keys.receive, salt: salt, direction: incoming))
+    }
+
+    /// The other side's address, without its port (for the audio channel's own connection).
+    var remoteHost: NWEndpoint.Host? {
+        if case .hostPort(let host, _)? = connection.currentPath?.remoteEndpoint { return host }
+        if case .hostPort(let host, _) = connection.endpoint { return host }
+        return nil
     }
 
     // MARK: Handshake helpers

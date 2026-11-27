@@ -5,6 +5,7 @@ import MulticastHubModel
 /// nobody needs every day. Half height first; sync trim is in reach without scrolling.
 struct SpeakerDetailSheet: View {
     @Environment(HubModel.self) private var model
+    @Environment(RemoteSession.self) private var session
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var speakerID: SpeakerID
@@ -54,10 +55,17 @@ struct SpeakerDetailSheet: View {
                     detailRow("Connection", speaker.transport.label)
                     if let m = speaker.model {
                         RowDivider()
-                        detailRow("Model", m)
+                        detailRow(speaker.transport == .phone ? "Plays through" : "Model", m)
                     }
-                    RowDivider()
-                    detailRow(speaker.transport.isNetwork ? "Address" : "Device", speaker.address ?? "\u{2014}")
+                    if speaker.transport != .phone {
+                        RowDivider()
+                        detailRow(speaker.transport.isNetwork ? "Address" : "Device", speaker.address ?? "\u{2014}")
+                    }
+                }
+
+                // This device's own row: how its link to the Mac is doing.
+                if speaker.id == session.phoneSpeaker.speakerID, let stats = session.phoneSpeaker.stats {
+                    PhoneLinkSection(stats: stats, output: session.phoneSpeaker.outputDiagnostics)
                 }
             }
             .padding(.horizontal, MC.Space.l)
@@ -186,7 +194,9 @@ struct SpeakerDetailSheet: View {
                 .padding(.horizontal, MC.Space.m)
                 .padding(.vertical, MC.Space.m)
             }
-            Text("Move this speaker earlier if it lags behind the rest of the house. Bluetooth speakers usually need about 150 to 250 ms.")
+            Text(speaker.transport == .phone
+                 ? "Kept for each output this iPhone plays through. Its own speaker should need none; a Bluetooth speaker or headphones add a delay nothing reports, so move this earlier until it lines up with the rest of the house, usually by 100 to 250 ms."
+                 : "Move this speaker earlier if it lags behind the rest of the house. Bluetooth speakers usually need about 150 to 250 ms.")
                 .font(MC.Font.caption)
                 .foregroundStyle(MC.Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)

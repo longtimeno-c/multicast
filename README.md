@@ -21,6 +21,8 @@ Multicast Remote, plays the part of the old iTunes Remote.
 - **Other sources.** Capture the sound of any other app on the Mac, or play DRM-free audio files.
 - **iPhone remote.** Pairs with the Mac once using a 6-digit code over an encrypted link, then controls speakers,
   volumes, sync trim, playback, Up Next and the library.
+- **The iPhone as a speaker.** A paired iPhone can join the group and play through whatever it is connected to: its
+  own speaker, AirPods, or a Bluetooth speaker that only the phone can reach.
 - **Menu bar.** The Mac app keeps running in the menu bar with now playing and the speaker list.
 - Apple frameworks only; no third-party code.
 
@@ -113,7 +115,8 @@ Mac:    Multicast (window, menu bar) ── HubModel ─────────
 - `Sources/MulticastAppleMusic` — Apple Music for the hub: `MusicAppPlayer` (the Music app over Apple Events, the
   default), `MusicKitPlayer` (MusicKit) and `CatalogRoutingProvider` (the Music app for the library, MusicKit for
   catalog songs; see Limitations)
-- `Sources/MulticastRemote` — `HubServer`, `RemoteHubBackend`, `HubBrowser`, pairing and the encrypted session
+- `Sources/MulticastRemote` — `HubServer`, `RemoteHubBackend`, `HubBrowser`, pairing and the encrypted session;
+  `Audio/` is the channel a paired iPhone plays the stream through
 - `Sources/multicast-cli` — play to speakers from the command line
 - `Sources/multicast-hub` — the hub without its window (same `LocalHub` and `HubServer` as the app)
 - `Sources/multicast-remote-cli` — a scripted remote: pairs and drives a hub like the iPhone app does
@@ -192,6 +195,40 @@ xcodebuild -project Apps/Multicast.xcodeproj -scheme "Multicast Remote" \
 
 Review scenes on made-up speakers: `-MCScene phone-only`, `phone-only-playing`, `phone-only-silent`,
 `phone-only-unreachable`, `phone-only-stopped`, `phone-only-searching`, `phone-only-empty`.
+
+### This iPhone as a speaker
+
+On the iPhone's Speakers tab, the first row is **This iPhone**, named after what the phone would play through
+("iPhone Speaker", or the name of the Bluetooth speaker or headphones connected to it). Turn it on and the Mac
+lists the phone under **iPhones**, with a phone glyph, and plays to it in time with the other speakers. It has a
+volume and a sync trim like any speaker, on the Mac and on every remote.
+
+- **How the audio gets there.** The Mac already holds the stream as PCM where it fans out to the speakers, so the
+  phone's sink (`PhoneSpeakerSink`) is one more `AudioSink`. Packets travel over UDP beside the remote link, sealed
+  with keys derived from that link's session (`Sources/MulticastRemote/Audio/AudioWire.swift` has the format and the
+  reasons: audio never waits behind state or artwork on the TCP link, and one 352-frame packet of raw PCM fits one
+  unfragmented datagram, so there is no codec). The phone asks again for packets that go missing (the Mac keeps two
+  seconds of them) and fades over any that never arrive rather than stalling.
+- **The clock.** The phone pings the Mac over the same channel and estimates the Mac's clock from the exchanges with
+  the least delay, with a line fitted through them for the drift between the two crystals (`ClockEstimator`). The
+  output follows small corrections by adjusting its speed by parts per million, as it does for any drift.
+- **The output.** `CurrentRouteSink` on the phone schedules against the timeline with the delay iOS reports for the
+  current output. It plays with the screen locked (the `audio` background mode) and behaves like a music app: a call
+  or another app that starts playing interrupts it, and it resumes only when iOS says the interruption is over or you
+  tap Try Again. If the output that was playing goes away (the Bluetooth speaker is switched off), This iPhone turns
+  itself off instead of carrying on from the phone's own speaker.
+- **Bluetooth.** iOS reports a delay for a Bluetooth output and it is allowed for, but the report is an estimate and
+  the speaker adds its own. Set the row's **Sync trim** once by ear (earlier, typically 100 to 250 ms). Volume and
+  trim are remembered per phone and per output, so the phone's own speaker and each Bluetooth speaker keep theirs.
+- **Coming and going.** The row exists on the Mac only while the phone is connected with This iPhone on. Turning it
+  off on the Mac turns it off on the phone. If the link drops, the phone offers itself again when it reconnects.
+  This iPhone is off at every launch of the app.
+- The speaker's details on the phone show the link's figures: round trip, clock drift, seconds buffered, packets
+  asked for again and lost, the output delay iOS reports, and how far playback is off the timeline.
+
+It needs Multicast on the Mac and the iPhone app from the same version (remote protocol 4); with an older Mac the
+row says to update it. Review scenes: `-MCScene phone-speaker`, `phone-speaker-off`, `phone-speaker-detail`.
+`-MCOnlyHub "<name>"` makes the app see only that Mac, for testing against one hub among several.
 
 ### Play queue, pinned playlists and the library
 
@@ -359,6 +396,14 @@ Multicast is a work in progress. There are development builds only: no signed, n
   Network access from the extension, sync by ear) is untested. Whether Apple Music and Spotify give a broadcast
   real audio or silence is unknown: people report that iOS screen recordings of Apple Music have no sound, and
   one report says Spotify's do, but nothing here has confirmed either.
+- **This iPhone as a speaker has run in the simulator only.** The simulator, paired with a headless hub on the same
+  Mac, played a tone for 100 s: round trip 0.2 ms, 2.0 s buffered, no packets lost, playback within 0.1 ms of the
+  timeline, no dropouts. That proves the pipeline, not a phone: Wi-Fi loss and jitter, a real second clock, the
+  delay iOS reports for Bluetooth, playing with the screen locked, calls and other apps interrupting, and sync by
+  ear are untested on a device. Known limits: the phone drops out of the group if the link to the Mac is lost for
+  more than a few seconds (it rejoins by itself while the app is running); after ten minutes of pause the output
+  closes, and iOS may then suspend the app in the background until it is opened again; nothing appears on the lock
+  screen (no now-playing info or controls there).
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
 - **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand,** and sync across bridges has not

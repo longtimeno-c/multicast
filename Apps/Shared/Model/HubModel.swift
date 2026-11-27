@@ -439,7 +439,9 @@ final class HubModel {
     /// away are `restrictedSpeakers`, listed apart.
     var usableSpeakers: [SpeakerItem] { speakers.filter { !$0.isRestricted } }
     var networkSpeakers: [SpeakerItem] { usableSpeakers.filter { $0.transport.isNetwork } }
-    var localSpeakers: [SpeakerItem] { usableSpeakers.filter { !$0.transport.isNetwork } }
+    var localSpeakers: [SpeakerItem] { usableSpeakers.filter { !$0.transport.isNetwork && $0.transport != .phone } }
+    /// Paired iPhones playing the stream through their own output.
+    var phoneSpeakers: [SpeakerItem] { usableSpeakers.filter { $0.transport == .phone } }
     /// Speakers whose AirPlay access setting doesn't admit this hub (they admit only their owner).
     var restrictedSpeakers: [SpeakerItem] { speakers.filter(\.isRestricted) }
     var enabledCount: Int { speakers.filter(\.isEnabled).count }

@@ -47,6 +47,11 @@ struct SpeakersPanel: View {
                         if !model.localSpeakers.isEmpty {
                             speakerGroup("This Mac", model.localSpeakers)
                         }
+                        // Paired iPhones that chose "This iPhone" in Multicast Remote.
+                        if !model.phoneSpeakers.isEmpty {
+                            speakerGroup("iPhones", model.phoneSpeakers)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                         if !localNetworkOff, !model.restrictedSpeakers.isEmpty {
                             restrictedGroup(model.restrictedSpeakers)
                                 .transition(.opacity.combined(with: .move(edge: .top)))

@@ -48,9 +48,9 @@ public enum SpeakerMatching {
     /// Playing to both would double the audio with two different delays.
     public static func physicalConflict(for candidate: SpeakerDescriptor,
                                         among selected: [SpeakerDescriptor]) -> SpeakerDescriptor? {
-        guard candidate.transport != .local else { return nil }
+        guard candidate.transport != .local, candidate.transport != .remote else { return nil }
         return selected.first { other in
-            other.transport != .local && other.id != candidate.id && candidate.isLikelySamePhysicalDevice(as: other)
+            other.transport != .local && other.transport != .remote && other.id != candidate.id && candidate.isLikelySamePhysicalDevice(as: other)
         }
     }
 }

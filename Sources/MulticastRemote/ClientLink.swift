@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MulticastHubModel
+import Network
 
 // The remote's side of the handshake and of one authenticated session.
 
@@ -156,6 +157,7 @@ final class RemoteSession: @unchecked Sendable {
         case command(HubCommandError?)
         case query(HubQueryResult?, HubCommandError?)
         case artwork(Data?)
+        case speaker(port: UInt16, salt: Data, speakerID: String)
     }
 
     struct Callbacks: Sendable {
@@ -244,6 +246,8 @@ final class RemoteSession: @unchecked Sendable {
                     case .revoked(let why):
                         inner.withLock { $0.revoked = true }
                         throw RemoteLinkError.closed(why)
+                    case .speakerAccepted(let id, let port, let salt, let speakerID):
+                        resolve(id, .speaker(port: port, salt: salt, speakerID: speakerID))
                     }
                 }
             }
@@ -280,6 +284,18 @@ final class RemoteSession: @unchecked Sendable {
     private func send(_ message: ClientMessage) async throws {
         try await link.send(SessionPayload.json(try WireJSON.encode(message)).encoded())
     }
+
+    // MARK: This device as a speaker
+
+    /// Sends a message nobody answers (a route change, a withdrawal). Best effort.
+    func post(_ message: ClientMessage) {
+        guard inner.value.endReason == nil else { return }
+        Task { try? await self.send(message) }
+    }
+
+    var hasEnded: Bool { inner.value.endReason != nil }
+    var hubHost: NWEndpoint.Host? { link.remoteHost }
+    func audioChannelKeys(salt: Data) -> AudioChannelKeys? { link.audioChannelKeys(salt: salt, asHub: false) }
 
     // MARK: Requests
 

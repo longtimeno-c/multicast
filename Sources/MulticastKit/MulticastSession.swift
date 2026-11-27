@@ -149,6 +149,8 @@ public final class MulticastSession: @unchecked Sendable {
     }
 
     private let selection = OSAllocatedUnfairLock(initialState: Selection())
+    /// Speakers that come with their own sink (a paired iPhone), in the order they were added.
+    private let externals = OSAllocatedUnfairLock(uncheckedState: [(descriptor: SpeakerDescriptor, sink: any AudioSink)]())
     private let broadcaster: Broadcaster<SessionState>
     /// select/deselect run one at a time, so a deselect can never overtake the engine add of an
     /// in-flight select of the same speaker (which would leave it playing but untracked).
@@ -191,7 +193,7 @@ public final class MulticastSession: @unchecked Sendable {
             for await listing in listings {
                 guard let self else { return }
                 self.publish {
-                    $0.speakers = listing.speakers
+                    $0.speakers = listing.speakers + self.externalDescriptors
                     $0.notSeenSince = listing.notSeenSince
                 }
                 // A speaker answering again after a gap: retry it now rather than on its backoff.
@@ -284,7 +286,7 @@ public final class MulticastSession: @unchecked Sendable {
         var s = broadcaster.current  // keeps the published revision
         s.engine = engine.snapshot
         let listing = directory.listing
-        s.speakers = listing.speakers
+        s.speakers = listing.speakers + externalDescriptors
         s.notSeenSince = listing.notSeenSince
         s.selectedSpeakerIDs = selection.withLock { $0.order }
         return s
@@ -317,7 +319,7 @@ public final class MulticastSession: @unchecked Sendable {
     /// currently knows the same id, its fresh descriptor (current host/port) is used instead.
     public func select(_ descriptor: SpeakerDescriptor, volume: Float? = nil, offsetMillis: Int = 0) async throws {
         try ensureUsable()
-        let current = directory.speaker(id: descriptor.id) ?? descriptor
+        let current = directory.speaker(id: descriptor.id) ?? external(id: descriptor.id)?.descriptor ?? descriptor
         try await membership.runThrowing { [self] in
             try await selectNow(current, volume: volume, offsetMillis: offsetMillis)
         }
@@ -343,7 +345,14 @@ public final class MulticastSession: @unchecked Sendable {
         }
         let sink: AudioSink
         do {
-            sink = try factory.makeSink(for: descriptor)
+            if let own = external(id: descriptor.id)?.sink {
+                sink = own
+            } else if descriptor.transport == .remote {
+                // Its sink is the link to the device, which no factory can make.
+                throw SinkFactoryError.deviceNotConnected(speaker: descriptor.name)
+            } else {
+                sink = try factory.makeSink(for: descriptor)
+            }
         } catch {
             unreserve(descriptor.id)
             throw SessionError.sinkCreationFailed(descriptor.name, String(describing: error))
@@ -362,6 +371,40 @@ public final class MulticastSession: @unchecked Sendable {
             await engine.removeSink(id: id)
             unreserve(id)
         }
+    }
+
+    // MARK: Speakers that bring their own sink
+
+    private var externalDescriptors: [SpeakerDescriptor] { externals.withLockUnchecked { $0.map(\.descriptor) } }
+
+    private func external(id: String) -> (descriptor: SpeakerDescriptor, sink: any AudioSink)? {
+        externals.withLockUnchecked { list in list.first { $0.descriptor.id == id } }
+    }
+
+    /// Lists a speaker that isn't found by discovery and can't be built by the factory: a paired
+    /// iPhone, whose sink is the link to it. It appears among `state.speakers` and is selected
+    /// like any other. Adding the same id again updates its descriptor (the phone's output
+    /// changed); with a different sink, the old one is taken out of the group first.
+    public func addExternalSpeaker(_ descriptor: SpeakerDescriptor, sink: any AudioSink) async {
+        if isShutDown.withLock({ $0 }) { return }
+        if let old = external(id: descriptor.id), old.sink !== sink { await deselect(speakerID: descriptor.id) }
+        externals.withLockUnchecked { list in
+            if let i = list.firstIndex(where: { $0.descriptor.id == descriptor.id }) {
+                list[i] = (descriptor, sink)
+            } else {
+                list.append((descriptor, sink))
+            }
+        }
+        selection.withLock { if $0.descriptors[descriptor.id] != nil { $0.descriptors[descriptor.id] = descriptor } }
+        publish { $0.speakers = self.directory.listing.speakers + self.externalDescriptors }
+    }
+
+    /// The device left: its speaker is taken out of the group and off the list.
+    public func removeExternalSpeaker(id: String) async {
+        guard external(id: id) != nil else { return }
+        await deselect(speakerID: id)
+        externals.withLockUnchecked { $0.removeAll { $0.descriptor.id == id } }
+        publish { $0.speakers = self.directory.listing.speakers + self.externalDescriptors }
     }
 
     /// Discovery re-resolved a selected network speaker on another host/port (an AirConnect
@@ -530,7 +573,7 @@ public final class MulticastSession: @unchecked Sendable {
     /// its own (with its password, if one is set); a local output is always admitted. The
     /// speaker's current advertisement is used when discovery has a newer one.
     public func checkAccess(_ descriptor: SpeakerDescriptor) async -> SpeakerAccessCheck {
-        guard descriptor.transport != .local else { return .admitted }
+        guard descriptor.transport != .local, descriptor.transport != .remote else { return .admitted }
         return await SpeakerAccessCheck.check(directory.speaker(id: descriptor.id) ?? descriptor, factory: factory)
     }
 

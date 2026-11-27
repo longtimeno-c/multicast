@@ -11,11 +11,15 @@ public protocol SinkProviding: Sendable {
 public enum SinkFactoryError: Error, Equatable, Sendable, CustomStringConvertible {
     case missingNetworkAddress(speaker: String)
     case missingDeviceUID(speaker: String)
+    /// A `.remote` speaker (a paired iPhone) whose device isn't connected: there is nothing to
+    /// build, its sink comes with the device (`MulticastSession.addExternalSpeaker`).
+    case deviceNotConnected(speaker: String)
 
     public var description: String {
         switch self {
         case .missingNetworkAddress(let s): return "\(s) has no resolved host/port yet"
         case .missingDeviceUID(let s): return "\(s) has no Core Audio device UID"
+        case .deviceNotConnected(let s): return "\(s) is not connected"
         }
     }
 }
@@ -40,11 +44,13 @@ public struct SinkFactory: SinkProviding {
     public static func kind(for speaker: SpeakerDescriptor) -> Kind {
         switch speaker.transport {
         case .airplay1, .airplay2: return .raop
-        case .local: return .local
+        // A remote device's sink is never built here; it reports like a local output.
+        case .local, .remote: return .local
         }
     }
 
     public func makeSink(for speaker: SpeakerDescriptor) throws -> AudioSink {
+        if speaker.transport == .remote { throw SinkFactoryError.deviceNotConnected(speaker: speaker.name) }
         switch SinkFactory.kind(for: speaker) {
         case .raop:
             guard speaker.host?.isEmpty == false, speaker.port != nil else {
