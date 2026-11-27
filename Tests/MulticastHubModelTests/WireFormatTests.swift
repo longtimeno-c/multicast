@@ -135,10 +135,15 @@ import Testing
                                      volume: 0.5, isRestricted: true)
         #expect(try json(restricted).contains(#""isRestricted":true"#))
         try roundTrip(restricted)
+        #expect(try !json(restricted).contains("isCheckingAccess"))
+        // Being asked again: one more optional key, and the state stays off.
         var checking = restricted
-        checking.state = .connecting
+        checking.isCheckingAccess = true
         checking.notSeenSince = Date(timeIntervalSinceReferenceDate: 500)
+        #expect(try json(checking).contains(#""isCheckingAccess":true"#))
+        #expect(try json(checking).contains(#""state":{"off":{}}"#))
         try roundTrip(checking)
+        #expect(try !json(plain).contains("isCheckingAccess"))
 
         // What an older hub sends: no key, so not restricted.
         let old = try JSONDecoder().decode(SpeakerItem.self, from: Data(
@@ -152,6 +157,13 @@ import Testing
         }
         let seenByOld = try JSONDecoder().decode(OlderSpeakerItem.self, from: JSONEncoder().encode(restricted))
         #expect(seenByOld.name == "Neighbour\u{2019}s HomePod" && !seenByOld.isEnabled && seenByOld.state == .off)
+        // Even while it is being asked again: an older remote sees an off speaker, not a
+        // connecting one it would count.
+        let checkingSeenByOld = try JSONDecoder().decode(OlderSpeakerItem.self, from: JSONEncoder().encode(checking))
+        #expect(!checkingSeenByOld.isEnabled && checkingSeenByOld.state == .off)
+        let oldCheckingDecoded = try JSONDecoder().decode(SpeakerItem.self, from: Data(
+            #"{"id":"bbbb58000010","name":"Patio","transport":"airPlay1","glyph":"airportExpress","isEnabled":false,"volume":0.7,"state":{"off":{}},"syncTrimMs":0}"#.utf8))
+        #expect(!oldCheckingDecoded.isCheckingAccess)
 
         var s = HubState(revision: 3)
         s.speakers = [plain, restricted]

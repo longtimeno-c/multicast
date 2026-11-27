@@ -425,7 +425,7 @@ actor MockHubBackend: HubBackend {
         guard state.speaker(id) != nil else { return }
         connecting[id]?.cancel()
         if enabled {
-            mutateSpeaker(id) { $0.isEnabled = true; $0.isRestricted = false }
+            mutateSpeaker(id) { $0.isEnabled = true; $0.isRestricted = false; $0.isCheckingAccess = false }
             beginConnecting(id)
         } else {
             mutateSpeaker(id) { $0.isEnabled = false; $0.state = .off }
@@ -449,7 +449,7 @@ actor MockHubBackend: HubBackend {
 
     private func beginCheckingAccess(_ id: SpeakerID) {
         guard connecting[id] == nil else { return }
-        mutateSpeaker(id) { $0.state = .connecting }
+        mutateSpeaker(id) { $0.isCheckingAccess = true }
         connecting[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
@@ -463,6 +463,7 @@ actor MockHubBackend: HubBackend {
         if admitted { admittedAfterCheck.insert(id) }
         mutateSpeaker(id) {
             $0.state = .off
+            $0.isCheckingAccess = false
             $0.isRestricted = !admitted
         }
     }

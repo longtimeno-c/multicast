@@ -66,8 +66,10 @@ public actor LocalHub: HubBackend {
     /// (and not remembered as on), never turned on by the hub, and asked again only when the
     /// person says so (`retrySpeaker`: "Check Again") or turns one on themselves.
     private var restricted: Set<String> = []
-    /// Restricted speakers being asked again right now.
-    private var accessChecks: [String: Task<Void, Never>] = [:]
+    /// Restricted speakers being asked again right now. Each check carries a token, so a check
+    /// that was cancelled (its blocking `OPTIONS` still finishes) can't apply its answer to, or
+    /// end, a later one.
+    private var accessChecks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
     private var startedAt: Date
     private var lastSpeakerListChange: Date
     private var discovering = false
@@ -211,7 +213,7 @@ public actor LocalHub: HubBackend {
         endingTask?.cancel()
         queueEndTimer?.cancel()
         musicPermissionRequest?.cancel()
-        for t in accessChecks.values { t.cancel() }
+        for check in accessChecks.values { check.task.cancel() }
         accessChecks.removeAll()
         await workTail?.value
         // Removing the tap unmutes a media app: one still playing would carry on out of the
@@ -380,7 +382,7 @@ public actor LocalHub: HubBackend {
             if metadataTail == tail { break }
         }
         await spotifyAutomationCheck?.value
-        while let check = accessChecks.values.first { await check.value }
+        while let check = accessChecks.values.first { await check.task.value }
     }
 
     func enqueue(_ op: @escaping @Sendable () async -> Void) {
@@ -423,7 +425,7 @@ public actor LocalHub: HubBackend {
         if restricted.contains(id) {
             guard remember else { return }
             restricted.remove(id)
-            accessChecks.removeValue(forKey: id)?.cancel()
+            accessChecks.removeValue(forKey: id)?.task.cancel()
         }
         enabledOrder.append(id)
         selectFailures[id] = nil
@@ -568,15 +570,19 @@ public actor LocalHub: HubBackend {
         let session = deps.session
         // Off the work queue: an unreachable speaker takes seconds to give up, and other
         // commands must not wait behind it.
-        accessChecks[id] = Task { [weak self] in
+        let token = UUID()
+        let task = Task { [weak self] in
             let result = await session.checkAccess(d)
-            await self?.accessChecked(id, result)
+            await self?.accessChecked(id, token: token, result)
         }
+        accessChecks[id] = (token, task)
         publish()
     }
 
-    private func accessChecked(_ id: String, _ result: SpeakerAccessCheck) {
-        guard accessChecks.removeValue(forKey: id) != nil else { return }
+    private func accessChecked(_ id: String, token: UUID, _ result: SpeakerAccessCheck) {
+        // Only the check that is current for this speaker may answer for it.
+        guard accessChecks[id]?.token == token else { return }
+        accessChecks[id] = nil
         if result == .admitted { restricted.remove(id) }
         publish()
     }
@@ -1466,9 +1472,7 @@ public actor LocalHub: HubBackend {
             let p = preset(for: id)
             let enabled = enabledOrder.contains(id)
             let state: SpeakerState
-            if accessChecks[id] != nil {
-                state = .connecting
-            } else if !enabled {
+            if !enabled {
                 state = .off
             } else if let reason = blocked[id] ?? selectFailures[id] {
                 state = .failed(reason: reason)
@@ -1481,7 +1485,8 @@ public actor LocalHub: HubBackend {
                                glyph: SpeakerPresentation.glyph(for: d, hostIsLaptop: laptop),
                                model: SpeakerPresentation.modelName(for: d), address: SpeakerPresentation.address(for: d),
                                isEnabled: enabled, volume: p.volume, state: state, syncTrimMs: p.syncTrimMs,
-                               notSeenSince: session.notSeenSince[id], isRestricted: restricted.contains(id))
+                               notSeenSince: session.notSeenSince[id], isRestricted: restricted.contains(id),
+                               isCheckingAccess: restricted.contains(id) && accessChecks[id] != nil)
         }
         var extra: [HubIssue] = []
         switch spotifyStatus {

@@ -221,6 +221,17 @@ import MulticastAudio
         locked.password = "s3cret"
         #expect(await makeSink(locked).checkAccess() == .admitted)
 
+        // A busy or broken receiver says nothing about its access setting.
+        for line in ["453 Not Enough Bandwidth", "500 Internal Server Error", "404 Not Found"] {
+            let odd = try FakeReceiver()
+            defer { odd.shutdown() }
+            odd.optionsStatus = line
+            guard case .inconclusive(let why) = await makeSink(odd).checkAccess() else {
+                Issue.record("expected inconclusive for \(line)"); continue
+            }
+            #expect(why.contains(String(line.prefix(3))))
+        }
+
         // Nobody answering is no answer at all.
         let gonePort = fake.port
         fake.shutdown()

@@ -109,16 +109,18 @@ struct RestrictedSpeakerTests {
         rig.session.inner.update { $0.access[Self.homePod.id] = .admitted }
         rig.session.accessGate.close()
         try await rig.hub.perform(.retrySpeaker(id: Self.id))
-        // While it asks: still apart, shown as connecting, still not counted.
+        // While it asks: still apart and off (so a remote that predates `isCheckingAccess`
+        // never sees a connecting speaker), marked as being asked, still not counted.
         let asking = try #require(rig.state.speaker(Self.id))
-        #expect(asking.isRestricted && asking.state == .connecting && !asking.isEnabled)
+        #expect(asking.isRestricted && asking.isCheckingAccess && asking.state == .off && !asking.isEnabled)
         #expect(SpeakerCounts(rig.state.speakers).connecting == 0)
+        #expect(rig.state.speakers.filter { $0.state == .connecting }.isEmpty)
         // A second press while it asks is the same question.
         try await rig.hub.perform(.retrySpeaker(id: Self.id))
         rig.session.accessGate.open()
         try await rig.waitFor("admitted") { $0.speaker(Self.id)?.isRestricted == false }
         let pod = try #require(rig.state.speaker(Self.id))
-        #expect(!pod.isEnabled && pod.state == .off)
+        #expect(!pod.isEnabled && pod.state == .off && !pod.isCheckingAccess)
         #expect(rig.session.calls.filter { $0 == "checkAccess \(Self.homePod.id)" }.count == 1)
         // Asked apart from the group: never selected, so nothing was heard there.
         #expect(!rig.session.inner.get().selected.contains(Self.homePod.id))
@@ -141,6 +143,44 @@ struct RestrictedSpeakerTests {
         }
         #expect(rig.session.calls.filter { $0 == "checkAccess \(Self.homePod.id)" }.count == 2)
         #expect(!rig.session.inner.get().selected.contains(Self.homePod.id))
+    }
+
+    /// A check that was overtaken (the person turned the speaker on meanwhile, it refused again
+    /// and they pressed Check Again) still finishes, since its `OPTIONS` can't be cancelled. Its
+    /// answer is stale: it must neither end the newer check nor decide for it.
+    @Test func anOvertakenCheckCannotAnswerForTheNextOne() async throws {
+        let rig = Rig(speakers: Self.speakers)
+        try await refusedWhilePlaying(rig)
+        let first = Gate(), second = Gate()
+        first.close(); second.close()
+        rig.session.scriptedAccess.set([(.admitted, first), (.refused, second)])
+
+        try await rig.hub.perform(.retrySpeaker(id: Self.id))                       // check A
+        #expect(rig.state.speaker(Self.id)?.isCheckingAccess == true)
+        // An older remote turns it on; it is refused again at once.
+        rig.session.inner.update { $0.selectErrors[Self.homePod.id] = RAOPError.accessRefused(method: "OPTIONS") }
+        try await rig.hub.perform(.setSpeakerEnabled(id: Self.id, enabled: true))
+        try await rig.waitFor("refused again") {
+            $0.speaker(Self.id)?.isRestricted == true && $0.speaker(Self.id)?.isEnabled == false
+        }
+        try await rig.hub.perform(.retrySpeaker(id: Self.id))                       // check B
+        #expect(rig.state.speaker(Self.id)?.isCheckingAccess == true)
+
+        // A answers "admitted", late: ignored, and B is still asking.
+        first.open()
+        let deadline = Date().addingTimeInterval(2)
+        while rig.session.calls.filter({ $0 == "checkAccess \(Self.homePod.id)" }).count < 1, Date() < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let during = try #require(rig.state.speaker(Self.id))
+        #expect(during.isRestricted && during.isCheckingAccess)
+
+        // B's own answer decides.
+        second.open()
+        try await rig.waitFor("B answered") { $0.speaker(Self.id)?.isCheckingAccess == false }
+        let pod = try #require(rig.state.speaker(Self.id))
+        #expect(pod.isRestricted && !pod.isEnabled && pod.state == .off)
     }
 
     @Test func turningItOnByHandTriesItAgain() async throws {

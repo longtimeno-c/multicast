@@ -3,6 +3,7 @@ import MulticastAudio
 import MulticastDiscovery
 import MulticastEngine
 import MulticastHubModel
+import MulticastKit
 
 /// Pure mapping from what discovery and the engine know about a speaker to what a hub UI shows.
 /// No I/O; unit-tested.
@@ -152,7 +153,7 @@ public enum FailureWording {
     /// The speaker's AirPlay access setting turned this sender away (`RAOPError.accessRefused`):
     /// not a fault to retry or show as one, but a speaker this person may not use.
     public static func isAccessRefusal(_ raw: String?) -> Bool {
-        (raw ?? "").lowercased().contains("refused access")
+        SpeakerAccessCheck.isRefusal(raw)
     }
 
     public static func plain(_ raw: String) -> String {

@@ -531,15 +531,7 @@ public final class MulticastSession: @unchecked Sendable {
     /// speaker's current advertisement is used when discovery has a newer one.
     public func checkAccess(_ descriptor: SpeakerDescriptor) async -> SpeakerAccessCheck {
         guard descriptor.transport != .local else { return .admitted }
-        let current = directory.speaker(id: descriptor.id) ?? descriptor
-        let sink: AudioSink
-        do { sink = try factory.makeSink(for: current) } catch { return .inconclusive(String(describing: error)) }
-        guard let raop = sink as? RAOPSink else { return .admitted }
-        switch await raop.checkAccess() {
-        case .admitted: return .admitted
-        case .refused: return .refused
-        case .inconclusive(let why): return .inconclusive(why)
-        }
+        return await SpeakerAccessCheck.check(directory.speaker(id: descriptor.id) ?? descriptor, factory: factory)
     }
 
     // MARK: Diagnostics
@@ -581,4 +573,27 @@ public enum SpeakerAccessCheck: Equatable, Sendable {
     case refused
     /// No trustworthy answer (unreachable, timed out): `reason` says why.
     case inconclusive(String)
+
+    /// Whether a failure the engine or a sink reports (`EngineSnapshot.SinkEntry.error`,
+    /// `PhoneBroadcastStatus.Speaker.error`) is this refusal (`RAOPError.accessRefused`), not a
+    /// fault: the speaker admits only its owner, and waiting won't change that.
+    public static func isRefusal(_ error: String?) -> Bool {
+        (error ?? "").lowercased().contains("refused access")
+    }
+
+    /// Asks `descriptor` once whether it lets this sender in, with no session and no audio: a
+    /// network speaker gets one `OPTIONS` on a connection of its own (`RAOPSink.checkAccess`);
+    /// a local output is always admitted. For callers with no `MulticastSession`, such as the
+    /// iPhone app while its broadcast extension plays.
+    public static func check(_ descriptor: SpeakerDescriptor, factory: SinkProviding = SinkFactory()) async -> SpeakerAccessCheck {
+        guard descriptor.transport != .local else { return .admitted }
+        let sink: AudioSink
+        do { sink = try factory.makeSink(for: descriptor) } catch { return .inconclusive(String(describing: error)) }
+        guard let raop = sink as? RAOPSink else { return .admitted }
+        switch await raop.checkAccess() {
+        case .admitted: return .admitted
+        case .refused: return .refused
+        case .inconclusive(let why): return .inconclusive(why)
+        }
+    }
 }

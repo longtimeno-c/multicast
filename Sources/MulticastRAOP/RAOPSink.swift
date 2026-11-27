@@ -294,7 +294,12 @@ public final class RAOPSink: AudioSink, @unchecked Sendable {
         do {
             let (_, rtsp) = try openControl()
             defer { rtsp.close() }
-            _ = try rtsp.send(RTSPRequest(method: "OPTIONS", uri: "*"), expectOK: false)
+            let response = try rtsp.send(RTSPRequest(method: "OPTIONS", uri: "*"), expectOK: false)
+            // Only a plain yes counts: a busy receiver (453), a server error or anything else
+            // says nothing about whether the access setting has changed.
+            guard response.statusCode == 200 else {
+                return .inconclusive("OPTIONS answered \(response.statusCode) \(response.reason)")
+            }
             return .admitted
         } catch RAOPError.accessRefused {
             return .refused

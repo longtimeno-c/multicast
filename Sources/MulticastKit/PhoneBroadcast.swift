@@ -53,6 +53,19 @@ public struct PhoneBroadcastConfiguration: Codable, Equatable, Sendable {
     }
 
     public var chosen: [Speaker] { speakers.filter(\.isOn) }
+
+    /// Turns off every speaker that is on and that `status` reports as turning this iPhone away
+    /// (its AirPlay access setting admits only its owner), and returns their ids. Saved, this
+    /// takes them out of the running broadcast and out of the next one: retrying won't help.
+    public mutating func turnOffRefusals(in status: PhoneBroadcastStatus) -> Set<String> {
+        let refused = Set(status.speakers.filter(\.refusedAccess).map(\.id))
+        var turnedOff: Set<String> = []
+        for i in speakers.indices where speakers[i].isOn && refused.contains(speakers[i].id) {
+            speakers[i].isOn = false
+            turnedOff.insert(speakers[i].id)
+        }
+        return turnedOff
+    }
 }
 
 // MARK: - What the extension tells the app
@@ -81,6 +94,9 @@ public struct PhoneBroadcastStatus: Codable, Equatable, Sendable {
             self.state = state
             self.error = error
         }
+
+        /// It failed because its AirPlay access setting turned this sender away.
+        public var refusedAccess: Bool { state == .failed && SpeakerAccessCheck.isRefusal(error) }
     }
 
     public var phase: Phase

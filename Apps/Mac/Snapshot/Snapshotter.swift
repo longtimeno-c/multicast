@@ -10,6 +10,8 @@ enum Snapshotter {
     static let windowSize = CGSize(width: 1180, height: 780)
     /// The smallest window the app allows, to prove nothing truncates or squeezes there.
     static let minimumSize = CGSize(width: RootView.minWidth, height: 600)
+    /// Tall enough that the speakers list ends on screen, "Not available to you" included.
+    static let fullListSize = CGSize(width: 1180, height: 1240)
 
     static func run(into directory: URL) {
         let app = NSApplication.shared
@@ -38,6 +40,12 @@ enum Snapshotter {
             render(RootView().environment(model(for: .appleMusic)), size: minimumSize, appearance: appearance,
                    to: directory.appendingPathComponent(minimum))
             written.append(minimum)
+
+            // Every speaker, down to the group of those that admit only their owner.
+            let fullList = "main-speakers-full-list-\(suffix).png"
+            render(RootView().environment(model(for: .appleMusic)), size: fullListSize, appearance: appearance,
+                   to: directory.appendingPathComponent(fullList))
+            written.append(fullList)
 
             let popoverModel = model(for: .spotify)
             let popover = "popover-speaker-detail-\(suffix).png"

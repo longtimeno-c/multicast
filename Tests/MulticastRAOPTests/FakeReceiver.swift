@@ -23,6 +23,9 @@ final class FakeReceiver: @unchecked Sendable {
     /// Answer every request 403 Forbidden, as an Apple TV or HomePod does when its AirPlay
     /// access setting doesn't admit the sender.
     var refuseAccess = false
+    /// When set, OPTIONS is answered with this status line instead of 200 OK
+    /// (for example "453 Not Enough Bandwidth" from a receiver busy with another sender).
+    var optionsStatus: String?
 
     private let listenFD: Int32
     let port: UInt16
@@ -132,6 +135,8 @@ final class FakeReceiver: @unchecked Sendable {
         switch request.method {
         case "ANNOUNCE" where fail:
             status = "\(failStatus) Not Enough Bandwidth"
+        case "OPTIONS" where optionsStatus != nil:
+            status = optionsStatus ?? status
         case "SETUP":
             let params = RTSPHeaderValue.parseParameters(request.headers["transport"] ?? "")
             senderControlPort = UInt16(params["control_port"] ?? "0") ?? 0

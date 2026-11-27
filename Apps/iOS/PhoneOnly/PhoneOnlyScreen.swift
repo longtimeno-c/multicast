@@ -35,6 +35,7 @@ struct PhoneOnlyScreen: View {
                 .padding(.top, MC.Space.xs)
                 .padding(.bottom, MC.Space.xxl)
                 .animation(MC.Motion.state(reduceMotion), value: model.speakers.map(\.isEnabled))
+                .animation(MC.Motion.state(reduceMotion), value: model.restricted)
             }
             .refreshable {
                 model.refresh()
@@ -60,8 +61,9 @@ struct PhoneOnlyScreen: View {
     }
 
     @ViewBuilder private var speakerSection: some View {
-        let speakers = model.speakers
-        if speakers.isEmpty {
+        let speakers = model.usableSpeakers
+        let restricted = model.restrictedSpeakers
+        if speakers.isEmpty && restricted.isEmpty {
             GroupedSection(title: "AirPlay") {
                 if model.isSearching {
                     notice(title: "Looking for speakers\u{2026}",
@@ -79,16 +81,48 @@ struct PhoneOnlyScreen: View {
             }
             .transition(.opacity)
         } else {
-            GroupedSection(title: "AirPlay") {
-                ForEach(Array(speakers.enumerated()), id: \.element.id) { index, speaker in
-                    VStack(spacing: 0) {
-                        if index > 0 { RowDivider(leading: grid.textLeading) }
-                        row(speaker)
+            VStack(alignment: .leading, spacing: MC.Space.xl) {
+                if !speakers.isEmpty {
+                    GroupedSection(title: "AirPlay") {
+                        ForEach(Array(speakers.enumerated()), id: \.element.id) { index, speaker in
+                            VStack(spacing: 0) {
+                                if index > 0 { RowDivider(leading: grid.textLeading) }
+                                row(speaker)
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+                if !restricted.isEmpty { restrictedGroup(restricted) }
             }
         }
+    }
+
+    /// Speakers that admit only their owner, as on the hub's screen: last, quiet, nothing to
+    /// switch or slide. The row opens the detail, where Check Again is.
+    private func restrictedGroup(_ speakers: [SpeakerItem]) -> some View {
+        GroupedSection(title: RestrictedSpeakerWording.groupTitle) {
+            ForEach(Array(speakers.enumerated()), id: \.element.id) { index, speaker in
+                VStack(spacing: 0) {
+                    if index > 0 { RowDivider(leading: grid.textLeading) }
+                    RestrictedSpeakerRow(speaker: speaker, grid: grid, density: .touch,
+                                         onCheckAgain: { model.checkAgain(speaker.id) },
+                                         onDetails: { trimTarget = .init(id: speaker.id) }) {
+                        Button { trimTarget = .init(id: speaker.id) } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(MC.Ink.tertiary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(speaker.name) details")
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .transition(.opacity)
     }
 
     private func row(_ speaker: SpeakerItem) -> some View {
@@ -309,15 +343,26 @@ private struct WhatToExpect: View {
 // MARK: - Sync trim
 
 /// One speaker's sync trim, for a speaker that plays a little behind or ahead of the others.
+/// A speaker that admits only its owner has nothing to trim: its sheet says so and offers
+/// Check Again, as the hub's speaker sheet does.
 private struct PhoneOnlyTrimSheet: View {
     var model: PhoneOnlyModel
     var speakerID: SpeakerID
     @Environment(\.dismiss) private var dismiss
+    @State private var restrictedHeight: CGFloat = 0
+
+    private var isRestricted: Bool { model.speaker(speakerID)?.isRestricted == true }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let speaker = model.speaker(speakerID) {
+                if let speaker = model.speaker(speakerID), speaker.isRestricted {
+                    RestrictedSpeakerDetail(speaker: speaker, onCheckAgain: { model.checkAgain(speaker.id) })
+                        .padding(.horizontal, MC.Space.l)
+                        .padding(.top, MC.Space.s)
+                        .padding(.bottom, MC.Space.l)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { restrictedHeight = $0 }
+                } else if let speaker = model.speaker(speakerID) {
                     VStack(alignment: .leading, spacing: MC.Space.s) {
                         GroupedSection(title: "Sync trim") {
                             VStack(alignment: .leading, spacing: MC.Space.s) {
@@ -371,8 +416,10 @@ private struct PhoneOnlyTrimSheet: View {
                     .padding(.top, MC.Space.s)
                 }
             }
+            .scrollBounceBehavior(.basedOnSize)
             .background(MC.Surface.canvas)
-            .navigationTitle(model.speaker(speakerID)?.name ?? "")
+            // A restricted speaker's name is the content's title.
+            .navigationTitle(isRestricted ? "" : model.speaker(speakerID)?.name ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -380,7 +427,7 @@ private struct PhoneOnlyTrimSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents(isRestricted && restrictedHeight > 0 ? [.height(restrictedHeight + 64), .large] : [.medium])
         .presentationDragIndicator(.visible)
         .presentationBackground(MC.Surface.canvas)
     }
