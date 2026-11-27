@@ -56,7 +56,7 @@ struct LiveCalibrationTests {
         var readings: [(trim: Int, ms: Double, spreadMs: Double)] = []
         for trim in [0, 40, 0] {
             try await hub.perform(.setSpeakerSyncTrim(id: speaker.id, milliseconds: trim))
-            try await hub.perform(.calibrateSync)
+            try await hub.perform(.calibrateSpeakerSync(id: speaker.id))
             try await waitFor("calibration finished", timeout: 30) { $0.calibration?.isRunning == false }
             let status = try #require(hub.currentState.calibration)
             print("[live calibration] trim \(trim): \(status.speakers.map(\.outcome.caption)) \(status.problem ?? "")")

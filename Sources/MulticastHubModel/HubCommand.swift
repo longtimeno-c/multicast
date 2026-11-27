@@ -72,8 +72,13 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     /// Look for speakers on the network again now (known ones stay listed meanwhile), and retry
     /// any speaker that is on but failed.
     case refreshSpeakers
-    /// Measure every speaker that is on with the hub's microphone and set their sync trims so
-    /// they are heard together (`HubState.calibration` reports it). Playback pauses for it.
+    /// Tune one speaker's sync with the hub's microphone: play the test sound on it alone,
+    /// measure when it is heard, keep the measurement and set its sync trim (and the trims of
+    /// the speakers measured before, so they all line up). `HubState.calibration` reports it.
+    /// Playback pauses for it; a speaker that is off is turned on for the measurement only.
+    /// (A phone tunes a speaker with its own microphone through its link, not this command.)
+    case calibrateSpeakerSync(id: SpeakerID)
+    /// The same for every speaker that is on, one after the other.
     case calibrateSync
     /// Stop a running calibration (trims stay as they were), or dismiss a finished one's results.
     case cancelSyncCalibration
@@ -92,7 +97,7 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
         case .addToQueue, .addSpotifyLink, .removeFromQueue, .moveInQueue, .clearQueue, .setShuffle,
              .pinPlaylist, .pinSpotifyLink, .unpinPlaylist: .queue
         case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume,
-             .refreshSpeakers, .calibrateSync, .cancelSyncCalibration: .speaker
+             .refreshSpeakers, .calibrateSync, .calibrateSpeakerSync, .cancelSyncCalibration: .speaker
         }
     }
 

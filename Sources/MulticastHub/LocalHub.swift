@@ -387,7 +387,9 @@ public actor LocalHub: HubBackend {
         case .retrySpeaker(let id): try retrySpeaker(id.rawValue)
         case .setMasterVolume(let v): setMaster(v)
         case .refreshSpeakers: refreshSpeakers()
-        case .calibrateSync: try startCalibration()
+        case .calibrateSync: try startCalibration(of: nil, microphone: deps.microphone, microphoneID: "hub", shownAs: .hub)
+        case .calibrateSpeakerSync(let id):
+            try startCalibration(of: id.rawValue, microphone: deps.microphone, microphoneID: "hub", shownAs: .hub)
         case .cancelSyncCalibration: await cancelCalibration()
         }
     }
@@ -435,14 +437,52 @@ public actor LocalHub: HubBackend {
 
     /// The speakers a calibration can measure: on and not failed, in the order they were turned
     /// on, with the trim each has now.
-    func calibrationSpeakers() -> [(id: String, trimMs: Int, isBuiltIn: Bool)] {
-        enabledOrder.filter { blocked[$0] == nil && selectFailures[$0] == nil }.map { id in
-            let d = descriptors[id]
-            return (id, preset(for: id).syncTrimMs, d?.transport == .local && d?.localKind == .builtIn)
-        }
+    func calibrationSpeakers() -> [(id: String, trimMs: Int)] {
+        enabledOrder.filter { blocked[$0] == nil && selectFailures[$0] == nil }.map { ($0, preset(for: $0).syncTrimMs) }
     }
 
-    func applyCalibratedTrim(_ id: String, _ ms: Int) { try? setSpeakerTrim(id, ms) }
+    /// Whether the hub knows the speaker, and whether it is on.
+    func calibrationTarget(_ id: String) -> (isKnown: Bool, isOn: Bool, trimMs: Int) {
+        (descriptors[id] != nil && !restricted.contains(id), enabledOrder.contains(id), preset(for: id).syncTrimMs)
+    }
+
+    /// Turns a speaker on for a measurement only (not remembered as on), and off again after.
+    func enableForCalibration(_ id: String) { enable(id, remember: false) }
+    func disableAfterCalibration(_ id: String) { disable(id) }
+
+    /// Keeps what a calibration measured for a speaker (`latenessMs`: how late it was heard
+    /// with no trim, through `microphone`), then works out the trims of every speaker measured
+    /// through that microphone, present or not, and sets the ones that changed: in what is
+    /// remembered, and on the speakers that are here now. Returns the plan by speaker id for
+    /// the speakers that are here.
+    func recordCalibration(_ id: String, latenessMs: Double, microphone: String) -> [String: TrimPlanner.Output] {
+        let d = descriptors[id]
+        let measured = HubSettings.Calibration(latenessMs: latenessMs, microphone: microphone, measuredAt: deps.now(),
+                                               isHubBuiltIn: d?.transport == .local && d?.localKind == .builtIn)
+        var p = preset(for: id)
+        p.calibration = measured
+        settings.speakers[presetKey(id)] = p
+        let group = settings.speakers.filter { $0.value.calibration?.microphone == microphone }.sorted { $0.key < $1.key }
+        let plan = TrimPlanner.plan(group.map { key, preset in
+            // The planner takes delays as measured with the current trim in effect.
+            TrimPlanner.Input(id: key, delayMs: (preset.calibration?.latenessMs ?? 0) + Double(preset.syncTrimMs),
+                              currentTrimMs: preset.syncTrimMs, isPreferredReference: preset.calibration?.isHubBuiltIn == true)
+        }, range: SpeakerItem.syncTrimRange)
+        var byKey: [String: TrimPlanner.Output] = [:]
+        for out in plan {
+            byKey[out.id] = out
+            settings.speakers[out.id]?.syncTrimMs = out.trimMs
+        }
+        deps.settings.save(settings)
+        var here: [String: TrimPlanner.Output] = [:]
+        for speaker in descriptors.keys {
+            guard let out = byKey[presetKey(speaker)] else { continue }
+            here[speaker] = out
+            deps.session.setOffset(millis: out.trimMs, forSpeaker: speaker)
+        }
+        publish()
+        return here
+    }
 
     func pauseForCalibration() async { await pause() }
 
@@ -816,7 +856,12 @@ public actor LocalHub: HubBackend {
         guard descriptors[id] != nil else { throw HubCommandError(.notFound, "That speaker is no longer on the network.") }
         let r = SpeakerItem.syncTrimRange
         let t = min(r.upperBound, max(r.lowerBound, ms))
-        updatePreset(id) { $0.syncTrimMs = t }
+        updatePreset(id) {
+            // A trim nudged by hand after a calibration is kept through later ones: the stored
+            // measurement moves with it, so the plan goes on giving this trim.
+            $0.calibration?.latenessMs += Double($0.syncTrimMs - t)
+            $0.syncTrimMs = t
+        }
         deps.session.setOffset(millis: t, forSpeaker: id)
         publish()
     }
@@ -1710,7 +1755,8 @@ public actor LocalHub: HubBackend {
                                model: SpeakerPresentation.modelName(for: d), address: SpeakerPresentation.address(for: d),
                                isEnabled: enabled, volume: volume, state: state, syncTrimMs: p.syncTrimMs,
                                notSeenSince: session.notSeenSince[id], isRestricted: restricted.contains(id),
-                               isCheckingAccess: restricted.contains(id) && accessChecks[id] != nil)
+                               isCheckingAccess: restricted.contains(id) && accessChecks[id] != nil,
+                               tunedAt: p.calibration?.measuredAt)
         }
         var extra: [HubIssue] = []
         switch spotifyStatus {

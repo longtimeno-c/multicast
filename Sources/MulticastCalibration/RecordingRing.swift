@@ -91,4 +91,19 @@ public final class RecordingRing: @unchecked Sendable {
             return (out, UInt64(max(0, start.rounded())))
         }
     }
+
+    func tail(_ count: Int, step: Int) -> [Float] {
+        let capacity = capacity
+        return state.withLockUnchecked { s in
+            let available = min(s.written, capacity, count * step)
+            var out: [Float] = []
+            out.reserveCapacity(available / step + 1)
+            var frame = s.written - available
+            while frame < s.written {
+                out.append(s.samples[frame % capacity])
+                frame += step
+            }
+            return out
+        }
+    }
 }

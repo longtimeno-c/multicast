@@ -45,10 +45,34 @@ public struct DelayEstimator: Sendable {
     /// The sweep's arrival in `recording` (mono, at `sampleRate`), or nil when it isn't clearly
     /// there. Only a sweep that lies wholly inside the recording can be found.
     public func arrival(in recording: [Float], sampleRate: Double) -> Arrival? {
+        analyze(recording, sampleRate: sampleRate)?.arrival
+    }
+
+    /// Everything one look at a recording finds: the arrival if there is one, and a picture of
+    /// the search for a display.
+    public struct Analysis: Equatable, Sendable {
+        /// nil when the sweep isn't clearly there.
+        public var arrival: Arrival?
+        /// The strength of the best candidate, believed or not.
+        public var strength: Double
+        /// The correlation across the recording in `traceBins` steps, each the strongest value
+        /// in its step as a fraction of the overall strongest (0…255). A heard sweep is one
+        /// spike over a low floor; noise is grass of even height.
+        public var trace: [UInt8]
+        /// Root mean square of the recording itself, 0…1 of full scale.
+        public var level: Float
+    }
+
+    public static let traceBins = 96
+
+    /// nil only when the recording is too short to hold a sweep.
+    public func analyze(_ recording: [Float], sampleRate: Double) -> Analysis? {
         let template = signal.template(sampleRate: sampleRate)
         let lags = recording.count - template.count + 1
         guard lags > 8, sampleRate > 0 else { return nil }
 
+        var level: Float = 0
+        vDSP_rmsqv(recording, 1, &level, vDSP_Length(recording.count))
         var correlation = [Float](repeating: 0, count: lags)
         recording.withUnsafeBufferPointer { r in
             template.withUnsafeBufferPointer { t in
@@ -61,14 +85,21 @@ public struct DelayEstimator: Sendable {
         var peak: Float = 0
         var peakIndex: vDSP_Length = 0
         vDSP_maxvi(magnitude, 1, &peak, &peakIndex, vDSP_Length(lags))
-        guard peak > 0, peak.isFinite else { return nil }
+        guard peak > 0, peak.isFinite else {
+            return Analysis(arrival: nil, strength: 0, trace: [UInt8](repeating: 0, count: Self.traceBins), level: level)
+        }
+        let trace: [UInt8] = (0..<Self.traceBins).map { bin in
+            let from = bin * lags / Self.traceBins, to = max(from + 1, (bin + 1) * lags / Self.traceBins)
+            var top: Float = 0
+            magnitude.withUnsafeBufferPointer { vDSP_maxv($0.baseAddress! + from, 1, &top, vDSP_Length(min(to, lags) - from)) }
+            return UInt8(max(0, min(255, (top / peak * 255).rounded())))
+        }
 
         // Noise floor: the median magnitude is untouched by the peak and by a reverberant tail
         // that fills part of the window. For Gaussian noise, sigma = median(|x|) / 0.6745.
         var sorted = magnitude
         vDSP_vsort(&sorted, vDSP_Length(lags), 1)
         let floor = Double(sorted[lags / 2]) / 0.6745
-        guard floor <= 0 || Double(peak) / floor >= minimumStrength else { return nil }
 
         // The direct sound: the first sample within reach before the strongest peak that is
         // itself strong, then up to the top of the lobe it belongs to.
@@ -91,10 +122,13 @@ public struct DelayEstimator: Sendable {
         let skip = max(2, Int(0.003 * sampleRate)), span = Int(0.06 * sampleRate)
         var local = Self.rms(magnitude, from: i - skip - span, to: i - skip)
         if local == nil { local = Self.rms(magnitude, from: i + skip, to: i + skip + span) }
-        var strength = floor > 0 ? Double(magnitude[i]) / floor : .infinity
+        var strength = floor > 0 ? Double(magnitude[i]) / floor : 1000
         if let local, local > 0 { strength = min(strength, Double(magnitude[i]) / local) }
-        guard strength >= minimumStrength else { return nil }
-        return Arrival(seconds: (Double(i) + fraction) / sampleRate, strength: strength)
+        strength = min(strength, 1000)
+        let whole = floor > 0 ? Double(peak) / floor : 1000
+        let believed = whole >= minimumStrength && strength >= minimumStrength
+        return Analysis(arrival: believed ? Arrival(seconds: (Double(i) + fraction) / sampleRate, strength: strength) : nil,
+                        strength: strength, trace: trace, level: level)
     }
 }
 

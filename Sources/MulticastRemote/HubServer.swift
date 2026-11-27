@@ -977,7 +977,7 @@ enum RemoteInputPolicy {
         case .removeFiles(let ids):
             guard ids.count <= maxRemovedFiles, ids.allSatisfy(idOK) else { return .failure(notFound) }
             return .success(command)
-        case .setSpeakerEnabled(let id, _), .retrySpeaker(let id):
+        case .setSpeakerEnabled(let id, _), .retrySpeaker(let id), .calibrateSpeakerSync(let id):
             return idOK(id.rawValue) ? .success(command) : .failure(notFound)
         case .setSpeakerVolume(let id, let volume):
             guard idOK(id.rawValue) else { return .failure(notFound) }

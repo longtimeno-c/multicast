@@ -10,11 +10,12 @@ import Testing
 /// speaker's made-up delay and by its trim. No audio device, no sound.
 final class FakeMicrophone: CalibrationMicrophone, @unchecked Sendable {
     let session: FakeSession
-    let signal: CalibrationSignal
     let sampleRate = 16_000.0
     /// Speaker id → how late it is heard with no trim, seconds. Speakers not listed are out of earshot.
     let delays = Locked<[String: Double]>([:])
-    let permission = Locked(PermissionStatus.granted)
+    /// Added to every arrival: this microphone's own, unknown delay.
+    let ownDelay = Locked(0.0)
+    let permission = Locked(MicrophoneAccess.granted)
     let failsToStart = Locked(false)
     let isListening = Locked(false)
     let starts = Locked(0)
@@ -22,12 +23,9 @@ final class FakeMicrophone: CalibrationMicrophone, @unchecked Sendable {
     let mostAudibleAtOnce = Locked(0)
     let accessGate = Gate()
 
-    init(session: FakeSession, signal: CalibrationSignal) {
-        self.session = session
-        self.signal = signal
-    }
+    init(session: FakeSession) { self.session = session }
 
-    func access(ask: Bool) async -> PermissionStatus {
+    func access(ask: Bool) async -> MicrophoneAccess {
         await accessGate.wait()
         return permission.get()
     }
@@ -40,14 +38,14 @@ final class FakeMicrophone: CalibrationMicrophone, @unchecked Sendable {
 
     func stop() async { isListening.set(false) }
 
-    func recording(fromHostNanos: UInt64, seconds: Double) async -> MicrophoneRecording? {
+    func listen(for signal: CalibrationSignal, fromHostNanos: UInt64, seconds: Double) async -> HeardSweep? {
         guard isListening.get() else { return nil }
         let i = session.inner.get()
         guard i.transport == .playing, let timeline = i.timeline else { return nil }
         let audible = i.selected.filter { !i.muted.contains($0) && i.sinks[$0]?.state == .playing }
         mostAudibleAtOnce.update { $0 = max($0, audible.count) }
-        let known = delays.get()
-        let heard = audible.compactMap { id in known[id].map { $0 + Double(i.offsets[id] ?? 0) / 1000 } }
+        let known = delays.get(), own = ownDelay.get()
+        let heard = audible.compactMap { id in known[id].map { $0 + own + Double(i.offsets[id] ?? 0) / 1000 } }
         let lead = signal.leadInSeconds, period = signal.periodSeconds
         // Seconds from the timeline's anchor (frame 0 of the source) to the recording's start.
         let origin = (Double(fromHostNanos) - Double(timeline.anchorHostNanos)) / 1e9
@@ -61,7 +59,9 @@ final class FakeMicrophone: CalibrationMicrophone, @unchecked Sendable {
             }
             return Float(v)
         }
-        return MicrophoneRecording(samples: samples, sampleRate: sampleRate, startHostNanos: fromHostNanos)
+        guard let analysis = DelayEstimator(signal: signal).analyze(samples, sampleRate: sampleRate) else { return nil }
+        return HeardSweep(arrivalHostNanos: analysis.arrival.map { fromHostNanos + UInt64($0.seconds * 1e9) },
+                          strength: analysis.strength, trace: analysis.trace, level: analysis.level)
     }
 }
 
@@ -71,7 +71,7 @@ struct CalibrationHubTests {
     static let bedroom = Fixtures.mainBedroom.id
     static let hall = Fixtures.hallSonos.id
 
-    /// Short sweeps close together, so a run over three speakers takes a couple of seconds.
+    /// Short sweeps close together, so tuning a speaker takes under a second.
     static var quick: CalibrationSettings {
         var s = CalibrationSettings()
         s.signal = CalibrationSignal(sweepSeconds: 0.05, periodSeconds: 0.2, leadInSeconds: 0.1)
@@ -91,7 +91,7 @@ struct CalibrationHubTests {
     static func rig(delays: [String: Double], settings: InMemorySettingsStore = InMemorySettingsStore()) -> (Rig, FakeMicrophone) {
         let box = Mic()
         let rig = Rig(settings: settings, microphone: { session in
-            let m = FakeMicrophone(session: session, signal: quick.signal)
+            let m = FakeMicrophone(session: session)
             m.delays.set(delays)
             box.fake = m
             return m
@@ -105,10 +105,202 @@ struct CalibrationHubTests {
     }
 
     static func finished(_ rig: Rig) async throws {
-        try await rig.waitFor("calibration finished", timeout: 15) { $0.calibration?.isRunning == false }
+        try await rig.waitFor("tuning finished", timeout: 15) { $0.calibration?.isRunning == false }
+        await rig.hub.settle()
     }
 
-    @Test func linesUpTheSpeakersItHearsAndLeavesTheOthersAlone() async throws {
+    static func tune(_ rig: Rig, _ id: String) async throws {
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(id)))
+        try await finished(rig)
+    }
+
+    static func trim(_ rig: Rig, _ d: SpeakerDescriptor) -> Int { rig.speaker(d)?.syncTrimMs ?? .min }
+
+    // MARK: One speaker at a time
+
+    @Test func speakersAreTunedOneAtATimeAndLineUpWithThoseTunedBefore() async throws {
+        let store = InMemorySettingsStore()
+        let (rig, mic) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.0915], settings: store)
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall, Self.bedroom])
+
+        // The first speaker tuned has nothing to line up with: it is measured, kept, and is
+        // what the others will be lined up to.
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall)))
+        let running = try #require(rig.state.calibration)
+        #expect(running.isRunning && running.microphone == .hub && running.speakers.map(\.id.rawValue) == [Self.hall])
+        try await Self.finished(rig)
+        var status = try #require(rig.state.calibration)
+        #expect(status.speakers[0].outcome == .aligned(lagMs: 0, trimMs: 0, reachedLimit: false, isReference: true))
+        #expect(Self.trim(rig, Fixtures.hallSonos) == 0)
+        #expect(rig.speaker(Fixtures.hallSonos)?.tunedAt != nil && rig.speaker(Fixtures.mainBedroom)?.tunedAt == nil)
+        // Only the speaker being tuned was heard; nobody is left muted.
+        #expect(mic.mostAudibleAtOnce.get() == 1)
+        #expect(rig.session.inner.get().muted.isEmpty && rig.session.transport == .stopped)
+
+        // Whenever the person is ready: the next one.
+        try await rig.hub.perform(.cancelSyncCalibration)
+        #expect(rig.state.calibration == nil)
+        try await Self.tune(rig, Self.bedroom)
+        status = try #require(rig.state.calibration)
+        guard case .aligned(let lag, let trim, let limited, let isReference) = status.speakers[0].outcome else {
+            Issue.record("expected the bedroom measured, got \(status.speakers)")
+            return
+        }
+        #expect(abs(lag - 71.5) < 1 && abs(trim + 72) <= 1 && !limited && !isReference)
+        #expect(status.speakers[0].previousTrimMs == 0)
+        #expect(status.summary == status.speakers[0].outcome.caption)
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == trim && Self.trim(rig, Fixtures.hallSonos) == 0)
+        #expect(rig.session.calls.contains("offset \(Self.bedroom) \(trim)"))
+
+        // Kept on the hub with the speaker's other settings.
+        let saved = store.load()
+        #expect(saved.speakers[Self.bedroom]?.syncTrimMs == trim)
+        #expect(saved.speakers[Self.bedroom]?.calibration?.microphone == "hub")
+        #expect(abs((saved.speakers[Self.bedroom]?.calibration?.latenessMs ?? 0) - (saved.speakers[Self.hall]?.calibration?.latenessMs ?? 0) - 71.5) < 1)
+    }
+
+    @Test func theOrderDoesNotMatter() async throws {
+        // The late speaker first: alone it keeps its trim. When the earlier one is measured,
+        // the late one is brought forward without being measured again.
+        let (rig, _) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.100])
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall, Self.bedroom])
+        try await Self.tune(rig, Self.bedroom)
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == 0)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        try await Self.tune(rig, Self.hall)
+        #expect(Self.trim(rig, Fixtures.hallSonos) == 0)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) + 80) <= 1)
+        #expect(rig.state.calibration?.speakers[0].outcome == .aligned(lagMs: 0, trimMs: 0, reachedLimit: false, isReference: true))
+    }
+
+    @Test func aSpeakerThatIsOffIsTurnedOnForItsMeasurementOnly() async throws {
+        let store = InMemorySettingsStore()
+        let (rig, _) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.060], settings: store)
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall])
+        try await Self.tune(rig, Self.hall)
+        try await rig.hub.perform(.cancelSyncCalibration)
+
+        try await Self.tune(rig, Self.bedroom)
+        #expect(rig.state.calibration?.speakers[0].outcome.isAligned == true)
+        try await rig.waitFor("bedroom off again") { $0.speaker(SpeakerID(Self.bedroom))?.isEnabled == false }
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) + 40) <= 1)
+        #expect(store.load().speakers[Self.bedroom]?.isEnabled == false)
+        #expect(rig.speaker(Fixtures.hallSonos)?.isEnabled == true)
+        #expect(!rig.session.inner.get().selected.contains(Self.bedroom))
+    }
+
+    @Test func tuningsSurviveARestartAndLaterOnesLineUpWithThem() async throws {
+        let store = InMemorySettingsStore()
+        do {
+            let (rig, _) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.100], settings: store)
+            await rig.start()
+            try await Self.turnOn(rig, [Self.hall, Self.bedroom])
+            try await Self.tune(rig, Self.hall)
+            try await rig.hub.perform(.cancelSyncCalibration)
+            try await Self.tune(rig, Self.bedroom)
+            await rig.hub.shutdown()
+        }
+        let tuned = try #require(store.load().speakers[Self.bedroom]?.syncTrimMs)
+        #expect(abs(tuned + 80) <= 1)
+
+        // Another day: the trim is there from the start and goes to the speaker when it joins.
+        let (rig, _) = Self.rig(delays: [Self.local: 0.050, Self.hall: 0.020, Self.bedroom: 0.100], settings: store)
+        await rig.start()
+        try await rig.waitFor("remembered speakers back on") { $0.speaker(SpeakerID(Self.bedroom))?.state == .ready }
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == tuned)
+        #expect(rig.session.inner.get().selectOffsets[Self.bedroom] == tuned)
+        #expect(rig.speaker(Fixtures.mainBedroom)?.tunedAt != nil)
+
+        // A third speaker tuned now lines up with the two measured before the restart. It is
+        // the Mac's own, so it becomes what the others line up to, and they follow it.
+        try await Self.tune(rig, Self.local)
+        #expect(Self.trim(rig, Fixtures.local()) == 0)
+        #expect(abs(Self.trim(rig, Fixtures.hallSonos) - 30) <= 1)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) + 50) <= 1)
+    }
+
+    @Test func aTrimNudgedByHandIsKeptThroughLaterTunings() async throws {
+        let (rig, _) = Self.rig(delays: [Self.local: 0.050, Self.hall: 0.020, Self.bedroom: 0.100])
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall, Self.bedroom])
+        try await Self.tune(rig, Self.hall)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        try await Self.tune(rig, Self.bedroom)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        let tuned = Self.trim(rig, Fixtures.mainBedroom)
+        // By ear, the person prefers the bedroom 6 ms later than measured.
+        try await rig.hub.perform(.setSpeakerSyncTrim(id: SpeakerID(Self.bedroom), milliseconds: tuned + 6))
+        try await Self.tune(rig, Self.local)
+        #expect(abs(Self.trim(rig, Fixtures.hallSonos) - 30) <= 1)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) - (tuned + 6 + 30)) <= 1)
+    }
+
+    @Test func measuringAgainWithATrimInEffectChangesNothing() async throws {
+        let (rig, _) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.100])
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall, Self.bedroom])
+        try await Self.tune(rig, Self.hall)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        try await Self.tune(rig, Self.bedroom)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        let first = Self.trim(rig, Fixtures.mainBedroom)
+        try await Self.tune(rig, Self.bedroom)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) - first) <= 1)
+        #expect(rig.state.calibration?.speakers[0].previousTrimMs == first)
+    }
+
+    @Test func aPhonesMicrophoneIsKeptApartFromTheMacs() async throws {
+        // Through the phone everything arrives 8 ms "later" (its own delay): measurements made
+        // through it line up among themselves and leave the Mac's alone.
+        let (rig, mic) = Self.rig(delays: [Self.local: 0.010, Self.hall: 0.020, Self.bedroom: 0.100])
+        let phone = FakeMicrophone(session: rig.session)
+        phone.delays.set(mic.delays.get())
+        phone.ownDelay.set(0.008)
+        await rig.start()
+        try await Self.turnOn(rig, [Self.local, Self.hall, Self.bedroom])
+        try await Self.tune(rig, Self.local)
+        try await rig.hub.perform(.cancelSyncCalibration)
+
+        try await rig.hub.tuneSpeaker(id: Self.hall, microphone: phone, microphoneID: "phone:remote-a", name: "Sample iPhone")
+        #expect(rig.state.calibration?.microphone == .phone(name: "Sample iPhone"))
+        try await Self.finished(rig)
+        // Alone under the phone's microphone: not compared with the Mac's 10 ms.
+        #expect(Self.trim(rig, Fixtures.hallSonos) == 0)
+        try await rig.hub.perform(.cancelSyncCalibration)
+        try await rig.hub.tuneSpeaker(id: Self.bedroom, microphone: phone, microphoneID: "phone:remote-a", name: "Sample iPhone")
+        try await Self.finished(rig)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) + 80) <= 1)
+        #expect(Self.trim(rig, Fixtures.local()) == 0)
+        #expect(!mic.isListening.get() && !phone.isListening.get() && phone.starts.get() == 2 && mic.starts.get() == 1)
+    }
+
+    @Test func theSweepsAreReportedAsTheyAreHeard() async throws {
+        let (rig, _) = Self.rig(delays: [Self.hall: 0.040])
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall])
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall)))
+        try await rig.waitFor("first sweep heard", timeout: 5) { ($0.calibration?.speakers[0].sweeps.count ?? 0) >= 1 }
+        let during = try #require(rig.state.calibration)
+        #expect(during.isRunning && during.speakers[0].sweepsBeganAt != nil)
+        #expect(during.sweepPeriod == 0.2 && during.sweepsPerSpeaker == 4 && during.earliestMs == 30 && during.latestMs == 110)
+        try await Self.finished(rig)
+        let sweeps = try #require(rig.state.calibration?.speakers[0].sweeps)
+        #expect(sweeps.count == 4)
+        for sweep in sweeps {
+            #expect(abs((sweep.latenessMs ?? -1) - 40) < 1 && sweep.strength > 6.5)
+            #expect(sweep.trace.count == DelayEstimator.traceBins && sweep.trace.max() == 255)
+            // The spike sits where 40 ms after due falls in a window from 30 ms before to 110 ms after.
+            let spike = try #require(sweep.trace.firstIndex(of: 255))
+            #expect(abs(Double(spike) / Double(sweep.trace.count) - 70.0 / 140.0) < 0.05)
+        }
+    }
+
+    // MARK: All in turn
+
+    @Test func allInTurnLinesUpTheSpeakersItHearsAndLeavesTheOthersAlone() async throws {
         let store = InMemorySettingsStore()
         // The Mac's own speakers 12 ms after the timeline, the bedroom 71.5 ms; the hall is out of earshot.
         let (rig, mic) = Self.rig(delays: [Self.local: 0.012, Self.bedroom: 0.0715], settings: store)
@@ -124,71 +316,57 @@ struct CalibrationHubTests {
         try await Self.finished(rig)
 
         let status = try #require(rig.state.calibration)
-        guard case .aligned(let macLag, let macTrim, _) = status.speakers[0].outcome,
-              case .aligned(let lag, let trim, let limited) = status.speakers[1].outcome else {
-            Issue.record("expected two measured speakers, got \(status.speakers)")
+        #expect(status.speakers[0].outcome == .aligned(lagMs: 0, trimMs: 0, reachedLimit: false, isReference: true))
+        guard case .aligned(let lag, let trim, let limited, false) = status.speakers[1].outcome else {
+            Issue.record("expected the bedroom measured, got \(status.speakers)")
             return
         }
-        // The Mac's own speakers are the reference and keep their trim; the bedroom comes forward.
-        #expect(macLag == 0 && macTrim == 0)
         #expect(abs(lag - 59.5) < 1 && abs(trim + 60) <= 1 && !limited)
         #expect(status.speakers[2].outcome == .notHeard)
-        #expect(status.summary == "2 of 3 speakers lined up.")
+        #expect(status.summary == "2 of 3 speakers in sync.")
         #expect(status.problem == nil)
-
-        // Set like a trim set by hand: on the session, in the state, in what is remembered.
-        #expect(rig.speaker(Fixtures.mainBedroom)?.syncTrimMs == trim)
-        #expect(rig.session.calls.contains("offset \(Self.bedroom) \(trim)"))
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == trim)
         #expect(store.load().speakers[Self.bedroom]?.syncTrimMs == trim)
-        #expect(rig.speaker(Fixtures.hallSonos)?.syncTrimMs == 25)
-        #expect(rig.speaker(Fixtures.local())?.syncTrimMs == 0)
-
-        // One speaker at a time; afterwards nobody is muted, nothing plays, the microphone is off.
+        #expect(Self.trim(rig, Fixtures.hallSonos) == 25 && store.load().speakers[Self.hall]?.calibration == nil)
         #expect(mic.mostAudibleAtOnce.get() == 1)
         let i = rig.session.inner.get()
-        #expect(i.muted.isEmpty)
-        #expect(i.transport == .stopped)
+        #expect(i.muted.isEmpty && i.transport == .stopped)
         #expect(!mic.isListening.get() && mic.starts.get() == 1)
         #expect(rig.session.calls.contains("setSource Sync calibration"))
-
-        // The results stay until dismissed.
-        try await rig.hub.perform(.cancelSyncCalibration)
-        #expect(rig.state.calibration == nil)
     }
 
-    @Test func aTrimAlreadySetIsMeasuredThroughAndCorrected() async throws {
-        // The bedroom is 80 ms late by nature and was trimmed 30 ms earlier by ear.
-        let (rig, _) = Self.rig(delays: [Self.hall: 0.020, Self.bedroom: 0.100])
-        await rig.start()
-        try await rig.hub.perform(.setSpeakerSyncTrim(id: SpeakerID(Self.bedroom), milliseconds: -30))
-        try await Self.turnOn(rig, [Self.hall, Self.bedroom])
-        try await rig.hub.perform(.calibrateSync)
-        try await Self.finished(rig)
-        // No Mac speaker measured: the earliest (the hall) is the reference.
-        #expect(rig.speaker(Fixtures.hallSonos)?.syncTrimMs == 0)
-        let trim = try #require(rig.speaker(Fixtures.mainBedroom)?.syncTrimMs)
-        #expect(abs(trim + 80) <= 1)
+    // MARK: When it can't
 
-        // Measuring again finds them lined up and changes nothing.
-        try await rig.hub.perform(.calibrateSync)
-        try await rig.waitFor("second run started") { $0.calibration?.isRunning == true }
-        try await Self.finished(rig)
-        let again = try #require(rig.state.calibration?.speaker(SpeakerID(Self.bedroom))?.outcome)
-        guard case .aligned(_, let second, _) = again else { Issue.record("expected a measurement, got \(again)"); return }
-        #expect(abs(second - trim) <= 1)
-    }
-
-    @Test func needsAMicrophoneAndASpeaker() async throws {
+    @Test func needsAMicrophoneAKnownSpeakerAndOneRunAtATime() async throws {
         let bare = Rig()
         await bare.start()
         try await Self.turnOn(bare, [Self.hall])
-        await #expect(throws: HubCommandError.self) { try await bare.hub.perform(.calibrateSync) }
+        await #expect(throws: HubCommandError.self) { try await bare.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall))) }
         #expect(bare.state.calibration == nil)
 
-        let (rig, _) = Self.rig(delays: [:])
+        let (rig, _) = Self.rig(delays: [Self.hall: 0.02])
         await rig.start()
         await #expect(throws: HubCommandError(.unavailable, "Turn on a speaker first.")) { try await rig.hub.perform(.calibrateSync) }
+        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.calibrateSpeakerSync(id: "nope")) }
         #expect(rig.state.calibration == nil)
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall)))
+        await #expect(throws: HubCommandError.self) { try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.bedroom))) }
+        try await Self.finished(rig)
+    }
+
+    @Test func aSpeakerOutOfEarshotIsSaidAndItsTrimLeftAlone() async throws {
+        let store = InMemorySettingsStore()
+        let (rig, _) = Self.rig(delays: [:], settings: store)
+        await rig.start()
+        try await Self.turnOn(rig, [Self.hall])
+        try await rig.hub.perform(.setSpeakerSyncTrim(id: SpeakerID(Self.hall), milliseconds: -40))
+        try await Self.tune(rig, Self.hall)
+        let status = try #require(rig.state.calibration)
+        #expect(status.speakers[0].outcome == .notHeard)
+        #expect(status.summary == "Couldn\u{2019}t hear it")
+        #expect(status.speakers[0].outcome.nextStep(microphone: status.microphone) != nil)
+        #expect(Self.trim(rig, Fixtures.hallSonos) == -40)
+        #expect(store.load().speakers[Self.hall]?.calibration == nil && rig.speaker(Fixtures.hallSonos)?.tunedAt == nil)
     }
 
     @Test func aRefusedMicrophoneIsSaidAndNothingIsTouched() async throws {
@@ -196,15 +374,14 @@ struct CalibrationHubTests {
         mic.permission.set(.denied)
         await rig.start()
         try await Self.turnOn(rig, [Self.hall, Self.bedroom])
-        try await rig.hub.perform(.calibrateSync)
-        try await Self.finished(rig)
+        try await Self.tune(rig, Self.bedroom)
         let status = try #require(rig.state.calibration)
         #expect(status.problem == LocalHub.microphoneRefused)
         #expect(status.summary == LocalHub.microphoneRefused)
         #expect(status.speakers.allSatisfy { $0.outcome == .skipped })
         #expect(!rig.session.calls.contains("setSource Sync calibration"))
         #expect(!rig.session.calls.contains("play"))
-        #expect(rig.speaker(Fixtures.mainBedroom)?.syncTrimMs == 0)
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == 0)
     }
 
     @Test func aMicrophoneThatWillNotStartHandsTheSpeakersBack() async throws {
@@ -212,34 +389,33 @@ struct CalibrationHubTests {
         mic.failsToStart.set(true)
         await rig.start()
         try await Self.turnOn(rig, [Self.hall])
-        try await rig.hub.perform(.calibrateSync)
-        try await Self.finished(rig)
+        try await Self.tune(rig, Self.hall)
         #expect(rig.state.calibration?.problem?.hasPrefix("The microphone couldn\u{2019}t be used") == true)
         let i = rig.session.inner.get()
         #expect(i.muted.isEmpty && i.transport == .stopped)
     }
 
-    @Test func cancellingStopsAtOnceAndChangesNoTrim() async throws {
+    @Test func stoppingEndsItAtOnceAndChangesNoTrim() async throws {
         let (rig, mic) = Self.rig(delays: [Self.hall: 0.02, Self.bedroom: 0.1])
         await rig.start()
         try await Self.turnOn(rig, [Self.hall, Self.bedroom])
-        try await rig.hub.perform(.calibrateSync)
-        try await rig.waitFor("measuring the second", timeout: 5) { $0.calibration?.speakers.last?.outcome == .measuring }
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.bedroom)))
+        try await rig.waitFor("listening", timeout: 5) { ($0.calibration?.speakers[0].sweeps.count ?? 0) >= 1 }
         try await rig.hub.perform(.cancelSyncCalibration)
         #expect(rig.state.calibration == nil)
-        #expect(rig.speaker(Fixtures.mainBedroom)?.syncTrimMs == 0 && rig.speaker(Fixtures.hallSonos)?.syncTrimMs == 0)
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == 0 && rig.speaker(Fixtures.mainBedroom)?.tunedAt == nil)
         let i = rig.session.inner.get()
         #expect(i.muted.isEmpty && i.transport == .stopped)
         #expect(!mic.isListening.get())
         #expect(!rig.session.calls.contains { $0.hasPrefix("offset") })
     }
 
-    @Test func cancellingDoesNotWaitForThePermissionPrompt() async throws {
+    @Test func stoppingDoesNotWaitForThePermissionPrompt() async throws {
         let (rig, mic) = Self.rig(delays: [Self.hall: 0.02])
         mic.accessGate.close()
         await rig.start()
         try await Self.turnOn(rig, [Self.hall])
-        try await rig.hub.perform(.calibrateSync)
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall)))
         try await rig.hub.perform(.cancelSyncCalibration)
         #expect(rig.state.calibration == nil)
         #expect(!rig.session.calls.contains("setSource Sync calibration"))
@@ -272,10 +448,10 @@ struct CalibrationHubTests {
         #expect(reopened.seeks.get().last.map { abs($0 - 28) < 0.5 } == true)
         #expect(rig.session.transport == .playing)
         #expect(rig.session.inner.get().muted.isEmpty)
-        #expect(abs((rig.speaker(Fixtures.mainBedroom)?.syncTrimMs ?? 0) + 30) <= 1)
+        #expect(abs(Self.trim(rig, Fixtures.mainBedroom) + 30) <= 1)
     }
 
-    @Test func pressingPlayEndsTheCalibration() async throws {
+    @Test func pressingPlayEndsTheTuning() async throws {
         let (rig, _) = Self.rig(delays: [Self.hall: 0.02, Self.bedroom: 0.05])
         await rig.start()
         try await Self.turnOn(rig, [Self.hall, Self.bedroom])
@@ -283,7 +459,7 @@ struct CalibrationHubTests {
         try await rig.addFiles(["one.m4a"], in: dir)
         try await rig.hub.perform(.selectSource(source: .files))
         await rig.hub.settle()
-        try await rig.hub.perform(.calibrateSync)
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.bedroom)))
         try await rig.waitFor("measuring", timeout: 5) { $0.calibration?.speakers.first?.outcome == .measuring }
         try await rig.hub.perform(.play)
         try await rig.waitFor("playing the file") { $0.transport.isPlaying && $0.calibration == nil }
@@ -291,10 +467,10 @@ struct CalibrationHubTests {
         #expect(rig.session.currentSource is FakeFileSource)
         #expect(rig.session.transport == .playing)
         #expect(rig.session.inner.get().muted.isEmpty)
-        #expect(rig.speaker(Fixtures.mainBedroom)?.syncTrimMs == 0)
+        #expect(Self.trim(rig, Fixtures.mainBedroom) == 0)
     }
 
-    @Test func aSpeakerTurnedOffBeforeItsTurnIsSkipped() async throws {
+    @Test func inAllInTurnASpeakerTurnedOffBeforeItsTurnIsSkipped() async throws {
         let (rig, _) = Self.rig(delays: [Self.hall: 0.02, Self.bedroom: 0.05])
         await rig.start()
         try await Self.turnOn(rig, [Self.hall, Self.bedroom])
@@ -303,18 +479,15 @@ struct CalibrationHubTests {
         try await Self.finished(rig)
         let status = try #require(rig.state.calibration)
         #expect(status.speaker(SpeakerID(Self.bedroom))?.outcome == .skipped)
-        guard case .aligned = status.speaker(SpeakerID(Self.hall))?.outcome else {
-            Issue.record("expected the hall measured, got \(status.speakers)")
-            return
-        }
-        #expect(rig.speaker(Fixtures.hallSonos)?.syncTrimMs == 0)
+        #expect(status.speaker(SpeakerID(Self.hall))?.outcome.isAligned == true)
+        #expect(Self.trim(rig, Fixtures.hallSonos) == 0)
     }
 
     @Test func shuttingDownMidRunEndsCleanly() async throws {
         let (rig, mic) = Self.rig(delays: [Self.hall: 0.02])
         await rig.start()
         try await Self.turnOn(rig, [Self.hall])
-        try await rig.hub.perform(.calibrateSync)
+        try await rig.hub.perform(.calibrateSpeakerSync(id: SpeakerID(Self.hall)))
         try await rig.waitFor("measuring", timeout: 5) { $0.calibration?.speakers.first?.outcome == .measuring }
         await rig.hub.shutdown()
         #expect(!mic.isListening.get())

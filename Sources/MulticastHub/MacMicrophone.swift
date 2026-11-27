@@ -37,7 +37,7 @@ public final class MacMicrophone: CalibrationMicrophone, @unchecked Sendable {
 
     deinit { stopNow() }
 
-    public func access(ask: Bool) async -> PermissionStatus {
+    public func access(ask: Bool) async -> MicrophoneAccess {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return .granted
         case .notDetermined:
@@ -83,10 +83,20 @@ public final class MacMicrophone: CalibrationMicrophone, @unchecked Sendable {
         AudioDeviceDestroyIOProcID(r.device, r.procID)
     }
 
-    public func recording(fromHostNanos: UInt64, seconds: Double) async -> MicrophoneRecording? {
-        guard let ring = running.withLockUnchecked({ $0?.ring }),
-              let r = ring.recording(fromHostNanos: fromHostNanos, seconds: seconds) else { return nil }
-        return MicrophoneRecording(samples: r.samples, sampleRate: ring.sampleRate, startHostNanos: r.startHostNanos)
+    public func listen(for signal: CalibrationSignal, fromHostNanos: UInt64, seconds: Double) async -> HeardSweep? {
+        guard let ring = running.withLockUnchecked({ $0?.ring }) else { return nil }
+        // The correlation is a few tens of milliseconds of arithmetic: off the caller's actor.
+        return await Task.detached(priority: .userInitiated) {
+            ring.heard(signal, fromHostNanos: fromHostNanos, seconds: seconds)
+        }.value
+    }
+
+    /// The last `seconds` heard, thinned to about `points` values (a live waveform); empty
+    /// while not listening.
+    public func waveform(seconds: Double = 0.05, points: Int = 120) -> [Float] {
+        guard let ring = running.withLockUnchecked({ $0?.ring }) else { return [] }
+        let count = Int(seconds * ring.sampleRate)
+        return ring.latest(points, step: max(1, count / max(1, points)))
     }
 
     // MARK: Core Audio

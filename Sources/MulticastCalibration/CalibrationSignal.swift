@@ -11,7 +11,7 @@ import MulticastAudio
 ///
 /// The sweep is defined as a function of time, not as samples, so the microphone side can build
 /// the same sound at whatever rate its device runs at.
-public struct CalibrationSignal: Sendable, Equatable {
+public struct CalibrationSignal: Sendable, Equatable, Codable {
     public var startHz: Double
     public var endHz: Double
     /// Length of one sweep, seconds.

@@ -188,49 +188,62 @@ import Testing
 
     @Test func calibrationHasStableNamesAndIsAbsentUntilThereIsOne() throws {
         #expect(try json(HubCommand.calibrateSync) == #"{"calibrateSync":{}}"#)
+        #expect(try json(HubCommand.calibrateSpeakerSync(id: "a")) == #"{"calibrateSpeakerSync":{"id":"a"}}"#)
         #expect(try json(HubCommand.cancelSyncCalibration) == #"{"cancelSyncCalibration":{}}"#)
-        #expect(HubCommand.calibrateSync.category == .speaker)
+        #expect(HubCommand.calibrateSpeakerSync(id: "a").category == .speaker)
 
         // No calibration: the key isn't written, so a state reads the same to older builds.
         let plain = HubState(revision: 1)
         #expect(!(try json(plain)).contains("calibration"))
-        // And a state from a build that predates it decodes.
-        var older = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
-        older["calibration"] = nil
-        #expect(try JSONDecoder().decode(HubState.self, from: JSONSerialization.data(withJSONObject: older)).calibration == nil)
+        #expect(try JSONDecoder().decode(HubState.self, from: JSONEncoder().encode(plain)).calibration == nil)
 
         var s = HubState(revision: 2)
-        s.calibration = SyncCalibrationStatus(isRunning: false, speakers: [
-            .init(id: "a", outcome: .aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false)),
+        s.calibration = SyncCalibrationStatus(isRunning: false, microphone: .phone(name: "Sample iPhone"), speakers: [
+            .init(id: "a", outcome: .aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false, isReference: false), previousTrimMs: 10,
+                  sweepsBeganAt: Date(timeIntervalSinceReferenceDate: 1000),
+                  sweeps: [.init(latenessMs: 172.4, strength: 31.5, trace: Data([0, 12, 255, 9])), .init(latenessMs: nil, strength: 4.1, trace: Data())]),
             .init(id: "b", outcome: .notHeard), .init(id: "c", outcome: .measuring), .init(id: "d"),
             .init(id: "e", outcome: .unclear), .init(id: "f", outcome: .skipped),
         ])
         try roundTrip(s)
-        #expect(try json(s.calibration!.speakers[0])
-                == #"{"id":"a","outcome":{"aligned":{"lagMs":172.4,"reachedLimit":false,"trimMs":-172}}}"#)
-        #expect(try json(s.calibration!.speakers[1]) == #"{"id":"b","outcome":{"notHeard":{}}}"#)
+        #expect(try json(s.calibration!.speakers[0].outcome)
+                == #"{"aligned":{"isReference":false,"lagMs":172.4,"reachedLimit":false,"trimMs":-172}}"#)
+        #expect(try json(s.calibration!.speakers[1].outcome) == #"{"notHeard":{}}"#)
+        #expect(try json(s.calibration!.microphone) == #"{"phone":{"name":"Sample iPhone"}}"#)
         #expect(s.hasSameContent(as: s) && !s.hasSameContent(as: plain))
+
+        // A speaker says when it was tuned only once it has been.
+        var speaker = SpeakerItem(id: "a", name: "Patio", transport: .airPlay1, glyph: .speaker, volume: 0.5)
+        #expect(!(try json(speaker)).contains("tunedAt"))
+        speaker.tunedAt = Date(timeIntervalSinceReferenceDate: 5)
+        try roundTrip(speaker)
     }
 
     @Test func calibrationWording() {
         typealias Outcome = SyncCalibrationStatus.Outcome
-        #expect(Outcome.aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false).caption == "Was 172 ms late \u{00B7} trim \u{2212}172 ms")
-        #expect(Outcome.aligned(lagMs: 0.2, trimMs: 0, reachedLimit: false).caption == "In step \u{00B7} no trim")
-        #expect(Outcome.aligned(lagMs: -12, trimMs: 12, reachedLimit: false).caption == "Was 12 ms early \u{00B7} trim +12 ms")
-        #expect(Outcome.aligned(lagMs: 900, trimMs: -500, reachedLimit: true).caption.hasSuffix("the most it allows"))
-        #expect(Outcome.notHeard.caption == "Couldn\u{2019}t hear this speaker")
+        #expect(Outcome.aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false, isReference: false).caption == "Was 172 ms late \u{00B7} trim \u{2212}172 ms")
+        #expect(Outcome.aligned(lagMs: 0.2, trimMs: 0, reachedLimit: false, isReference: false).caption == "In step \u{00B7} no trim")
+        #expect(Outcome.aligned(lagMs: -12, trimMs: 12, reachedLimit: false, isReference: false).caption == "Was 12 ms early \u{00B7} trim +12 ms")
+        #expect(Outcome.aligned(lagMs: 900, trimMs: -500, reachedLimit: true, isReference: false).caption.hasSuffix("the most it allows"))
+        #expect(Outcome.aligned(lagMs: 0, trimMs: 0, reachedLimit: false, isReference: true).caption == "The others line up to this one")
+        #expect(Outcome.notHeard.caption == "Couldn\u{2019}t hear it")
+        #expect(Outcome.notHeard.nextStep(microphone: .hub) != Outcome.notHeard.nextStep(microphone: .phone(name: "x")))
+        #expect(Outcome.measuring.nextStep(microphone: .hub) == nil)
+        #expect(SyncCalibrationStatus.signed(-172) == "\u{2212}172" && SyncCalibrationStatus.signed(40) == "+40" && SyncCalibrationStatus.signed(0) == "0")
 
         func status(_ outcomes: [Outcome], running: Bool = false, problem: String? = nil) -> SyncCalibrationStatus {
             SyncCalibrationStatus(isRunning: running, speakers: outcomes.enumerated().map { .init(id: SpeakerID("s\($0.offset)"), outcome: $0.element) },
                                   problem: problem)
         }
-        let done = Outcome.aligned(lagMs: 0, trimMs: 0, reachedLimit: false)
-        #expect(status([done, done, done]).summary == "All 3 speakers are lined up.")
-        #expect(status([done, .notHeard, done]).summary == "2 of 3 speakers lined up.")
+        let done = Outcome.aligned(lagMs: 0, trimMs: 0, reachedLimit: false, isReference: false)
+        #expect(status([done, done, done]).summary == "All 3 speakers are in sync.")
+        #expect(status([done, .notHeard, done]).summary == "2 of 3 speakers in sync.")
         #expect(status([.notHeard, .unclear]).summary == "Couldn\u{2019}t hear any speaker from here.")
-        #expect(status([done]).summary == "Measured 1 speaker. Turn on another to line them up.")
+        #expect(status([.unclear]).summary == "Too noisy to be sure")
         #expect(status([.measuring, .waiting], running: true).summary == nil)
         #expect(status([.skipped], problem: "No microphone.").summary == "No microphone.")
+        #expect(status([.waiting, .measuring, .waiting], running: true).current?.id == "s1")
+        #expect(status([done, .notHeard]).current?.id == "s1")
     }
 
     @Test func stateStaysSmall() throws {

@@ -36,6 +36,16 @@ public enum TrimPlanner {
         public var lagMs: Double
         /// The trim that would line it up lies outside the range; it was set as far as it goes.
         public var isOutOfRange: Bool
+        /// This is the speaker the others were lined up to.
+        public var isReference: Bool
+
+        public init(id: String, trimMs: Int, lagMs: Double, isOutOfRange: Bool, isReference: Bool = false) {
+            self.id = id
+            self.trimMs = trimMs
+            self.lagMs = lagMs
+            self.isOutOfRange = isOutOfRange
+            self.isReference = isReference
+        }
     }
 
     public static func plan(_ inputs: [Input], range: ClosedRange<Int>) -> [Output] {
@@ -57,7 +67,7 @@ public enum TrimPlanner {
         return inputs.indices.map { i in
             let clamped = min(range.upperBound, max(range.lowerBound, trims[i]))
             return Output(id: inputs[i].id, trimMs: clamped, lagMs: natural[i] - natural[referenceIndex],
-                          isOutOfRange: clamped != trims[i])
+                          isOutOfRange: clamped != trims[i], isReference: i == referenceIndex)
         }
     }
 }

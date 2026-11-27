@@ -257,7 +257,7 @@ struct TrimPlannerTests {
 
     @Test func aSingleSpeakerKeepsItsTrim() {
         let out = TrimPlanner.plan([.init(id: "only", delayMs: 300, currentTrimMs: -35)], range: range)
-        #expect(out == [.init(id: "only", trimMs: -35, lagMs: 0, isOutOfRange: false)])
+        #expect(out == [.init(id: "only", trimMs: -35, lagMs: 0, isOutOfRange: false, isReference: true)])
         #expect(TrimPlanner.plan([], range: range).isEmpty)
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import MulticastAudio
+import MulticastCalibration
 import MulticastEngine
 import MulticastHubModel
 import MulticastKit
