@@ -20,6 +20,9 @@ final class FakeReceiver: @unchecked Sendable {
     /// Status to answer the first N ANNOUNCEs with (then 200).
     var failAnnounces = 0
     var failStatus = 453
+    /// Answer every request 403 Forbidden, as an Apple TV or HomePod does when its AirPlay
+    /// access setting doesn't admit the sender.
+    var refuseAccess = false
 
     private let listenFD: Int32
     let port: UInt16
@@ -107,6 +110,10 @@ final class FakeReceiver: @unchecked Sendable {
 
     private func respond(to request: Request) -> Data {
         let cseq = request.headers["cseq"] ?? "0"
+        if refuseAccess {
+            lock.lock(); _requests.append(request); lock.unlock()
+            return Data("RTSP/1.0 403 Forbidden\r\nCSeq: \(cseq)\r\nServer: AirTunes/1005.13.2\r\n\r\n".utf8)
+        }
         var status = "200 OK"
         var extra = ""
         if let password {

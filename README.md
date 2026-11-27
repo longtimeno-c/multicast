@@ -349,6 +349,13 @@ Multicast is a work in progress. There are development builds only: no signed, n
   buffering the bridge's HTTP stream), which nothing on the network reports, and it has not been measured here.
   So Multicast applies no default offset to bridges; set speaker details → Sync trim per bridge. The trim range
   is −500…500 ms; positive plays later.
+- **Apple TV, HomePod and Macs as receivers:** Multicast speaks classic AirPlay (RAOP), which Sonos and other
+  third-party AirPlay 2 speakers accept. An Apple TV or HomePod whose AirPlay access setting doesn't admit
+  Multicast answers `403 Forbidden` to the very first request, and to the guest ("transient") pairing an iPhone
+  outside the Home would use; its row then says "Blocked by its AirPlay access setting" and it isn't retried on its
+  own ("Try again" still works). Whether such a receiver plays once its access setting admits everyone has not been
+  tried: it would also need the AirPlay 2 handshake (SRP pairing, encrypted RTSP, AirPlay 2 stream setup), which
+  Multicast doesn't have yet. A Mac's own AirPlay receiver has not been examined.
 - **Apple Music** plays through the Music app (Apple Events plus a capture of Music's audio), so it needs
   Automation and System Audio Recording. Music doesn't expose its own Up Next to Apple Events, so the hub keeps its
   own queue and plays Music one track at a time. MusicKit's `ApplicationMusicPlayer` is rendered by the system

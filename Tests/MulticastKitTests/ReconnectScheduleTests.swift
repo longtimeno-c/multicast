@@ -31,7 +31,8 @@ final class ReconnectScheduleTests: XCTestCase {
 
     func testPermanentFailuresAreNotRetried() {
         var r = ReconnectSchedule(delays: [1])
-        let f: [String: String?] = ["p": "Speaker requires a password", "d": "same physical device as Hall Sonos"]
+        let f: [String: String?] = ["p": "Speaker requires a password", "d": "same physical device as Hall Sonos",
+                                    "a": "the receiver refused access (403 Forbidden to OPTIONS)"]
         _ = r.due(failing: f, at: at(0))
         XCTAssertEqual(r.due(failing: f, at: at(100)), [])
     }

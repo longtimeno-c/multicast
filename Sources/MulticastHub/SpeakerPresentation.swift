@@ -154,6 +154,7 @@ public enum FailureWording {
         func has(_ words: String...) -> Bool { words.contains(where: { s.contains($0) }) }
         if s.isEmpty { return "Couldn\u{2019}t connect" }
         if has("did not become ready", "timed out", "timeout", "not responding") { return "Not responding" }
+        if has("refused access") { return "Blocked by its AirPlay access setting" }
         if has("rejected the password", "authentication") { return "Wrong AirPlay password" }
         if has("requires a password", "password") { return "Needs an AirPlay password" }
         if has(" 453", "busy", "in use", "not enough bandwidth") { return "In use by another device" }

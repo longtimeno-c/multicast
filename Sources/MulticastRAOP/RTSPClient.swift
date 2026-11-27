@@ -12,6 +12,10 @@ public enum RAOPError: Error, CustomStringConvertible, Sendable, Equatable {
     case latencyTooSmall(String)
     case volumeRejected(Int)
     case notConnected
+    /// The receiver answered 403 Forbidden: it turns this sender away before any pairing or
+    /// audio. Apple TVs and HomePods do this to every request, including transient pair-setup,
+    /// when their AirPlay access setting doesn't admit this sender. Waiting doesn't change it.
+    case accessRefused(method: String)
 
     public var description: String {
         switch self {
@@ -25,6 +29,7 @@ public enum RAOPError: Error, CustomStringConvertible, Sendable, Equatable {
         case .latencyTooSmall(let why): return "timeline latency too small: \(why)"
         case .volumeRejected(let status): return "the speaker rejected SET_PARAMETER volume (\(status)); refusing to send audio at an unknown volume"
         case .notConnected: return "not connected"
+        case .accessRefused(let method): return "the receiver refused access (403 Forbidden to \(method)): its AirPlay access setting does not admit this sender"
         }
     }
 }
@@ -62,6 +67,7 @@ final class RTSPClient {
             response = try exchange(request)
             if response.statusCode == 401 { throw RAOPError.authenticationFailed }
         }
+        if response.statusCode == 403 { throw RAOPError.accessRefused(method: request.method) }
         if expectOK && response.statusCode != 200 {
             throw RAOPError.unexpectedStatus(method: request.method, status: response.statusCode, reason: response.reason)
         }

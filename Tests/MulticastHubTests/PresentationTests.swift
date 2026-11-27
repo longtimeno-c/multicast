@@ -4,6 +4,7 @@ import ImageIO
 import MulticastAudio
 import MulticastEngine
 import MulticastHubModel
+import MulticastRAOP
 import Testing
 @testable import MulticastHub
 
@@ -66,6 +67,8 @@ struct PresentationTests {
         #expect(FailureWording.plain("Speaker did not become ready within 10.0 s") == "Not responding")
         #expect(FailureWording.plain("cannot connect: Connection refused") == "Can\u{2019}t reach it on the network")
         #expect(FailureWording.plain("the speaker requires a password (401) and none was given") == "Needs an AirPlay password")
+        #expect(FailureWording.plain(String(describing: RAOPError.accessRefused(method: "OPTIONS")))
+                == "Blocked by its AirPlay access setting")
         #expect(FailureWording.plain("the speaker rejected the password (401 after digest)") == "Wrong AirPlay password")
         #expect(FailureWording.plain("ANNOUNCE failed: 453 Not Enough Bandwidth") == "In use by another device")
         #expect(FailureWording.plain("the speaker closed the RTSP connection") == "The speaker hung up")
