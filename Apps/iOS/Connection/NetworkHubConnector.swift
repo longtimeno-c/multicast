@@ -103,6 +103,11 @@ actor NetworkHubConnector: HubConnector {
 
     private func receive(_ list: [MulticastRemote.DiscoveredHub]) {
         found = list.filter(\.isCompatible)
+        // For testing against one hub among several (`-MCOnlyHub "Test Hub"`): the others are
+        // not seen, so a Mac this device is paired with isn't connected to by itself.
+        if let only = UserDefaults.standard.string(forKey: "MCOnlyHub"), !only.isEmpty {
+            found = found.filter { $0.name == only }
+        }
         let hubs = appHubs
         for c in hubSubs.values { c.yield(hubs) }
         autoConnectIfPaired()

@@ -205,13 +205,15 @@ struct MockContent: Equatable, Sendable {
 
 enum MockScene: String, CaseIterable, Sendable {
     case idle, appleMusic, folder, playlist, upNext, search, spotify, appPicker, firstRun, localNetworkDenied
+    /// Apple Music playing, with a paired iPhone playing along through a Bluetooth speaker.
+    case phoneSpeaker
 
     /// What the search scene looks for.
     static let searchQuery = "Juniper"
 
     var browsing: SourceKind {
         switch self {
-        case .idle, .appleMusic, .folder, .playlist, .upNext, .search, .firstRun, .localNetworkDenied: .appleMusic
+        case .idle, .appleMusic, .phoneSpeaker, .folder, .playlist, .upNext, .search, .firstRun, .localNetworkDenied: .appleMusic
         case .spotify: .spotify
         case .appPicker: .app
         }
@@ -219,7 +221,7 @@ enum MockScene: String, CaseIterable, Sendable {
 
     var levels: StereoLevels {
         switch self {
-        case .appleMusic, .folder, .playlist, .upNext, .search, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
+        case .appleMusic, .phoneSpeaker, .folder, .playlist, .upNext, .search, .spotify, .appPicker: StereoLevels(left: 0.30, right: 0.24)
         default: .silent
         }
     }
@@ -242,7 +244,7 @@ enum MockScene: String, CaseIterable, Sendable {
         switch self {
         case .idle:
             break
-        case .appleMusic, .folder, .playlist, .upNext, .search:
+        case .appleMusic, .phoneSpeaker, .folder, .playlist, .upNext, .search:
             s.activeSource = .appleMusic
             s.nowPlaying = MockData.nowPlaying(songs[0])
             s.transport = TransportState(isPlaying: true, position: 102, positionAsOf: .now)
@@ -257,6 +259,11 @@ enum MockScene: String, CaseIterable, Sendable {
             for id in [MockData.neighbourHomePod, MockData.upstairsTV] {
                 guard let i = s.speakers.firstIndex(where: { $0.id == id }) else { continue }
                 s.speakers[i].isRestricted = true
+            }
+            if self == .phoneSpeaker {
+                s.speakers.append(SpeakerItem(id: "phone:sample-remote", name: "Sample iPhone", transport: .phone, glyph: .phone,
+                                              model: "Garden Speaker", isEnabled: true, volume: 0.45, state: .playing,
+                                              syncTrimMs: -160))
             }
         case .spotify:
             s.activeSource = .spotify

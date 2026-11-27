@@ -35,6 +35,7 @@ final class PhoneSpeakerModel {
     private(set) var notice: String?
     /// Clock, buffer and loss figures while on, refreshed every second.
     private(set) var stats: PhoneSpeakerStats?
+    private(set) var outputDiagnostics: PhoneOutputDiagnostics?
     /// False on a hub link that can't carry audio (the mock connector without a backend).
     private(set) var isAvailable = false
 
@@ -68,6 +69,8 @@ final class PhoneSpeakerModel {
                 guard let self else { return }
                 let fresh = self.isOn ? self.backend?.phoneSpeakerStats : nil
                 if fresh != self.stats { self.stats = fresh }
+                let measured = self.isOn ? self.output.diagnostics : nil
+                if measured != self.outputDiagnostics { self.outputDiagnostics = measured }
             }
         })
     }
@@ -204,6 +207,9 @@ final class SilentPhoneOutput: PhoneSpeakerOutput, @unchecked Sendable {
     var onInterruption: (@Sendable (Bool) -> Void)?
     var onStopped: (@Sendable () -> Void)?
     let mayStart = true
+    var diagnostics: PhoneOutputDiagnostics? {
+        PhoneOutputDiagnostics(outputLatencyMillis: 172, syncErrorMillis: 0.2, rateCorrectionPPM: -11, underrunFrames: 0, jumps: 0)
+    }
     func resume() {}
     func start(timeline: StreamTimeline) -> Bool { true }
     func setClockOffset(nanos: Int64) {}

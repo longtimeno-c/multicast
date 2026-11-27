@@ -75,9 +75,11 @@ final class PhoneSpeakerReceiver {
         var slewNanosPerSecond: Int64 = 500_000
         /// A correction larger than this is applied at once (the output crossfades).
         var stepThresholdNanos: Int64 = 20_000_000
-        /// With no audio for this long the output is closed (the hub is paused); it reopens with
-        /// the next packet.
-        var idleCloseNanos: UInt64 = 20_000_000_000
+        /// With no audio for this long the output is closed (the hub has been paused a while); it
+        /// reopens with the next packet. Long on purpose: while the output is open (playing
+        /// silence) iOS keeps the app running with the screen locked, so a pause of a few
+        /// minutes doesn't cost the phone its place in the group.
+        var idleCloseNanos: UInt64 = 600_000_000_000
         /// No control datagram for this long: the hub is gone.
         var controlTimeoutNanos: UInt64 = 4_000_000_000
         var retryStartNanos: UInt64 = 2_000_000_000

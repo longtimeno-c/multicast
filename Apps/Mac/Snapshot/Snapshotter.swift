@@ -97,6 +97,7 @@ enum Snapshotter {
         switch scene {
         case .idle: "idle-no-speakers"
         case .appleMusic: "apple-music-playing"
+        case .phoneSpeaker: "iphone-as-speaker"
         case .folder: "folder-open"
         case .playlist: "playlist-open"
         case .upNext: "up-next"

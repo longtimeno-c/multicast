@@ -63,7 +63,7 @@ struct SpeakerDetailSheet: View {
 
                 // This device's own row: how its link to the Mac is doing.
                 if speaker.id == session.phoneSpeaker.speakerID, let stats = session.phoneSpeaker.stats {
-                    PhoneLinkSection(stats: stats)
+                    PhoneLinkSection(stats: stats, output: session.phoneSpeaker.outputDiagnostics)
                 }
             }
             .padding(.horizontal, MC.Space.l)

@@ -15,6 +15,18 @@ protocol PhoneSpeakerOutput: PhoneAudioOutput {
     var onStopped: (@Sendable () -> Void)? { get set }
     /// The person asked to play again after an interruption that didn't end by itself.
     func resume()
+    /// What the output measures about itself while it plays; nil when it has nothing to say.
+    var diagnostics: PhoneOutputDiagnostics? { get }
+}
+
+struct PhoneOutputDiagnostics: Equatable, Sendable {
+    /// The delay iOS reports for the current output (for Bluetooth, its own estimate).
+    var outputLatencyMillis: Double
+    /// How far what is being played is from where the timeline says it should be.
+    var syncErrorMillis: Double
+    var rateCorrectionPPM: Double
+    var underrunFrames: UInt64
+    var jumps: UInt64
 }
 
 /// The stream through this device's current audio route (its speaker, AirPods, a Bluetooth
@@ -95,9 +107,13 @@ final class PhoneRouteOutput: PhoneSpeakerOutput, @unchecked Sendable {
     func setOffset(millis: Int) { sink.setOffsetNow(millis: millis) }
     func stop() { sink.stopNow(deactivateSession: true) }
 
-    /// What the output itself measures (sync error, rate correction, underruns, route latency).
-    var syncStats: LocalOutputSyncStats { sink.syncStats }
-    var outputLatencyMillis: Double { Double(sink.reportedLatency.totalNanos) / 1e6 }
+    var diagnostics: PhoneOutputDiagnostics? {
+        guard sink.currentState == .playing else { return nil }
+        let s = sink.syncStats
+        return PhoneOutputDiagnostics(outputLatencyMillis: Double(sink.reportedLatency.totalNanos) / 1e6,
+                                      syncErrorMillis: s.filteredErrorMillis, rateCorrectionPPM: s.ratioPPM,
+                                      underrunFrames: s.underrunFrames, jumps: s.jumps)
+    }
 }
 
 // MARK: - The current route

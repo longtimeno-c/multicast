@@ -65,6 +65,7 @@ struct ThisPhoneSection: View {
 /// In this device's own speaker details: how the link to the Mac is doing, in numbers.
 struct PhoneLinkSection: View {
     var stats: PhoneSpeakerStats
+    var output: PhoneOutputDiagnostics?
 
     var body: some View {
         GroupedSection(title: "Link to the Mac", trailing: nil) {
@@ -80,6 +81,17 @@ struct PhoneLinkSection: View {
                 RowDivider(leading: MC.Space.m)
                 line("Packets lost", "\(stats.packetsConcealed)",
                      hint: stats.packetsConcealed == 0 ? nil : "Each is a gap of 8 ms, faded.")
+                if let output {
+                    RowDivider(leading: MC.Space.m)
+                    line("Output delay", String(format: "%.0f ms", output.outputLatencyMillis),
+                         hint: "What iOS reports for this output, already allowed for.")
+                    RowDivider(leading: MC.Space.m)
+                    line("Off the timeline by", String(format: "%+.2f ms", output.syncErrorMillis))
+                    RowDivider(leading: MC.Space.m)
+                    line("Speed correction", String(format: "%+.0f ppm", output.rateCorrectionPPM))
+                    RowDivider(leading: MC.Space.m)
+                    line("Dropouts", "\(output.underrunFrames * 1000 / 44_100) ms \u{00B7} \(output.jumps) jumps")
+                }
             }
         }
     }
