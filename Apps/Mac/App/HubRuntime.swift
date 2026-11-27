@@ -112,7 +112,9 @@ final class HubRuntime {
         let keys = CachingPairingKeyStore(wrapping: KeychainPairingKeyStore(service: Self.hubKeychainService))
         // A paired iPhone that offers itself becomes a speaker of this hub.
         let phones = RemoteSpeakerHost(
-            add: { [backend] descriptor, sink in await backend.addExternalSpeaker(descriptor, sink: sink) },
+            add: { [backend] descriptor, sink, onDevice in
+                await backend.addExternalSpeaker(descriptor, sink: sink, volumeOnDevice: onDevice)
+            },
             remove: { [backend] id in await backend.removeExternalSpeaker(id: id) })
         let server = HubServer(backend: backend, configuration: config, keyStore: keys, speakerHost: phones)
         self.server = server

@@ -89,7 +89,17 @@ final class HubModel {
     @ObservationIgnored private var pendingVolume: [SpeakerID: Pending<Double>] = [:]
     @ObservationIgnored private var pendingTrim: [SpeakerID: Pending<Int>] = [:]
     @ObservationIgnored private var pendingMaster: Pending<Double>?
+    /// Speakers whose volume slider is being dragged (between the first change and the commit).
+    /// The hub may publish a volume of its own meanwhile (a device rounds to its own steps, or
+    /// its volume is changed somewhere else): the knob stays under the pointer until the drag
+    /// ends, then follows the hub again.
+    @ObservationIgnored private var draggingVolume: Set<SpeakerID> = []
     @ObservationIgnored private var flushes: [String: Task<Void, Never>] = [:]
+    /// Shows the hub's state again once the optimistic values over it have gone stale.
+    @ObservationIgnored private var unmasking: Task<Void, Never>?
+    /// Called after every state the hub publishes has been taken in (the iPhone's own speaker
+    /// follows the hub's volume for its row from here, view or no view).
+    @ObservationIgnored var onPublished: (() -> Void)?
 
     private struct Pending<Value: Equatable> {
         var value: Value
@@ -115,6 +125,9 @@ final class HubModel {
 
     nonisolated static let throttle: Duration = .milliseconds(50)
     nonisolated static let echoWindow: TimeInterval = 0.5
+    /// A volume the hub publishes within this of the one sent is its echo. A device volume
+    /// comes back a little different (stored as a 32-bit value, rounded to the device's steps).
+    nonisolated static let volumeEchoTolerance = 0.01
     nonisolated static let searchDebounce: Duration = .milliseconds(250)
     /// How many catalog songs a search shows.
     nonisolated static let catalogResultCount = 25
@@ -193,6 +206,7 @@ final class HubModel {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
         searchTask?.cancel()
+        unmasking?.cancel()
     }
 
     // MARK: Applying backend state
@@ -211,14 +225,21 @@ final class HubModel {
         if queue != s.queue { queue = s.queue }
         if pins != s.pins { withAnimation(structural) { pins = s.pins } }
         applyContent(s.content)
+        onPublished?()
     }
+
+    /// The hub's speakers exactly as it last published them, without the values this model
+    /// shows ahead of the hub's echo.
+    var publishedSpeakers: [SpeakerItem] { published.speakers }
 
     private func applySpeakers(_ s: HubState) {
         var incoming = s.speakers
         for i in incoming.indices {
             let id = incoming[i].id
             if let p = pendingVolume[id] {
-                if p.value == incoming[i].volume || p.isStale { pendingVolume[id] = nil }
+                // Mid-drag an echo that matches is not the end of it: only staleness lets go.
+                let echoed = abs(p.value - incoming[i].volume) <= Self.volumeEchoTolerance && !draggingVolume.contains(id)
+                if echoed || p.isStale { pendingVolume[id] = nil }
                 else { incoming[i].volume = p.value }
             }
             if let p = pendingTrim[id] {
@@ -230,6 +251,9 @@ final class HubModel {
         if let p = pendingMaster {
             if p.value == master || p.isStale { pendingMaster = nil } else { master = p.value }
         }
+        // Something the hub published is hidden behind a value of ours. If no further state
+        // arrives, nothing would ever show it: look again when ours has gone stale.
+        if !pendingVolume.isEmpty || !pendingTrim.isEmpty || pendingMaster != nil { unmaskLater() }
 
         // A speaker found or lost moves its neighbours; a state or volume change animates in its row.
         if speakers.map(\.id) != incoming.map(\.id) {
@@ -239,6 +263,19 @@ final class HubModel {
         }
         if masterVolume != master { masterVolume = master }
         if isDiscovering != s.isDiscovering { withAnimation(structural) { isDiscovering = s.isDiscovering } }
+    }
+
+    /// Applies the last published speakers again just after the echo window, so that a state
+    /// held back by an optimistic value (a slider let go at 0.30, the volume keys pressed
+    /// straight afterwards) is shown even when the hub has nothing more to say.
+    private func unmaskLater() {
+        guard unmasking == nil else { return }
+        unmasking = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.echoWindow + 0.05))
+            guard let self, !Task.isCancelled else { return }
+            self.unmasking = nil
+            self.applySpeakers(self.published)
+        }
     }
 
     private func applyPlayback(_ s: HubState) {
@@ -275,6 +312,7 @@ final class HubModel {
     /// A command was refused: drop optimistic edits and show the last state the backend published.
     private func refused(_ command: HubCommand, _ error: Error) {
         pendingVolume.removeAll(); pendingTrim.removeAll(); pendingMaster = nil
+        draggingVolume.removeAll()
         let last = published
         applySpeakers(last)
         applyPlayback(last)
@@ -508,11 +546,13 @@ final class HubModel {
         let v = volume.clamped(to: 0...1)
         mutateSpeaker(id) { $0.volume = v }
         pendingVolume[id] = Pending(value: v, at: .now)
+        draggingVolume.insert(id)
         throttle("volume.\(id)") { [weak self] in self?.sendVolume(id) }
     }
 
     /// The end of a drag: send the final value now.
     func commitVolume(for id: SpeakerID) {
+        draggingVolume.remove(id)
         flush("volume.\(id)") { [weak self] in self?.sendVolume(id) }
     }
 

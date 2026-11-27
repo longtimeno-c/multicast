@@ -67,7 +67,7 @@ if musicChoice != "off", #available(macOS 14.2, *), let kind = AppleMusicBackend
 var config = HubServer.Configuration(hubID: hubID, name: name)
 config.advertises = true
 let phones = RemoteSpeakerHost(
-    add: { descriptor, sink in await hub.addExternalSpeaker(descriptor, sink: sink) },
+    add: { descriptor, sink, onDevice in await hub.addExternalSpeaker(descriptor, sink: sink, volumeOnDevice: onDevice) },
     remove: { id in await hub.removeExternalSpeaker(id: id) })
 let server = HubServer(backend: hub, configuration: config, keyStore: store, speakerHost: phones)
 if let cached = store as? CachingPairingKeyStore { Task { await cached.load() } }

@@ -101,7 +101,9 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     /// The user's checkbox.
     public var isEnabled: Bool
     /// 0…1, before the master volume is applied. Adjustable while the speaker is off: it is
-    /// then the preset applied on connect.
+    /// then the preset applied on connect. For a speaker with a volume of its own that the hub
+    /// can set (an output of the Mac), this is that device's volume, on or off, and it also
+    /// moves when the volume is changed outside Multicast.
     public var volume: Double
     public var state: SpeakerState
     /// Per-speaker playout offset in milliseconds. Negative plays earlier.
