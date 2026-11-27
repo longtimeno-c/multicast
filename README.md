@@ -15,7 +15,9 @@ Multicast Remote, plays the part of the old iTunes Remote.
 ## What it does
 
 - **Many speakers, one timeline.** Turn speakers on and off while playing, set each one's volume and a master
-  volume, and nudge any speaker earlier or later with a per-speaker sync trim.
+  volume, and nudge any speaker earlier or later with a per-speaker sync trim. The slider of one of this Mac's own
+  outputs is that output's own volume, the one the volume keys and the menu bar move (where the output has a volume
+  that can be set; an HDMI display or a DAC without one is turned down inside Multicast instead).
 - **Apple Music library.** Playlists and playlist folders, pinned playlists, search, and an Up Next queue owned by
   the hub, with Play Next, Add to Queue and Shuffle.
 - **Other sources.** Capture the sound of any other app on the Mac, or play DRM-free audio files.
@@ -201,7 +203,9 @@ Review scenes on made-up speakers: `-MCScene phone-only`, `phone-only-playing`, 
 On the iPhone's Speakers tab, the first row is **This iPhone**, named after what the phone would play through
 ("iPhone Speaker", or the name of the Bluetooth speaker or headphones connected to it). Turn it on and the Mac
 lists the phone under **iPhones**, with a phone glyph, and plays to it in time with the other speakers. It has a
-volume and a sync trim like any speaker, on the Mac and on every remote.
+sync trim like any speaker, and its volume is the iPhone's own: the side buttons and Control Centre move the slider,
+and the slider, on the phone, on the Mac or on another remote, sets the iPhone's volume (for a Bluetooth speaker
+that takes its volume from the phone, the speaker's).
 
 - **How the audio gets there.** The Mac already holds the stream as PCM where it fans out to the speakers, so the
   phone's sink (`PhoneSpeakerSink`) is one more `AudioSink`. Packets travel over UDP beside the remote link, sealed
@@ -223,8 +227,11 @@ volume and a sync trim like any speaker, on the Mac and on every remote.
   `LockScreenControls` hands it to iOS). iOS offers these controls only to the app that is playing audio, which is
   why they need This iPhone on: as a remote alone the app plays nothing, iOS suspends it, and nothing is shown.
 - **Bluetooth.** iOS reports a delay for a Bluetooth output and it is allowed for, but the report is an estimate and
-  the speaker adds its own. Set the row's **Sync trim** once by ear (earlier, typically 100 to 250 ms). Volume and
-  trim are remembered per phone and per output, so the phone's own speaker and each Bluetooth speaker keep theirs.
+  the speaker adds its own. Set the row's **Sync trim** once by ear (earlier, typically 100 to 250 ms). The trim
+  is remembered per phone and per output, so the phone's own speaker and each Bluetooth speaker keep theirs. The
+  volume is not the Mac's to remember: when This iPhone is turned on, or its output changes, the phone's volume as
+  it is then is the one shown and kept (iOS itself keeps a volume per output). A phone on an older build of the app
+  keeps its volume as a level inside Multicast, as before.
 - **Coming and going.** The row exists on the Mac only while the phone is connected with This iPhone on. Turning it
   off on the Mac turns it off on the phone. If the link drops, the phone offers itself again when it reconnects.
   This iPhone is off at every launch of the app.
@@ -385,6 +392,10 @@ swift run multicast-remote-cli run --hub "Test Hub" --store /tmp/remote-keys.jso
     pair "volume=Main Bedroom:0.1" "on=Main Bedroom" "volume=Hall Sonos:0.1" "on=Hall Sonos" \
     "play-file=song" "expect=Hall Sonos:playing" sleep=3 "volume=Hall Sonos:0.08" "off=Main Bedroom" sleep=2 pause
 ```
+
+The headless hub is the real hub: `volume=` for one of the Mac's own outputs sets that output's volume, as the
+slider does, and it stays where it was put when the hub stops. (`multicast-cli play --volume` does not touch the
+Mac's volume: it turns the audio down inside Multicast.)
 
 `multicast-remote-cli hubs` lists the hubs on the network; the full list of steps is in the header of
 `Sources/multicast-remote-cli/main.swift`. `--store` keeps pairing keys in a 0600 file instead of the Keychain.

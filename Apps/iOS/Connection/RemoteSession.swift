@@ -43,6 +43,12 @@ final class RemoteSession {
         self.navigation = navigation ?? RemoteNavigation()
         self.searchTimeout = searchTimeout
         self.prepare = prepare
+        // This device's speaker volume goes to the hub through the model, like any slider's.
+        // What it compares its own volume with is what the hub published, not the model's
+        // speakers, which show a volume sent a moment ago before the hub has taken it.
+        self.phoneSpeaker.hubSpeakers = { [weak self] in self?.model?.publishedSpeakers ?? [] }
+        self.phoneSpeaker.sendVolume = { [weak self] id, volume in self?.model?.setVolume(volume, for: id) }
+        self.phoneSpeaker.commitSentVolume = { [weak self] id in self?.model?.commitVolume(for: id) }
     }
 
     // MARK: What to show
@@ -104,6 +110,7 @@ final class RemoteSession {
         if case .connected(let h, let backend) = new, ObjectIdentifier(backend as AnyObject) != backendID {
             let m = HubModel(backend: backend)
             m.reduceMotion = reduceMotion
+            m.onPublished = { [weak self] in self?.phoneSpeaker.hubPublished() }
             prepare(m)
             adopted = m
             backendID = ObjectIdentifier(backend as AnyObject)
