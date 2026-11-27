@@ -67,6 +67,9 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func setMasterVolume(_ volume: Float)
     func setVolume(_ volume: Float, forSpeaker id: String)
     func setOffset(millis: Int, forSpeaker id: String)
+    /// Silences a speaker without changing its volume setting or taking it out of the group
+    /// (sync calibration plays its test sound on one speaker at a time). Default: nothing.
+    func setMuted(_ muted: Bool, forSpeaker id: String)
 
     /// Pushes metadata to a selected network speaker. Returns false for speakers that take none
     /// (local outputs, or not selected).
@@ -205,6 +208,37 @@ public protocol HubSystemServices: Sendable {
     func spotifyEmbed(for page: URL) async -> SpotifyEmbedInfo?
 }
 
+// MARK: - Sync calibration
+
+/// A stretch of what a microphone heard: mono samples and when the first one was in the air.
+public struct MicrophoneRecording: Sendable {
+    public var samples: [Float]
+    public var sampleRate: Double
+    /// Host time (`HostClock`) of `samples[0]`, as close to the moment the sound reached the
+    /// microphone as the device lets us know (its reported input latency taken off).
+    public var startHostNanos: UInt64
+
+    public init(samples: [Float], sampleRate: Double, startHostNanos: UInt64) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.startHostNanos = startHostNanos
+    }
+}
+
+/// The microphone sync calibration listens with. `MacMicrophone` is the Mac's own; a paired
+/// phone could be another (docs/sync-calibration.md).
+public protocol CalibrationMicrophone: Sendable {
+    /// Microphone permission. `ask: true` shows the system prompt when it was never asked (and
+    /// waits for the answer).
+    func access(ask: Bool) async -> PermissionStatus
+    /// Starts listening; the last few seconds are kept.
+    func start() async throws
+    func stop() async
+    /// What was heard for `seconds` from `fromHostNanos`, or nil when that stretch isn't (yet,
+    /// or any longer) on record.
+    func recording(fromHostNanos: UInt64, seconds: Double) async -> MicrophoneRecording?
+}
+
 /// Everything `LocalHub` is built from.
 public struct HubDependencies: Sendable {
     public var session: HubSessionControlling
@@ -214,12 +248,15 @@ public struct HubDependencies: Sendable {
     public var spotify: MediaAppControlling
     public var system: HubSystemServices
     public var settings: HubSettingsStore
+    /// What sync calibration listens with; nil = this hub can't calibrate.
+    public var microphone: CalibrationMicrophone?
     /// The hub's clock (tests pin it).
     public var now: @Sendable () -> Date
 
     public init(session: HubSessionControlling, sources: HubSourceMaking, apps: AppPresenceMonitoring,
                 capturableApps: CapturableAppsProviding, spotify: MediaAppControlling, system: HubSystemServices,
-                settings: HubSettingsStore, now: @escaping @Sendable () -> Date = { Date() }) {
+                settings: HubSettingsStore, microphone: CalibrationMicrophone? = nil,
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.session = session
         self.sources = sources
         self.apps = apps
@@ -227,6 +264,7 @@ public struct HubDependencies: Sendable {
         self.spotify = spotify
         self.system = system
         self.settings = settings
+        self.microphone = microphone
         self.now = now
     }
 }
@@ -235,4 +273,5 @@ extension HubSessionControlling {
     public func addExternalSpeaker(_ speaker: SpeakerDescriptor, sink: any AudioSink) async {}
     public func removeExternalSpeaker(id: String) async {}
     public func refreshSpeakers() {}
+    public func setMuted(_ muted: Bool, forSpeaker id: String) {}
 }

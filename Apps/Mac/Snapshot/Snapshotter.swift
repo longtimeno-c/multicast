@@ -47,6 +47,12 @@ enum Snapshotter {
                    to: directory.appendingPathComponent(fullList))
             written.append(fullList)
 
+            // The same list after a sync calibration: one line per speaker that was on.
+            let calibrated = "main-speakers-calibrated-\(suffix).png"
+            render(RootView().environment(model(for: .appleMusic, calibrated: true)), size: fullListSize, appearance: appearance,
+                   to: directory.appendingPathComponent(calibrated))
+            written.append(calibrated)
+
             let popoverModel = model(for: .spotify)
             let popover = "popover-speaker-detail-\(suffix).png"
             render(SpeakerDetailView(speakerID: MockData.jbl)
@@ -79,8 +85,21 @@ enum Snapshotter {
 
     private static let artwork = MockData.artwork
 
-    private static func model(for scene: MockScene) -> HubModel {
-        let state = scene.state
+    /// What a finished sync calibration of the speakers that are on looks like: the first is
+    /// the reference, the last was out of earshot.
+    private static func calibration(of speakers: [SpeakerItem]) -> SyncCalibrationStatus {
+        let on = speakers.filter { $0.isEnabled && !$0.isRestricted }
+        return SyncCalibrationStatus(isRunning: false, speakers: on.enumerated().map { i, s in
+            let outcome: SyncCalibrationStatus.Outcome = i == 0 ? .aligned(lagMs: 0, trimMs: s.syncTrimMs, reachedLimit: false)
+                : (i == on.count - 1 && on.count > 2 ? .notHeard
+                    : .aligned(lagMs: Double(37 * i + 5), trimMs: s.syncTrimMs - 37 * i - 5, reachedLimit: false))
+            return .init(id: s.id, outcome: outcome)
+        })
+    }
+
+    private static func model(for scene: MockScene, calibrated: Bool = false) -> HubModel {
+        var state = scene.state
+        if calibrated { state.calibration = calibration(of: state.speakers) }
         let content = scene.content
         var preload = content.preload
         if scene == .search {

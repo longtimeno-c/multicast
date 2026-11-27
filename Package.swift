@@ -10,6 +10,7 @@ import PackageDescription
 //   MulticastLocalOutput  Core Audio outputs (built-in, Bluetooth, USB…) as timeline-aligned sinks
 //   MulticastSources      tone, file and (macOS) app/system audio capture sources
 //   MulticastEngine       pacing clock + fan-out from one source to many sinks
+//   MulticastCalibration  sync calibration: the test sweep, finding it in a recording, trims
 //   MulticastKit          umbrella that wires everything together for the apps
 //
 // App-facing layer (the Mac hub app and the iOS remote):
@@ -39,6 +40,8 @@ let package = Package(
         .target(name: "MulticastLocalOutput", dependencies: ["MulticastAudio"]),
         .target(name: "MulticastSources", dependencies: ["MulticastAudio"]),
         .target(name: "MulticastEngine", dependencies: ["MulticastAudio"]),
+        // Sync calibration's arithmetic: the test sound, finding it in a recording, trims.
+        .target(name: "MulticastCalibration", dependencies: ["MulticastAudio"]),
         .target(
             name: "MulticastKit",
             dependencies: [
@@ -49,7 +52,7 @@ let package = Package(
         .target(name: "MulticastHubModel"),
         // The pure parts of the output device driver (Drivers/MulticastDevice), for the tests.
         .target(name: "MulticastDeviceCore", path: "Drivers/MulticastDevice/Core"),
-        .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic"]),
+        .target(name: "MulticastHub", dependencies: ["MulticastKit", "MulticastHubModel", "MulticastAppleMusic", "MulticastCalibration"]),
         .target(name: "MulticastRemote", dependencies: ["MulticastHubModel", "MulticastAudio"]),
         .target(name: "MulticastAppleMusic", dependencies: ["MulticastHubModel", "MulticastSources", "MulticastAudio"]),
         .executableTarget(name: "multicast-cli", dependencies: ["MulticastKit"]),
@@ -62,9 +65,10 @@ let package = Package(
         .testTarget(name: "MulticastSourcesTests", dependencies: ["MulticastSources"]),
         .testTarget(name: "MulticastEngineTests", dependencies: ["MulticastEngine"]),
         .testTarget(name: "MulticastKitTests", dependencies: ["MulticastKit"]),
+        .testTarget(name: "MulticastCalibrationTests", dependencies: ["MulticastCalibration"]),
         .testTarget(name: "MulticastAudioTests", dependencies: ["MulticastAudio"]),
         .testTarget(name: "MulticastHubModelTests", dependencies: ["MulticastHubModel"]),
-        .testTarget(name: "MulticastHubTests", dependencies: ["MulticastHub", "MulticastAppleMusic"]),
+        .testTarget(name: "MulticastHubTests", dependencies: ["MulticastHub", "MulticastAppleMusic", "MulticastCalibration"]),
         .testTarget(name: "MulticastRemoteTests", dependencies: ["MulticastRemote"]),
         .testTarget(name: "MulticastDeviceCoreTests", dependencies: ["MulticastDeviceCore"]),
         .testTarget(name: "MulticastAppleMusicTests", dependencies: ["MulticastAppleMusic"]),

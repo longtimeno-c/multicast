@@ -35,6 +35,8 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
     public var masterVolume: Double
     /// Discovery is still browsing and may add speakers.
     public var isDiscovering: Bool
+    /// A sync calibration that is running, or the results of the last one until dismissed.
+    public var calibration: SyncCalibrationStatus?
 
     // Playback
     /// The source audio currently comes from, if any.
@@ -59,7 +61,7 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
                 transport: TransportState = TransportState(), capture: CaptureStatus = CaptureStatus(),
                 spotify: SpotifyStatus = .notRunning, content: ContentRevisions = ContentRevisions(),
                 queue: QueueStatus = QueueStatus(), pins: [PinnedPlaylist] = [],
-                health: HubHealth = HubHealth()) {
+                health: HubHealth = HubHealth(), calibration: SyncCalibrationStatus? = nil) {
         self.revision = revision
         self.speakers = speakers
         self.masterVolume = masterVolume
@@ -73,6 +75,7 @@ public struct HubState: Equatable, Hashable, Sendable, Codable {
         self.queue = queue
         self.pins = pins
         self.health = health
+        self.calibration = calibration
     }
 
     public func speaker(_ id: SpeakerID) -> SpeakerItem? { speakers.first { $0.id == id } }

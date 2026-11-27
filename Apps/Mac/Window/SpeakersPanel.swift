@@ -56,6 +56,7 @@ struct SpeakersPanel: View {
                             restrictedGroup(model.restrictedSpeakers)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
+                        SyncCalibrationSection()
                     }
                 }
             }
@@ -219,6 +220,83 @@ private struct LookingForSpeakers: View {
                 ProgressView().controlSize(.small)
             } action: { EmptyView() }
         }
+    }
+}
+
+/// "Calibrate sync": the hub plays a short test sound on each speaker that is on, listens with
+/// the Mac's microphone and sets the sync trims. While it runs, and after, one line per speaker
+/// says what was found.
+private struct SyncCalibrationSection: View {
+    @Environment(HubModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let grid = MC.RowGrid.regular
+
+    var body: some View {
+        let status = model.calibration
+        GroupedSection(title: "Sync") {
+            SpeakerNoticeRow(title: title(status), message: message(status)) {
+                if status?.isRunning == true {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "metronome")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(MC.Ink.body)
+                }
+            } action: {
+                HStack(spacing: MC.Space.s) {
+                    if let status, !status.isRunning {
+                        Button("Done", action: model.endCalibration)
+                    }
+                    if status?.isRunning == true {
+                        Button("Stop", action: model.endCalibration)
+                    } else {
+                        Button(status == nil ? "Calibrate\u{2026}" : "Measure Again", action: model.calibrateSync)
+                            .disabled(!hasSpeakerOn)
+                            .help(hasSpeakerOn ? "Plays a short test sound on each speaker that\u{2019}s on" : "Turn on a speaker first")
+                    }
+                }
+            }
+            if let status {
+                ForEach(status.speakers) { entry in
+                    RowDivider(leading: grid.textLeading)
+                    outcomeRow(entry)
+                }
+            }
+        }
+        .animation(MC.Motion.state(reduceMotion), value: status)
+    }
+
+    private var hasSpeakerOn: Bool { model.usableSpeakers.contains(where: \.isEnabled) }
+
+    private func title(_ status: SyncCalibrationStatus?) -> String {
+        guard let status else { return "Calibrate sync" }
+        return status.isRunning ? "Measuring the speakers\u{2026}" : (status.problem == nil ? "Sync calibrated" : "Couldn\u{2019}t calibrate")
+    }
+
+    private func message(_ status: SyncCalibrationStatus?) -> String {
+        guard let status else {
+            return "Plays a short test sound on each speaker that\u{2019}s on, listens with this Mac\u{2019}s microphone, and sets their sync trims so they\u{2019}re heard together here. Music pauses meanwhile."
+        }
+        if status.isRunning { return "Keep the room quiet for a moment. Each speaker plays a few short sweeps in turn." }
+        return status.summary ?? ""
+    }
+
+    private func outcomeRow(_ entry: SyncCalibrationStatus.Speaker) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: MC.Space.m) {
+            Text(model.speaker(entry.id)?.name ?? "Speaker")
+                .font(MC.Font.body)
+                .foregroundStyle(MC.Ink.primary)
+                .lineLimit(1)
+            Spacer(minLength: MC.Space.m)
+            Text(entry.outcome.caption)
+                .font(MC.Font.captionValue)
+                .foregroundStyle(entry.outcome == .measuring ? AnyShapeStyle(MC.Ink.primary) : AnyShapeStyle(MC.Ink.secondary))
+                .lineLimit(1)
+        }
+        .padding(.leading, grid.textLeading)
+        .padding(.trailing, grid.inset)
+        .padding(.vertical, MC.Space.s)
+        .accessibilityElement(children: .combine)
     }
 }
 

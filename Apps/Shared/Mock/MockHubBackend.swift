@@ -243,6 +243,18 @@ actor MockHubBackend: HubBackend {
             beginConnecting(id)
         case .setMasterVolume(let volume): update { $0.masterVolume = volume }
         case .refreshSpeakers: break
+        case .calibrateSync:
+            // The mock has no microphone: it shows what a finished run looks like.
+            let on = state.speakers.filter { $0.isEnabled && !$0.isRestricted }
+            guard !on.isEmpty else { throw HubCommandError(.unavailable, "Turn on a speaker first.") }
+            update {
+                $0.calibration = SyncCalibrationStatus(isRunning: false, speakers: on.enumerated().map { i, s in
+                    .init(id: s.id, outcome: i == 0 ? .aligned(lagMs: 0, trimMs: s.syncTrimMs, reachedLimit: false)
+                        : (i == on.count - 1 && on.count > 2 ? .notHeard
+                            : .aligned(lagMs: Double(40 * i), trimMs: s.syncTrimMs - 40 * i, reachedLimit: false)))
+                })
+            }
+        case .cancelSyncCalibration: update { $0.calibration = nil }
         }
     }
 

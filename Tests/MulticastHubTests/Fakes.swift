@@ -87,6 +87,11 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
         var seeks: [TimeInterval] = []
         var selectVolumes: [String: Float] = [:]
         var selectOffsets: [String: Int] = [:]
+        /// Speakers silenced with `setMuted`, each speaker's trim now, and the timeline of the
+        /// last `play` (sync calibration).
+        var muted: Set<String> = []
+        var offsets: [String: Int] = [:]
+        var timeline: StreamTimeline?
         var metadata: [(String, SpeakerMetadata)] = []
         var progress: [(String, TimeInterval, TimeInterval)] = []
     }
@@ -154,6 +159,7 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
             i.selected.append(speaker.id)
             i.selectVolumes[speaker.id] = volume
             i.selectOffsets[speaker.id] = offsetMillis
+            i.offsets[speaker.id] = offsetMillis
             i.sinks[speaker.id] = Self.entry(speaker.id, .idle)
             if i.transport == .playing { Self.join(&i, speaker.id) }
         }
@@ -210,10 +216,14 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
     }
 
     func play() async throws {
+        // The fake's group latency is short, so tests that wait for audio to be "heard" are quick.
+        let timeline = StreamTimeline(anchorHostNanos: HostClock.nowNanos() + 50_000_000, anchorFrame: 0)
         change("play") { i in
             i.transport = .playing
+            i.timeline = timeline
             for id in i.selected where i.sinks[id]?.state != .failed { Self.join(&i, id) }
         }
+        events.send(.timelineChanged(timeline))
     }
 
     func pause() async {
@@ -240,7 +250,12 @@ final class FakeSession: HubSessionControlling, @unchecked Sendable {
 
     func setMasterVolume(_ volume: Float) { change { $0.master = volume } }
     func setVolume(_ volume: Float, forSpeaker id: String) { inner.update { $0.calls.append("volume \(id) \(volume)") } }
-    func setOffset(millis: Int, forSpeaker id: String) { inner.update { $0.calls.append("offset \(id) \(millis)") } }
+    func setOffset(millis: Int, forSpeaker id: String) {
+        inner.update { $0.calls.append("offset \(id) \(millis)"); $0.offsets[id] = millis }
+    }
+    func setMuted(_ muted: Bool, forSpeaker id: String) {
+        inner.update { if muted { $0.muted.insert(id) } else { $0.muted.remove(id) } }
+    }
 
     func sendNowPlaying(_ metadata: SpeakerMetadata, toSpeaker id: String) async -> Bool {
         inner.update { $0.metadata.append((id, metadata)) }
@@ -502,14 +517,17 @@ struct Rig {
     let clock = ManualClock()
     let hub: LocalHub
 
-    init(settings: InMemorySettingsStore = InMemorySettingsStore(), speakers: [SpeakerDescriptor] = [Fixtures.local(), Fixtures.mainBedroom, Fixtures.hallSonos]) {
+    init(settings: InMemorySettingsStore = InMemorySettingsStore(), speakers: [SpeakerDescriptor] = [Fixtures.local(), Fixtures.mainBedroom, Fixtures.hallSonos],
+         microphone: ((FakeSession) -> CalibrationMicrophone)? = nil, calibration: CalibrationSettings? = nil) {
         self.settings = settings
         var config = LocalHub.Configuration()
+        if let calibration { config.calibration = calibration }
         config.pollSeconds = 0
         config.levelInterval = 0
         let clock = self.clock
         let deps = HubDependencies(session: session, sources: sources, apps: apps, capturableApps: capturable,
-                                   spotify: spotify, system: system, settings: settings, now: { clock.now })
+                                   spotify: spotify, system: system, settings: settings,
+                                   microphone: microphone?(session), now: { clock.now })
         hub = LocalHub(dependencies: deps, configuration: config)
         session.setSpeakers(speakers)
     }

@@ -72,6 +72,11 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
     /// Look for speakers on the network again now (known ones stay listed meanwhile), and retry
     /// any speaker that is on but failed.
     case refreshSpeakers
+    /// Measure every speaker that is on with the hub's microphone and set their sync trims so
+    /// they are heard together (`HubState.calibration` reports it). Playback pauses for it.
+    case calibrateSync
+    /// Stop a running calibration (trims stay as they were), or dismiss a finished one's results.
+    case cancelSyncCalibration
 
     public enum Category: String, Sendable, Codable {
         case transport, source, queue, speaker
@@ -87,7 +92,7 @@ public enum HubCommand: Equatable, Hashable, Sendable, Codable {
         case .addToQueue, .addSpotifyLink, .removeFromQueue, .moveInQueue, .clearQueue, .setShuffle,
              .pinPlaylist, .pinSpotifyLink, .unpinPlaylist: .queue
         case .setSpeakerEnabled, .setSpeakerVolume, .setSpeakerSyncTrim, .retrySpeaker, .setMasterVolume,
-             .refreshSpeakers: .speaker
+             .refreshSpeakers, .calibrateSync, .cancelSyncCalibration: .speaker
         }
     }
 

@@ -16,6 +16,9 @@ Multicast Remote, plays the part of the old iTunes Remote.
 
 - **Many speakers, one timeline.** Turn speakers on and off while playing, set each one's volume and a master
   volume, and nudge any speaker earlier or later with a per-speaker sync trim.
+- **Sync calibration.** The Mac plays a short test sound on each speaker in turn, listens with its microphone and
+  sets the trims itself, so speakers that play late (Bluetooth, bridges) line up without trimming by ear. See
+  [docs/sync-calibration.md](docs/sync-calibration.md).
 - **Apple Music library.** Playlists and playlist folders, pinned playlists, search, and an Up Next queue owned by
   the hub, with Play Next, Add to Queue and Shuffle.
 - **Other sources.** Capture the sound of any other app on the Mac, or play DRM-free audio files.
@@ -406,7 +409,12 @@ Multicast is a work in progress. There are development builds only: no signed, n
   screen (no now-playing info or controls there).
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
-- **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand,** and sync across bridges has not
+- **Sync calibration is verified on the Mac's own speakers only** (a trim of +40 ms measured as +40.00 ms). It
+  has not been run against Bluetooth, AirPlay or phone speakers, or with speakers in other rooms; it lines
+  speakers up as heard at the Mac's microphone, and a phone as the microphone is designed but not built
+  ([docs/sync-calibration.md](docs/sync-calibration.md)).
+- **AirPlay 1 bridges (AirConnect and similar) need a sync trim** (set by hand, or by sync calibration where the
+  Mac can hear them), and sync across bridges has not
   been checked by ear. The bridge itself plays to our timing: it reports its buffer in `Audio-Latency` from
   RECORD (22050 frames, 0.5 s, for AirConnect 1.12.4), and that is the receiver's minimum buffer, already covered
   by the 2 s group latency. The extra delay comes from the device behind the bridge (a Sonos or UPnP renderer

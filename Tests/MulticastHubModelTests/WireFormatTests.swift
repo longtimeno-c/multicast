@@ -59,6 +59,7 @@ import Testing
             .openSpotify, .requestPermission(permission: .automation),
             .setSpeakerEnabled(id: "x", enabled: false), .setSpeakerVolume(id: "x", volume: 0.5),
             .setSpeakerSyncTrim(id: "x", milliseconds: 120), .retrySpeaker(id: "x"), .setMasterVolume(volume: 0.7),
+            .refreshSpeakers, .calibrateSync, .cancelSyncCalibration,
         ]
         for c in all { try roundTrip(c) }
     }
@@ -183,6 +184,53 @@ import Testing
         #expect(SpeakerGlyph.phone.symbolName == "iphone")
         // The names older builds know are unchanged.
         #expect(SpeakerTransport.allCases.map(\.rawValue) == ["airPlay1", "airPlay2", "builtIn", "bluetooth", "usb", "phone"])
+    }
+
+    @Test func calibrationHasStableNamesAndIsAbsentUntilThereIsOne() throws {
+        #expect(try json(HubCommand.calibrateSync) == #"{"calibrateSync":{}}"#)
+        #expect(try json(HubCommand.cancelSyncCalibration) == #"{"cancelSyncCalibration":{}}"#)
+        #expect(HubCommand.calibrateSync.category == .speaker)
+
+        // No calibration: the key isn't written, so a state reads the same to older builds.
+        let plain = HubState(revision: 1)
+        #expect(!(try json(plain)).contains("calibration"))
+        // And a state from a build that predates it decodes.
+        var older = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
+        older["calibration"] = nil
+        #expect(try JSONDecoder().decode(HubState.self, from: JSONSerialization.data(withJSONObject: older)).calibration == nil)
+
+        var s = HubState(revision: 2)
+        s.calibration = SyncCalibrationStatus(isRunning: false, speakers: [
+            .init(id: "a", outcome: .aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false)),
+            .init(id: "b", outcome: .notHeard), .init(id: "c", outcome: .measuring), .init(id: "d"),
+            .init(id: "e", outcome: .unclear), .init(id: "f", outcome: .skipped),
+        ])
+        try roundTrip(s)
+        #expect(try json(s.calibration!.speakers[0])
+                == #"{"id":"a","outcome":{"aligned":{"lagMs":172.4,"reachedLimit":false,"trimMs":-172}}}"#)
+        #expect(try json(s.calibration!.speakers[1]) == #"{"id":"b","outcome":{"notHeard":{}}}"#)
+        #expect(s.hasSameContent(as: s) && !s.hasSameContent(as: plain))
+    }
+
+    @Test func calibrationWording() {
+        typealias Outcome = SyncCalibrationStatus.Outcome
+        #expect(Outcome.aligned(lagMs: 172.4, trimMs: -172, reachedLimit: false).caption == "Was 172 ms late \u{00B7} trim \u{2212}172 ms")
+        #expect(Outcome.aligned(lagMs: 0.2, trimMs: 0, reachedLimit: false).caption == "In step \u{00B7} no trim")
+        #expect(Outcome.aligned(lagMs: -12, trimMs: 12, reachedLimit: false).caption == "Was 12 ms early \u{00B7} trim +12 ms")
+        #expect(Outcome.aligned(lagMs: 900, trimMs: -500, reachedLimit: true).caption.hasSuffix("the most it allows"))
+        #expect(Outcome.notHeard.caption == "Couldn\u{2019}t hear this speaker")
+
+        func status(_ outcomes: [Outcome], running: Bool = false, problem: String? = nil) -> SyncCalibrationStatus {
+            SyncCalibrationStatus(isRunning: running, speakers: outcomes.enumerated().map { .init(id: SpeakerID("s\($0.offset)"), outcome: $0.element) },
+                                  problem: problem)
+        }
+        let done = Outcome.aligned(lagMs: 0, trimMs: 0, reachedLimit: false)
+        #expect(status([done, done, done]).summary == "All 3 speakers are lined up.")
+        #expect(status([done, .notHeard, done]).summary == "2 of 3 speakers lined up.")
+        #expect(status([.notHeard, .unclear]).summary == "Couldn\u{2019}t hear any speaker from here.")
+        #expect(status([done]).summary == "Measured 1 speaker. Turn on another to line them up.")
+        #expect(status([.measuring, .waiting], running: true).summary == nil)
+        #expect(status([.skipped], problem: "No microphone.").summary == "No microphone.")
     }
 
     @Test func stateStaysSmall() throws {
