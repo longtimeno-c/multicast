@@ -7,12 +7,15 @@ import SwiftUI
 @main
 struct RemoteApp: App {
     @State private var session = RemoteScene.current.makeSession()
+    /// What is playing, on the lock screen and in Control Centre, while this iPhone is a speaker.
+    @State private var lockScreen = LockScreenControls()
 
     var body: some Scene {
         WindowGroup {
             RemoteRootView()
                 .environment(session)
                 .preferredColorScheme(RemoteScene.colorScheme)
+                .task { lockScreen.start(session: session) }
         }
     }
 }

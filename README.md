@@ -9,7 +9,7 @@ outputs. It is what iTunes for Windows used to do with several AirPlay speakers,
 Multicast Remote, plays the part of the old iTunes Remote.
 
 <p align="center">
-  <img src="docs/images/mac-library-speakers.png" width="800" alt="The Mac window: the Apple Music library of pinned playlists and playlists on the left, the speakers with per-speaker volumes on the right, and the player in the title bar">
+  <img src="docs/images/mac-library-speakers.png" width="800" alt="The Mac window: the Apple Music library of pinned playlists and playlists on the left, the speakers with per-speaker volumes on the right, including a paired iPhone playing as a speaker, and the player in the title bar">
 </p>
 
 ## What it does
@@ -42,10 +42,17 @@ Up Next slides in beside the library. It is the hub's queue, so the Mac and ever
   <img src="docs/images/mac-up-next.png" width="800" alt="The Mac window with Up Next open between the library and the speakers">
 </p>
 
+Search covers your library and the Apple Music catalog. Speakers that only their owner can play to are listed
+apart, under "Not available to you".
+
+<p align="center">
+  <img src="docs/images/mac-search.png" width="800" alt="The Mac window with search results: songs from the library, then an Apple Music section of catalog songs; the speakers list ends with a group of speakers that are not available to you">
+</p>
+
 The iPhone remote: speakers, now playing, the library and Up Next.
 
 <p align="center">
-  <img src="docs/images/iphone-speakers.png" width="200" alt="iPhone: the speakers list with per-speaker volumes and the master volume">
+  <img src="docs/images/iphone-speakers.png" width="200" alt="iPhone: the speakers list, starting with This iPhone playing through a Bluetooth speaker, with per-speaker volumes and the master volume">
   <img src="docs/images/iphone-now-playing.png" width="200" alt="iPhone: now playing, with transport, volume, Shuffle and the speakers button">
   <img src="docs/images/iphone-playlists.png" width="200" alt="iPhone: the library with pinned playlists and playlists">
   <img src="docs/images/iphone-up-next.png" width="200" alt="iPhone: the Up Next queue with Shuffle and Edit">
@@ -225,6 +232,11 @@ that takes its volume from the phone, the speaker's).
   or another app that starts playing interrupts it, and it resumes only when iOS says the interruption is over or you
   tap Try Again. If the output that was playing goes away (the Bluetooth speaker is switched off), This iPhone turns
   itself off instead of carrying on from the phone's own speaker.
+- **The Lock Screen.** While This iPhone is on, the song, artist, album, artwork and position show on the Lock
+  Screen and in Control Centre, and play/pause, next, previous and the scrubber there (and headphone buttons) go to
+  the Mac as ordinary hub commands (`LockScreenPlayback` decides what is shown and which controls are live;
+  `LockScreenControls` hands it to iOS). iOS offers these controls only to the app that is playing audio, which is
+  why they need This iPhone on: as a remote alone the app plays nothing, iOS suspends it, and nothing is shown.
 - **Bluetooth.** iOS reports a delay for a Bluetooth output and it is allowed for, but the report is an estimate and
   the speaker adds its own. Set the row's **Sync trim** once by ear (earlier, typically 100 to 250 ms). The trim
   is remembered per phone and per output, so the phone's own speaker and each Bluetooth speaker keep theirs. The
@@ -414,11 +426,11 @@ Multicast is a work in progress. There are development builds only: no signed, n
 - **This iPhone as a speaker has run in the simulator only.** The simulator, paired with a headless hub on the same
   Mac, played a tone for 100 s: round trip 0.2 ms, 2.0 s buffered, no packets lost, playback within 0.1 ms of the
   timeline, no dropouts. That proves the pipeline, not a phone: Wi-Fi loss and jitter, a real second clock, the
-  delay iOS reports for Bluetooth, playing with the screen locked, calls and other apps interrupting, and sync by
-  ear are untested on a device. Known limits: the phone drops out of the group if the link to the Mac is lost for
+  delay iOS reports for Bluetooth, playing with the screen locked, the Lock Screen controls, calls and other apps
+  interrupting, and sync by ear are untested on a device. Known limits: the phone drops out of the group if the link to the Mac is lost for
   more than a few seconds (it rejoins by itself while the app is running); after ten minutes of pause the output
-  closes, and iOS may then suspend the app in the background until it is opened again; nothing appears on the lock
-  screen (no now-playing info or controls there).
+  closes, and iOS may then suspend the app in the background until it is opened again; the Lock Screen shows what
+  is playing only while This iPhone is on (a remote that plays nothing gets no Lock Screen controls from iOS).
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
 - **Speaker sync tuning is verified on the Mac's own speakers and microphone only** (a trim of +40 ms measured
