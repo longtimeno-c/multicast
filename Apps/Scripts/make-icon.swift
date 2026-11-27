@@ -89,7 +89,9 @@ enum Style { case mac, ios }
 func render(_ style: Style, pixels: Int) -> CGImage {
     let n = CGFloat(pixels)
     let c = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                      // iOS: no alpha channel at all. The App Store refuses an icon that has one,
+                      // even when every pixel is opaque.
+                      bitmapInfo: (style == .ios ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast).rawValue)!
     c.interpolationQuality = .high
     switch style {
     case .ios:
