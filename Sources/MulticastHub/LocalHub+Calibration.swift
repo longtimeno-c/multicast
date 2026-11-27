@@ -160,9 +160,15 @@ extension LocalHub {
                 turnedOn.append(id)
             }
             let source = CalibrationSource(signal: settings.signal)
+            await runQueued { await session.stop() }
+            // The microphone starts while nothing plays: a phone that is also a speaker sets
+            // its audio up for listening once, before its output starts on the test sound.
+            do { try await microphone.start() } catch is CancellationError { throw CancellationError() } catch {
+                throw CalibrationProblem(message: "The microphone couldn\u{2019}t be used. Check it isn\u{2019}t in use elsewhere, then try again.")
+            }
+            listening = true
             let started = Locked(false)
             await runQueued {
-                await session.stop()
                 for id in session.state.selectedSpeakerIDs { session.setMuted(true, forSpeaker: id) }
                 do {
                     try await session.setSource(source)
@@ -173,10 +179,6 @@ extension LocalHub {
             guard started.get(), let timeline = try await calibrationTimeline(within: settings.startTimeoutSeconds) else {
                 throw CalibrationProblem(message: "The speakers didn\u{2019}t start. Try again.")
             }
-            do { try await microphone.start() } catch is CancellationError { throw CancellationError() } catch {
-                throw CalibrationProblem(message: "The microphone couldn\u{2019}t be used. Check it isn\u{2019}t in use elsewhere, then try again.")
-            }
-            listening = true
 
             for id in ids {
                 try Task.checkCancellation()

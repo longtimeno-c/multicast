@@ -18,6 +18,9 @@ actor MockHubBackend: HubBackend {
     /// Turned-away speakers that let the hub in when asked again.
     private var admittedAfterCheck: Set<SpeakerID> = []
     private var phase: Double = 0
+    private var tuning: Task<Void, Never>?
+    /// How late each tuned speaker is with no trim.
+    private var tunedLateness: [SpeakerID: Double] = [:]
 
     // Drawn on the main thread by the caller so the actor never touches drawing.
     private let spotifyTracks: [TrackItem]
@@ -244,18 +247,99 @@ actor MockHubBackend: HubBackend {
         case .setMasterVolume(let volume): update { $0.masterVolume = volume }
         case .refreshSpeakers: break
         case .calibrateSync:
-            // The mock has no microphone: it shows what a finished run looks like.
-            let on = state.speakers.filter { $0.isEnabled && !$0.isRestricted }
+            let on = state.speakers.filter { $0.isEnabled && !$0.isRestricted }.map(\.id)
             guard !on.isEmpty else { throw HubCommandError(.unavailable, "Turn on a speaker first.") }
-            update {
-                $0.calibration = SyncCalibrationStatus(isRunning: false, speakers: on.enumerated().map { i, s in
-                    .init(id: s.id, outcome: i == 0 ? .aligned(lagMs: 0, trimMs: s.syncTrimMs, reachedLimit: false)
-                        : (i == on.count - 1 && on.count > 2 ? .notHeard
-                            : .aligned(lagMs: Double(40 * i), trimMs: s.syncTrimMs - 40 * i, reachedLimit: false)))
-                })
-            }
-        case .cancelSyncCalibration: update { $0.calibration = nil }
+            try tune(on, microphone: .hub)
+        case .calibrateSpeakerSync(let id): try tune([id], microphone: .hub)
+        case .cancelSyncCalibration:
+            tuning?.cancel()
+            tuning = nil
+            update { $0.calibration = nil }
         }
+    }
+
+    // MARK: Tuning speaker sync
+
+    /// A phone asks to tune a speaker with its own microphone.
+    func tuneWithPhone(_ id: SpeakerID, name: String = "Sample iPhone") throws {
+        try tune([id], microphone: .phone(name: name))
+    }
+
+    /// Plays out a tuning as the real hub publishes it, a sweep a second: most speakers are
+    /// found some way late and trimmed, the first one tuned is what the others line up to, and
+    /// a speaker that isn't responding can't be heard.
+    private func tune(_ ids: [SpeakerID], microphone: SyncCalibrationStatus.Microphone) throws {
+        guard state.calibration?.isRunning != true else {
+            throw HubCommandError(.unavailable, "A speaker is being tuned. Wait for it to finish, or stop it.")
+        }
+        guard ids.allSatisfy({ state.speaker($0) != nil }) else {
+            throw HubCommandError(.notFound, "That speaker is no longer on the network.")
+        }
+        tuning?.cancel()
+        update { state in
+            state.calibration = SyncCalibrationStatus(isRunning: true, microphone: microphone, speakers: ids.map { id in
+                .init(id: id, previousTrimMs: state.speaker(id)?.syncTrimMs ?? 0)
+            })
+        }
+        tuning = Task { [weak self] in
+            for id in ids {
+                guard await self?.tuneOne(id) == true else { return }
+            }
+            await self?.finishTuning()
+        }
+    }
+
+    private func finishTuning() {
+        update { $0.calibration?.isRunning = false }
+        tuning = nil
+    }
+
+    private func setTuning(_ id: SpeakerID, _ change: (inout SyncCalibrationStatus.Speaker) -> Void) {
+        update { s in
+            guard let i = s.calibration?.speakers.firstIndex(where: { $0.id == id }) else { return }
+            change(&s.calibration!.speakers[i])
+        }
+    }
+
+    /// False when cancelled.
+    private func tuneOne(_ id: SpeakerID) async -> Bool {
+        guard let speaker = state.speaker(id) else { return true }
+        setTuning(id) { $0.outcome = .measuring }
+        try? await Task.sleep(for: .milliseconds(1400))
+        guard !Task.isCancelled else { return false }
+        // What this speaker "is": deterministic per speaker, so a second tuning agrees.
+        let index = state.speakers.firstIndex(where: { $0.id == id }) ?? 0
+        var isHeard = true
+        if case .failed = speaker.state { isHeard = false }
+        let natural = Double(24 + (index * 53) % 190)
+        let lateness = natural + Double(speaker.syncTrimMs)
+        let began = Date().addingTimeInterval(0.4)
+        setTuning(id) { $0.sweepsBeganAt = began }
+        for n in 0..<(isHeard ? 5 : 3) {
+            let due = began.addingTimeInterval(Double(n) + 1.0)
+            try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return false }
+            let sweep = MockTuning.sweep(isHeard ? lateness + Double(n % 2) * 0.3 : nil, seed: index * 7 + n)
+            setTuning(id) { $0.sweeps.append(sweep) }
+        }
+        guard isHeard else {
+            setTuning(id) { $0.outcome = .notHeard }
+            return true
+        }
+        // The reference is the earliest speaker tuned so far (the mock keeps that in a note).
+        tunedLateness[id] = natural
+        let reference = tunedLateness.min { $0.value < $1.value }!
+        for (other, late) in tunedLateness {
+            let trim = Int((reference.value - late).rounded())
+            mutateSpeaker(other) {
+                $0.syncTrimMs = trim
+                if other == id { $0.tunedAt = Date() }
+            }
+            let outcome = SyncCalibrationStatus.Outcome.aligned(lagMs: late - reference.value, trimMs: trim, reachedLimit: false,
+                                                                isReference: other == reference.key)
+            setTuning(other) { if other == id || $0.outcome.isAligned { $0.outcome = outcome } }
+        }
+        return true
     }
 
     // MARK: Transport

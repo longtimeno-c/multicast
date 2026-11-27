@@ -25,6 +25,8 @@ final class RemoteSession {
     let navigation: RemoteNavigation
     /// "Play on this iPhone": this device as one of the hub's speakers.
     let phoneSpeaker: PhoneSpeakerModel
+    /// Tuning speaker sync with this iPhone's microphone.
+    let tuning: TuningModel
     var reduceMotion = false
 
     @ObservationIgnored private let connector: HubConnector
@@ -36,7 +38,9 @@ final class RemoteSession {
 
     /// `prepare` runs once on each new `HubModel` before it starts (review scenes use it).
     init(connector: HubConnector, navigation: RemoteNavigation? = nil, phoneSpeaker: PhoneSpeakerModel? = nil,
+         tuning: TuningModel? = nil,
          searchTimeout: Duration = .seconds(10), prepare: @escaping @MainActor (HubModel) -> Void = { _ in }) {
+        self.tuning = tuning ?? TuningModel(microphone: nil, waveform: nil)
         self.phoneSpeaker = phoneSpeaker
             ?? PhoneSpeakerModel(routes: FixedRouteMonitor(PhoneRoute(name: "Speaker", kind: .builtIn)), output: SilentPhoneOutput())
         self.connector = connector
@@ -117,6 +121,7 @@ final class RemoteSession {
             hub = h
             // The real link can carry audio; a scene's mock hub is attached by the scene.
             if let audio = backend as? any PhoneSpeakerBackend { phoneSpeaker.attach(audio) }
+            if let tuner = backend as? any SpeakerTuningBackend { tuning.attach(tuner) }
         }
         let apply = {
             if let adopted {
@@ -220,8 +225,15 @@ final class RemoteNavigation {
     /// iPhone Only mode (experimental), over whatever else is showing. Not part of `reset()`:
     /// it does not depend on a hub.
     var showsPhoneOnly = false
+    /// Tune Speaker Sync, as a sheet over the tabs, and the speaker open in it.
+    var showsTuning = false
+    var tuningPath: [SpeakerID] = []
+    /// A review scene holds the tuning stage at this moment (seconds after the first sweep).
+    var tuningFrozenTime: TimeInterval?
 
     func reset() {
+        showsTuning = false
+        tuningPath = []
         tab = .speakers
         musicPath = []
         showsNowPlaying = false

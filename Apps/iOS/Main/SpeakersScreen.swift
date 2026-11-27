@@ -45,6 +45,7 @@ struct SpeakersScreen: View {
                             restrictedGroup(model.restrictedSpeakers)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
+                        if session.tuning.isAttached { tuneRow }
                     }
                 }
                 .padding(.horizontal, MC.Space.l)
@@ -99,6 +100,10 @@ struct SpeakersScreen: View {
                 Label("Refresh Speakers", systemImage: "arrow.clockwise")
             }
             .disabled(session.linkProblem != nil)
+            Button { session.navigation.showsTuning = true } label: {
+                Label("Tune Speaker Sync", systemImage: "metronome")
+            }
+            .disabled(session.linkProblem != nil || !session.tuning.isAttached)
             Button { session.navigation.showsPhoneOnly = true } label: {
                 Label("iPhone Only (Experimental)", systemImage: "iphone")
             }
@@ -171,6 +176,39 @@ struct SpeakersScreen: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    /// The way into tuning: one row under the speakers, saying how far along it is.
+    private var tuneRow: some View {
+        let tuned = model.usableSpeakers.filter { $0.tunedAt != nil }.count
+        return GroupedSection(title: "Sync") {
+            Button { session.navigation.showsTuning = true } label: {
+                HStack(spacing: MC.Space.m) {
+                    Image(systemName: "metronome")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(MC.Ink.body)
+                        .frame(width: grid.glyph)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                        Text("Tune Speaker Sync")
+                            .font(MC.Font.body)
+                            .foregroundStyle(MC.Ink.primary)
+                        Text(tuned == 0 ? "Line the speakers up with your iPhone\u{2019}s microphone" : "\(tuned) of \(model.usableSpeakers.count) tuned")
+                            .font(MC.Font.caption)
+                            .foregroundStyle(MC.Ink.secondary)
+                    }
+                    Spacer(minLength: MC.Space.s)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(MC.Ink.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, grid.inset)
+                .frame(minHeight: 56)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 

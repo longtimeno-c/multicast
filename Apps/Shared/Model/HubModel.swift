@@ -594,9 +594,14 @@ final class HubModel {
         send(.refreshSpeakers)
     }
 
-    /// Measure the speakers that are on with the hub's microphone and line them up.
+    /// Tune every speaker that is on, in turn, with the hub's microphone.
     func calibrateSync() {
         send(.calibrateSync)
+    }
+
+    /// Tune one speaker's sync with the hub's microphone.
+    func tuneSpeaker(_ id: SpeakerID) {
+        send(.calibrateSpeakerSync(id: id))
     }
 
     /// Stops a running calibration, or dismisses a finished one's results.

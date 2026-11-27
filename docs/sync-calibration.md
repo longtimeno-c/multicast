@@ -1,34 +1,91 @@
-# Sync calibration
+# Tuning speaker sync
 
 Every speaker has a sync trim in milliseconds. Bluetooth speakers and bridged AirPlay receivers play later
-than they report, so until now the trim was set by ear. **Calibrate sync** (Mac window, bottom of the Speakers
-panel) measures it instead: the hub plays a short test sound on each speaker that is on, one at a time, listens
-with a microphone, and sets the trims so the speakers are heard together.
+than they report, so until now the trim was set by ear. Tuning measures it instead: the hub plays a short test
+sound on ONE speaker, a microphone listens for it, and that speaker's trim is set so it is heard in step with
+the speakers tuned before.
+
+- **One speaker at a time, at your own pace.** Pick a speaker, walk to it, start. The next one whenever you
+  like, in any order, today or next week.
+- **Two microphones.** On the iPhone (Speakers → Tune Speaker Sync), the phone in your hand listens, held next
+  to the speaker: this is the one for a whole house. On the Mac (Speakers panel → Sync → Tune), the Mac's own
+  microphone listens: for speakers near the Mac. "Tune All in Turn" on the Mac does every speaker that is on.
+- **Saved on the Mac, per speaker.** Each measurement is kept with the speaker's volume and trim
+  (`HubSettings.SpeakerPreset.calibration`; a phone that is a speaker has one per output it plays through). It
+  survives restarts, and is applied when the speaker joins like any trim.
 
 ## What happens
 
 1. Music pauses (and resumes afterwards where it was). Pressing play, or choosing something to play, ends the
-   calibration.
-2. The engine's source becomes `CalibrationSource`: one second of silence, then a 0.25 s sweep from 900 Hz to
-   6.5 kHz every second. It goes through the normal pipeline, so it takes the same road as music: the same
-   timeline, the same sinks, the same trims. Sweep `k` starts a known number of frames after the first frame the
-   engine reads, and the engine's `timelineChanged` event says when that first frame is due at the loudspeakers,
-   so the moment each sweep is due is known on the hub's clock.
-3. Every speaker but one is muted (`MulticastEngine.setMuted`; volumes are not touched). After a second for the
-   mutes to land, five sweeps are listened to. For each, the microphone's recording from 150 ms before the sweep
-   is due to 600 ms after is correlated with the sweep (`DelayEstimator`); the first strong, sharp peak is the
-   sweep's arrival. A speaker is **measured** when at least three sweeps agree to within 2 ms (the result is
-   their median), **not heard** when fewer than three were found, **unclear** when they were found but disagree.
-4. `TrimPlanner` turns the delays into trims. One speaker is the reference and keeps its trim: the Mac's own
-   speakers when they were measured, otherwise the earliest speaker (a speaker that under-reports its delay
-   plays late, so the earliest is the one most likely to be on time; speakers that weren't measured stay in step
-   with it). Every other measured speaker gets `reference − its own lateness`, clamped to the trim range
-   (−500…500 ms; if moving all of them together brings them into range, that is done first).
-5. Trims are set through the same path as trims set by hand, so they are remembered per speaker (per output for
-   a phone) and shown in each speaker's details. Speakers that were not heard, or unclear, keep theirs.
+   tuning. A speaker that is off is turned on for its measurement and off again.
+2. The microphone starts, then the engine's source becomes `CalibrationSource`: one second of silence, then a
+   0.25 s sweep from 900 Hz to 6.5 kHz every second. It goes through the normal pipeline, so it takes the same
+   road as music: the same timeline, the same sinks, the same trims. The engine's `timelineChanged` event says
+   when the source's first frame is due at the loudspeakers, so the moment each sweep is due is known.
+3. Every other speaker is muted (`MulticastEngine.setMuted`; volumes are not touched). Five sweeps are listened
+   to. For each, the microphone is asked what it heard from 150 ms before the sweep was due to 600 ms after; it
+   correlates that stretch with the sweep (`DelayEstimator`) and answers with when the sweep arrived, how
+   clearly, and a small picture of the search. The speaker is **measured** when at least three sweeps agree to
+   within 2 ms (their median), **not heard** when fewer than three were found, **too noisy** when they were
+   found but disagree.
+4. The measurement is stored as the speaker's lateness with no trim, with the microphone it was made through.
+   `TrimPlanner` then works out the trims of EVERY speaker measured through that microphone, present or not.
+   One is the reference and keeps its trim: the Mac's own speakers if they were measured, otherwise the
+   earliest speaker (a speaker that under-reports its delay plays late, so the earliest is the one most likely
+   to be on time). Every other gets `reference − its own lateness`, within −500…500 ms.
+   So the first speaker you tune changes nothing by itself ("the others line up to this one"); from the second
+   on, each lands in step, and a speaker tuned earlier is moved without being measured again if a later one
+   turns out to be the earlier of the two.
+5. A trim nudged by hand afterwards is kept: the stored measurement moves with it, so later tunings go on
+   giving that trim. Measurements made through different microphones are kept apart (see below).
 
-It takes about seven seconds per speaker. The panel shows one line per speaker while it runs and after:
-`Measuring…`, `Was 172 ms late · trim −172 ms`, `Couldn't hear this speaker`.
+About ten seconds per speaker, plus the time a network speaker takes to connect.
+
+## What you see
+
+The same stage on the iPhone and the Mac (`Apps/Shared/Components/TuningStage.swift`), drawn from what the hub
+publishes in `HubState.calibration`, not from a canned loop:
+
+- **The sweeps travelling** from the speaker to the microphone: each leaves when the timeline says it is due
+  and lands a second later, which is when the microphone's answer for it arrives; the ring at the microphone is
+  green when it was heard.
+- **The scope**: for each sweep, the microphone's search across its listening window, a spike where the sweep
+  arrived over the room's floor. Sweeps stack; three dots fill as they agree. Its height is the microphone's
+  confidence, so noise is low grass and a heard sweep stands tall.
+- **On the iPhone, the room's live waveform** under the microphone, from the phone's own input.
+- **The result**: "In sync", the speaker's mark sliding into step from where it was ("172 ms"), the trim before
+  and now, a success haptic. When it couldn't be heard or the room was too noisy: what happened and one next
+  step, with Try Again.
+
+Reduce Motion replaces the travelling sweeps with a row of marks that fill; nothing loops. VoiceOver reads the
+readout and announces the result. Review scenes: `-MCScene tune`, `tune-ready`, `tune-starting`,
+`tune-listening`, `tune-in-sync`, `tune-reference`, `tune-not-heard`, `tune-noisy`, `tune-refused` on the
+iPhone (`tune` plays a whole tuning on the mock hub); `tuning-*.png` from the Mac's `--snapshot`.
+
+## The iPhone as the microphone
+
+`CalibrationMicrophone` is the seam: the hub's run doesn't know where its answers come from. Over the paired,
+encrypted link (protocol version 6):
+
+- The phone sends `tuneSpeaker`. The hub starts the same run as for its own microphone, with a
+  `RemoteMicrophone` whose every call is a question to the phone (`microphoneRequest` / `microphoneAnswer`).
+- **No audio leaves the phone.** It records into a six-second ring, runs `DelayEstimator` itself, and answers
+  with the arrival time, a strength and 96 bytes of search picture.
+- **Clocks.** The phone has its own. Before listening and before every question the hub makes an NTP-style
+  exchange with it and keeps the best (`ClockEstimator`); the two clocks are then known to about half the
+  link's round trip, typically well under a millisecond at home. Questions are asked in the phone's time.
+- A hub or phone on an older version is never sent the new messages; the phone says the Mac needs updating.
+
+Measurements are stored under the microphone that made them ("hub", or "phone:" + the phone's id) and only
+compared within one microphone, because each has its own unknown delay. Tune the whole house with one phone
+and everything lines up; a speaker tuned with the Mac and another with the phone are not compared with each
+other (the later tuning of a speaker replaces its earlier one).
+
+**The phone tuning the speaker it is itself playing through** (a Bluetooth speaker connected to the phone): it
+works the same way, the phone's own microphone listening to the phone's output. For that the phone's audio
+session becomes play-and-record with Bluetooth kept on A2DP. This path has not been run on a real phone, and
+iOS may report a different output delay in that mode than in plain playback, which would put a constant few
+milliseconds into that one measurement. Treat it as experimental until checked on a device.
 
 ## Why a sweep, and why it is believed
 
@@ -62,18 +119,19 @@ The measured number for a speaker is `arrival at the microphone − moment the s
 | Sound travelling from the speaker to the microphone (2.9 ms per metre) | no | **Stays in, on purpose:** the speakers are lined up as heard at the microphone. |
 | The trim a speaker already has | no | Taken out arithmetically, so a second run changes nothing. |
 
-So the result is right at the microphone's position. With the Mac's microphone that is the Mac: a speaker 5 m
-further away than another ends up playing 15 ms earlier, which is correct at the Mac and 15 ms wrong next to
-that speaker. That is inherent to lining up by ear too. It is also why absolute numbers are not shown: on the
+So the result is right where the microphone was. Held next to each speaker in turn (the iPhone), that lines up
+when the speakers EMIT, which is what a house of rooms wants. With the Mac's microphone it lines up arrival at
+the Mac: a speaker 5 m further away ends up 15 ms earlier, right at the Mac and 15 ms off next to that speaker. It is also why absolute numbers are not shown: on the
 Mac this was developed on, its own speakers measure 27 ms *before* they are due, which is the microphone's and
 the output's latency reports not adding up, not the speakers playing early.
 
-A microphone on another clock (a phone) adds one more common term, see below.
+A phone adds its clock estimate's error (under a millisecond within one tuning, a millisecond or two between
+tunings on different days).
 
 ## Limits
 
-- **Other rooms.** A speaker the microphone can't hear is reported as such and left alone.
-- **One listening position.** See above.
+- **Out of earshot.** A speaker the microphone can't hear is reported as such and left alone: walk to it with
+  the iPhone.
 - **Delays outside −150…+600 ms** of the timeline are not found (the next sweep would be in the window). Trims
   reach ±500 ms, so little is lost.
 - **Other sound from the Mac.** Calibration pauses what Multicast plays. Sound other apps play straight to the
@@ -92,15 +150,17 @@ A microphone on another clock (a phone) adds one more common term, see below.
 | Where | What |
 | --- | --- |
 | `MulticastCalibration` | `CalibrationSignal`/`CalibrationSource` (the sweep), `DelayEstimator`, `DelayMeasurement.combine`, `TrimPlanner`, `RecordingRing`. Arithmetic only: no device, no clock. |
-| `MulticastHub/LocalHub+Calibration.swift` | The run: pause, solo each speaker, measure, plan, set trims, hand the engine back. |
+| `MulticastCalibration/CalibrationMicrophone.swift` | The microphone seam and `HeardSweep`, shared by the Mac's and the phone's. |
+| `MulticastHub/LocalHub+Calibration.swift` | The run: pause, solo the speaker, measure, store, plan, set trims, hand the engine back. |
 | `MulticastHub/MacMicrophone.swift` | Core Audio IOProc on the input device into a `RecordingRing`, stamped with host time. |
-| `MulticastHubModel/Calibration.swift` | `SyncCalibrationStatus` in `HubState.calibration` (absent when there is none, so older remotes are unaffected); `HubCommand.calibrateSync` and `.cancelSyncCalibration`. |
+| `MulticastRemote/RemoteMicrophone.swift` | The phone's microphone as the hub sees it (questions over the link, clock exchange), and the phone's responder. |
+| `MulticastHubModel/Calibration.swift` | `SyncCalibrationStatus` in `HubState.calibration`; `SpeakerItem.tunedAt`; `HubCommand.calibrateSpeakerSync`, `.calibrateSync`, `.cancelSyncCalibration`. All optional on the wire, so older remotes are unaffected. |
+| `Apps/Shared/Components/TuningStage.swift` | The stage both apps draw. |
+| `Apps/iOS/Tuning/` | The phone's microphone (`AVAudioEngine` input tap), the tuning model and screens. |
 | `Apps/Mac/Window/SpeakersPanel.swift` | The "Sync" section. |
 
-The commands and the state travel to remotes like any other, so the phone could start a calibration and show
-its progress; it has no button for it yet.
-
-Permission: Microphone (`NSMicrophoneUsageDescription`). Asked the first time Calibrate is pressed. Only the
+Permission: Microphone (`NSMicrophoneUsageDescription`, on the Mac and on the iPhone). Asked the first time a
+tuning starts on that device. Only the
 last six seconds are held, in memory, and nothing is stored or sent.
 
 ## Verification
@@ -110,49 +170,18 @@ last six seconds are held, in memory, and nothing is stored or sent.
   louder than the direct sound; an inverted speaker; noise alone (40 seeds), silence, a hum, clicks, a noise
   burst and a swelling chord are all refused; the trim arithmetic, clamping and reference choice.
 - Hub tests (`CalibrationHubTests`): a fake session and a fake microphone that "hears" whatever is unmuted at
-  that speaker's made-up delay plus its trim. Trims set, remembered and pushed to the session; one speaker
-  audible at a time; unheard speakers untouched; refusal of the microphone; cancel; pause and resume of a file;
-  play ending the run; shutdown mid-run.
+  that speaker's made-up delay plus its trim. Speakers tuned one at a time line up with those tuned before, in
+  either order; a speaker that is off is turned on for its measurement only; tunings survive a restart and later
+  ones line up with them; a trim nudged by hand is kept; a phone's microphone is kept apart from the Mac's; the
+  sweeps are published as they are heard; refusal, cancel, pause and resume, shutdown mid-run.
+- Link tests (`MicrophoneLinkTests`): a real hub server and remote over 127.0.0.1 with a made-up microphone on
+  the phone's side: the hub's question arrives in the phone's time and the answer comes back in the hub's,
+  within the clock exchange's error; refusals; an older hub is never sent the new messages; the phone leaving.
 - Live (`MULTICAST_LIVE_CALIBRATION=1 swift test --filter LiveCalibration`): the Mac's own speakers heard by its
   own microphone, measured with the trim at 0, +40 ms and 0. On a MacBook, at volume 0.08 with other audio
   playing from the same speakers: +40 ms of trim measured as +40.00 ms, the repeat within 0.01 ms, sweep-to-sweep
   spread 0.00 to 0.09 ms.
 
-Not tested on real hardware: Bluetooth speakers, AirPlay speakers and bridges, a phone as a speaker, more than
-one speaker at once, speakers in other rooms.
-
-## Design: the phone as the microphone (not built)
-
-The Mac's microphone lines the speakers up at the Mac. The person usually listens somewhere else, and may want
-to calibrate rooms the Mac can't hear. A paired iPhone is a microphone they can carry there.
-
-`CalibrationMicrophone` is the seam: the hub's run doesn't know where its recordings come from. A
-`PhoneMicrophone` conforming to it would sit beside `PhoneSpeakerSink` in `MulticastRemote`:
-
-- **Clock.** The phone already estimates its offset to the hub's clock for the phone-speaker link
-  (`ClockEstimator`, sub-millisecond on Wi-Fi). The phone stamps what it records with its own host time and
-  converts to hub time with that estimate. An error in the estimate is the same for every speaker measured in
-  one run, so like the microphone's latency it cancels; only its drift during the run matters (microseconds).
-- **What crosses the link.** Not audio. The hub sends the phone the signal's parameters and, per sweep, the
-  hub-time window to look in; the phone runs `DelayEstimator` itself (the module has no macOS dependency, and a
-  one-second correlation is tens of milliseconds on a phone) and answers with `arrival time, strength` or
-  "nothing". A few dozen bytes per sweep, and no recording ever leaves the phone, which is also the easier
-  privacy story. Two new control messages on the existing encrypted link: `listen(window)` and
-  `heard(arrival?)`; the remote protocol version goes up by one and older phones simply aren't offered as
-  microphones.
-- **Capture on the phone.** `AVAudioEngine` input tap in `.measurement` mode (no voice processing, no automatic
-  gain), buffers into the same `RecordingRing`, each stamped from `AVAudioTime.hostTime` less
-  `AVAudioSession.inputLatency`. Needs `NSMicrophoneUsageDescription` in the iOS app. While the phone is also a
-  speaker in the group, the session category has to be play-and-record, which changes its output route's
-  latency: either refuse to use a phone that is currently a speaker as the microphone, or leave it out of the
-  speakers being measured.
-- **Flow.** On the phone: Speakers → Calibrate sync → "Stand where you listen and hold the phone up". It sends
-  `calibrateSync` with itself named as the microphone (a new optional field; absent means the hub's own). The
-  hub runs exactly as now. The progress the phone shows is `HubState.calibration`, which it already receives.
-- **Several rooms.** One run per room, each lining up the speakers heard there. A speaker heard in two rooms
-  ties them together: keep it as the reference in the second run (the planner's "preferred reference" input) so
-  the second room is aligned to the first rather than to its own earliest speaker.
-
-Size: the link messages and `PhoneMicrophone` on the hub side, capture and the estimator call on the phone, a
-screen on the phone, and tests with a loopback link as the phone-speaker tests have. About the size of the
-phone-speaker receiver; left out of this change.
+Not tested on real hardware: the iPhone as the microphone (its capture, audio session and clock on a real
+device), Bluetooth speakers, AirPlay speakers and bridges, a phone as a speaker (and a phone measuring its own
+output), more than one real speaker.

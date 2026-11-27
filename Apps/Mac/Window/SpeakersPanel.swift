@@ -176,7 +176,7 @@ private struct SpeakerSummary: View {
 
 /// A message in the speakers list, on the speaker rows' grid: its mark in the glyph column,
 /// its words on the text column, an optional action where the slider would be.
-private struct SpeakerNoticeRow<Mark: View, Action: View>: View {
+struct SpeakerNoticeRow<Mark: View, Action: View>: View {
     var title: String
     var message: String
     @ViewBuilder var mark: () -> Mark
@@ -223,10 +223,11 @@ private struct LookingForSpeakers: View {
     }
 }
 
-/// "Calibrate sync": the hub plays a short test sound on each speaker that is on, listens with
-/// the Mac's microphone and sets the sync trims. While it runs, and after, one line per speaker
-/// says what was found.
-private struct SyncCalibrationSection: View {
+/// Tuning speaker sync: the hub plays a short test sound on one speaker, a microphone listens
+/// for it, and the speaker's sync trim is set. The stage shows a tuning while it runs and its
+/// result after, whether it was started here (this Mac's microphone) or from an iPhone held
+/// next to the speaker. Below it, every speaker with whether it has been tuned.
+struct SyncCalibrationSection: View {
     @Environment(HubModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let grid = MC.RowGrid.regular
@@ -234,69 +235,99 @@ private struct SyncCalibrationSection: View {
     var body: some View {
         let status = model.calibration
         GroupedSection(title: "Sync") {
-            SpeakerNoticeRow(title: title(status), message: message(status)) {
-                if status?.isRunning == true {
-                    ProgressView().controlSize(.small)
-                } else {
+            if let status {
+                VStack(spacing: MC.Space.m) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(stageTitle(status))
+                            .font(MC.Font.bodyEmphasis)
+                            .foregroundStyle(MC.Ink.primary)
+                        Spacer(minLength: MC.Space.m)
+                        Text(microphoneCaption(status))
+                            .font(MC.Font.caption)
+                            .foregroundStyle(MC.Ink.secondary)
+                    }
+                    TuningStage(speaker: status.current.flatMap { model.speaker($0.id) }, status: status, compact: true)
+                    HStack(spacing: MC.Space.s) {
+                        if status.speakers.count > 1 { progressNote(status) }
+                        Spacer()
+                        if status.isRunning {
+                            Button("Stop", action: model.endCalibration)
+                        } else {
+                            if let again = status.current?.id, status.speakers.count == 1, status.microphone == .hub {
+                                Button("Measure Again") { model.tuneSpeaker(again) }
+                            }
+                            Button("Done", action: model.endCalibration)
+                                .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                }
+                .padding(grid.inset)
+                .transition(.opacity)
+                RowDivider(leading: grid.inset)
+            } else {
+                SpeakerNoticeRow(
+                    title: "Tune speaker sync",
+                    message: "Plays a short test sound on one speaker, listens for it, and sets that speaker\u{2019}s sync trim. This Mac\u{2019}s microphone hears the speakers near it; for the others, tune from Multicast Remote on your iPhone, standing next to each speaker. Music pauses meanwhile."
+                ) {
                     Image(systemName: "metronome")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(MC.Ink.body)
+                } action: {
+                    Button("Tune All in Turn", action: model.calibrateSync)
+                        .disabled(!hasSpeakerOn)
+                        .help(hasSpeakerOn ? "Tunes every speaker that\u{2019}s on, one after the other" : "Turn on a speaker first")
                 }
-            } action: {
-                HStack(spacing: MC.Space.s) {
-                    if let status, !status.isRunning {
-                        Button("Done", action: model.endCalibration)
-                    }
-                    if status?.isRunning == true {
-                        Button("Stop", action: model.endCalibration)
-                    } else {
-                        Button(status == nil ? "Calibrate\u{2026}" : "Measure Again", action: model.calibrateSync)
-                            .disabled(!hasSpeakerOn)
-                            .help(hasSpeakerOn ? "Plays a short test sound on each speaker that\u{2019}s on" : "Turn on a speaker first")
-                    }
-                }
+                RowDivider(leading: grid.inset)
             }
-            if let status {
-                ForEach(status.speakers) { entry in
-                    RowDivider(leading: grid.textLeading)
-                    outcomeRow(entry)
-                }
+            ForEach(Array(model.usableSpeakers.enumerated()), id: \.element.id) { index, speaker in
+                if index > 0 { RowDivider(leading: grid.inset) }
+                speakerRow(speaker, busy: status?.isRunning == true)
             }
         }
-        .animation(MC.Motion.state(reduceMotion), value: status)
+        .animation(MC.Motion.state(reduceMotion), value: status == nil)
     }
 
     private var hasSpeakerOn: Bool { model.usableSpeakers.contains(where: \.isEnabled) }
 
-    private func title(_ status: SyncCalibrationStatus?) -> String {
-        guard let status else { return "Calibrate sync" }
-        return status.isRunning ? "Measuring the speakers\u{2026}" : (status.problem == nil ? "Sync calibrated" : "Couldn\u{2019}t calibrate")
+    private func stageTitle(_ status: SyncCalibrationStatus) -> String {
+        guard let name = status.current.flatMap({ model.speaker($0.id)?.name }) else { return "Tuning" }
+        return status.isRunning ? "Tuning \(name)" : name
     }
 
-    private func message(_ status: SyncCalibrationStatus?) -> String {
-        guard let status else {
-            return "Plays a short test sound on each speaker that\u{2019}s on, listens with this Mac\u{2019}s microphone, and sets their sync trims so they\u{2019}re heard together here. Music pauses meanwhile."
+    private func microphoneCaption(_ status: SyncCalibrationStatus) -> String {
+        switch status.microphone {
+        case .hub: "Listening with this Mac"
+        case .phone(let name): "Listening with \(name)"
         }
-        if status.isRunning { return "Keep the room quiet for a moment. Each speaker plays a few short sweeps in turn." }
-        return status.summary ?? ""
     }
 
-    private func outcomeRow(_ entry: SyncCalibrationStatus.Speaker) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: MC.Space.m) {
-            Text(model.speaker(entry.id)?.name ?? "Speaker")
-                .font(MC.Font.body)
-                .foregroundStyle(MC.Ink.primary)
-                .lineLimit(1)
+    private func progressNote(_ status: SyncCalibrationStatus) -> some View {
+        let done = status.speakers.filter(\.outcome.isFinished).count
+        return Text(status.isRunning ? "Speaker \(min(status.speakers.count, done + 1)) of \(status.speakers.count)" : (status.summary ?? ""))
+            .font(MC.Font.caption)
+            .foregroundStyle(MC.Ink.secondary)
+            .monospacedDigit()
+    }
+
+    private func speakerRow(_ speaker: SpeakerItem, busy: Bool) -> some View {
+        HStack(spacing: MC.Space.m) {
+            VStack(alignment: .leading, spacing: MC.Space.xxs) {
+                Text(speaker.name)
+                    .font(MC.Font.body)
+                    .foregroundStyle(MC.Ink.primary)
+                    .lineLimit(1)
+                Text(TuningWording.state(of: speaker))
+                    .font(MC.Font.caption)
+                    .foregroundStyle(MC.Ink.secondary)
+                    .lineLimit(1)
+            }
             Spacer(minLength: MC.Space.m)
-            Text(entry.outcome.caption)
-                .font(MC.Font.captionValue)
-                .foregroundStyle(entry.outcome == .measuring ? AnyShapeStyle(MC.Ink.primary) : AnyShapeStyle(MC.Ink.secondary))
-                .lineLimit(1)
+            Button(speaker.tunedAt == nil ? "Tune" : "Tune Again") { model.tuneSpeaker(speaker.id) }
+                .disabled(busy)
+                .accessibilityLabel("\(speaker.tunedAt == nil ? "Tune" : "Tune again") \(speaker.name)")
         }
-        .padding(.leading, grid.textLeading)
-        .padding(.trailing, grid.inset)
+        .padding(.horizontal, grid.inset)
         .padding(.vertical, MC.Space.s)
-        .accessibilityElement(children: .combine)
     }
 }
 

@@ -47,11 +47,20 @@ enum Snapshotter {
                    to: directory.appendingPathComponent(fullList))
             written.append(fullList)
 
-            // The same list after a sync calibration: one line per speaker that was on.
-            let calibrated = "main-speakers-calibrated-\(suffix).png"
-            render(RootView().environment(model(for: .appleMusic, calibrated: true)), size: fullListSize, appearance: appearance,
-                   to: directory.appendingPathComponent(calibrated))
-            written.append(calibrated)
+            // Tuning a speaker's sync, at each moment worth looking at.
+            for moment in MockTuning.Moment.allCases {
+                let file = "tuning-\(moment.rawValue)-\(suffix).png"
+                // The Sync section by itself, as wide as it is in the window (the whole panel is
+                // taller than a screen, and this renderer can't draw past one).
+                render(SyncCalibrationSection()
+                        .environment(model(for: .appleMusic, tuning: moment))
+                        .environment(\.mcTuningFrozenTime, 2.45)
+                        .frame(width: 520)
+                        .padding(MC.Space.xxl)
+                        .background(MC.Surface.canvas),
+                       size: nil, appearance: appearance, to: directory.appendingPathComponent(file))
+                written.append(file)
+            }
 
             let popoverModel = model(for: .spotify)
             let popover = "popover-speaker-detail-\(suffix).png"
@@ -85,21 +94,21 @@ enum Snapshotter {
 
     private static let artwork = MockData.artwork
 
-    /// What a finished sync calibration of the speakers that are on looks like: the first is
-    /// the reference, the last was out of earshot.
-    private static func calibration(of speakers: [SpeakerItem]) -> SyncCalibrationStatus {
-        let on = speakers.filter { $0.isEnabled && !$0.isRestricted }
-        return SyncCalibrationStatus(isRunning: false, speakers: on.enumerated().map { i, s in
-            let outcome: SyncCalibrationStatus.Outcome = i == 0 ? .aligned(lagMs: 0, trimMs: s.syncTrimMs, reachedLimit: false)
-                : (i == on.count - 1 && on.count > 2 ? .notHeard
-                    : .aligned(lagMs: Double(37 * i + 5), trimMs: s.syncTrimMs - 37 * i - 5, reachedLimit: false))
-            return .init(id: s.id, outcome: outcome)
-        })
-    }
-
-    private static func model(for scene: MockScene, calibrated: Bool = false) -> HubModel {
+    private static func model(for scene: MockScene, tuning: MockTuning.Moment? = nil) -> HubModel {
         var state = scene.state
-        if calibrated { state.calibration = calibration(of: state.speakers) }
+        if let tuning {
+            // A phone tunes the Bluetooth speaker; the Mac's own microphone heard the others earlier.
+            let mic: SyncCalibrationStatus.Microphone = tuning == .refused ? .hub : .phone(name: "Sample iPhone")
+            state.calibration = MockTuning.status(tuning, speaker: MockData.jbl, microphone: mic)
+            for i in state.speakers.indices where state.speakers[i].isEnabled && !state.speakers[i].isRestricted {
+                state.speakers[i].tunedAt = Date().addingTimeInterval(-86_400 * Double(i % 3))
+                if i > 0 { state.speakers[i].syncTrimMs = -12 * i }
+            }
+            if let i = state.speakers.firstIndex(where: { $0.id == MockData.jbl }) {
+                state.speakers[i].syncTrimMs = tuning == .inSync ? -172 : 0
+                state.speakers[i].tunedAt = tuning == .inSync || tuning == .reference ? Date() : nil
+            }
+        }
         let content = scene.content
         var preload = content.preload
         if scene == .search {
