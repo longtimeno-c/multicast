@@ -18,6 +18,9 @@ public struct PhoneRoute: Codable, Sendable, Equatable {
         self.kind = kind
     }
 
+    /// The name the hub shows for this output (`SpeakerItem.model` of the phone's row).
+    public var nameAtHub: String { sanitized.name }
+
     /// Capped and cleaned: this text comes from another device.
     var sanitized: PhoneRoute {
         PhoneRoute(name: PeerText.displayName(name, fallback: "iPhone"), kind: kind)

@@ -152,8 +152,15 @@ struct SpeakerDetailSheet: View {
                     .accessibilityHidden(true)
             }
             VolumeSlider(value: speaker.volume, label: "\(speaker.name) volume", isLive: speaker.isEnabled,
-                         onChange: { model.setVolume($0, for: speaker.id) },
-                         onCommit: { model.commitVolume(for: speaker.id) })
+                         onChange: { volume in
+                             // This device's own row: its slider is the iPhone's volume.
+                             if speaker.id == session.phoneSpeaker.speakerID { session.phoneSpeaker.setVolume(volume) }
+                             else { model.setVolume(volume, for: speaker.id) }
+                         },
+                         onCommit: {
+                             if speaker.id == session.phoneSpeaker.speakerID { session.phoneSpeaker.commitVolume() }
+                             else { model.commitVolume(for: speaker.id) }
+                         })
         }
         .padding(.horizontal, MC.Space.m)
         .padding(.vertical, MC.Space.m)

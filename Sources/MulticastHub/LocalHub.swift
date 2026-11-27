@@ -69,6 +69,9 @@ public actor LocalHub: HubBackend {
     private var restricted: Set<String> = []
     /// Speakers that came with a device (a paired iPhone) and are listed while it offers itself.
     private var externalIDs: Set<String> = []
+    /// Those of them that apply their volume to their own system volume (a phone on a recent
+    /// build): device-volume speakers whose device is at the other end of the link.
+    private var externalVolumeOnDevice: Set<String> = []
     /// Speakers whose gain in the session was last set to full because their volume is a
     /// device volume (see "Device-volume speakers").
     private var heldAtFullGain: Set<String> = []
@@ -430,11 +433,15 @@ public actor LocalHub: HubBackend {
     /// A paired device offers itself as a speaker, with the sink that reaches it, or says its
     /// output changed (same id and sink, new descriptor). It is listed until
     /// `removeExternalSpeaker`, and turned on at once when `enable` is set: offering is the
-    /// person saying "play here".
-    public func addExternalSpeaker(_ descriptor: SpeakerDescriptor, sink: any AudioSink, enable: Bool = true) {
+    /// person saying "play here". `volumeOnDevice`: the device sets its own system volume from
+    /// this speaker's volume and reports changes made there, so the volume is a device volume
+    /// (see "Device-volume speakers") rather than a gain.
+    public func addExternalSpeaker(_ descriptor: SpeakerDescriptor, sink: any AudioSink, enable: Bool = true,
+                                   volumeOnDevice: Bool = false) {
         guard !isShutDown else { return }
         let id = descriptor.id
         let isNew = externalIDs.insert(id).inserted
+        if volumeOnDevice { externalVolumeOnDevice.insert(id) } else { externalVolumeOnDevice.remove(id) }
         let oldKey = presetKey(id)
         descriptors[id] = descriptor
         let session = deps.session
@@ -454,6 +461,8 @@ public actor LocalHub: HubBackend {
     /// remembered for it stays.
     public func removeExternalSpeaker(id: String) {
         guard externalIDs.remove(id) != nil else { return }
+        externalVolumeOnDevice.remove(id)
+        heldAtFullGain.remove(id)
         let wasOn = enabledOrder.contains(id)
         enabledOrder.removeAll { $0 == id }
         blocked[id] = nil
@@ -652,8 +661,9 @@ public actor LocalHub: HubBackend {
         guard descriptors[id] != nil else { throw HubCommandError(.notFound, "That speaker is no longer on the network.") }
         let v = volume.isFinite ? min(1, max(0, volume)) : 0
         if deviceVolume(of: id) != nil {
-            // The slider is the device's own volume: the gain stays at full and the preset
-            // (a gain, should the device ever lose its volume control) is left as it was.
+            // The slider is the device's own volume: the gain stays at full. A Mac output's
+            // preset (a gain, should the device ever lose its volume control) is left as it
+            // was; a phone's is where its volume is kept.
             setDeviceVolume(v, of: id)
         } else {
             updatePreset(id) { $0.volume = v }
@@ -665,9 +675,14 @@ public actor LocalHub: HubBackend {
     // MARK: Device-volume speakers
 
     // For some speakers the slider is a real device volume rather than a gain applied inside
-    // Multicast: a Mac output's slider is that output's own volume. The three functions below
-    // are the only place that decides which speakers those are and how their volume is read
-    // and set; everything else asks them.
+    // Multicast: a Mac output's slider is that output's own volume, and a paired iPhone's is the
+    // iPhone's system volume. The three functions below are the only place that decides which
+    // speakers those are and how their volume is read and set; everything else asks them.
+    //
+    // A phone's device is at the other end of the link, so here its volume is only kept and
+    // published (in the preset of the output it plays through): the phone sets its system
+    // volume from the published value and sends `setSpeakerVolume` when its volume is changed
+    // there. A phone on an older build is not one of these and keeps its volume as a gain.
     //
     //  - Such a speaker's gain in the session is held at 1, so its sink's software gain carries
     //    the master volume only (the master still attenuates the whole group).
@@ -676,11 +691,13 @@ public actor LocalHub: HubBackend {
 
     /// The speaker's device volume (0…1), or nil if its volume is a gain inside Multicast.
     private func deviceVolume(of id: String) -> Double? {
+        if externalVolumeOnDevice.contains(id) { return preset(for: id).volume }
         guard let d = descriptors[id], let v = deps.deviceVolumes.deviceVolume(of: d) else { return nil }
         return v.isFinite ? min(1, max(0, v)) : 0
     }
 
     private func setDeviceVolume(_ volume: Double, of id: String) {
+        if externalVolumeOnDevice.contains(id) { return updatePreset(id) { $0.volume = volume } }
         guard let d = descriptors[id] else { return }
         deps.deviceVolumes.setDeviceVolume(volume, of: d)
     }

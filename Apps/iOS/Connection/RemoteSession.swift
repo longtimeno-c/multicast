@@ -43,6 +43,10 @@ final class RemoteSession {
         self.navigation = navigation ?? RemoteNavigation()
         self.searchTimeout = searchTimeout
         self.prepare = prepare
+        // This device's speaker volume goes to the hub through the model, like any slider's.
+        self.phoneSpeaker.hubSpeakers = { [weak self] in self?.model?.speakers ?? [] }
+        self.phoneSpeaker.sendVolume = { [weak self] id, volume in self?.model?.setVolume(volume, for: id) }
+        self.phoneSpeaker.commitSentVolume = { [weak self] id in self?.model?.commitVolume(for: id) }
     }
 
     // MARK: What to show

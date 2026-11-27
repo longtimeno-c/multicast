@@ -39,6 +39,14 @@ extension RemoteHubBackend {
         Task { await reconcileSpeaker() }
     }
 
+    /// The Mac leaves this device's speaker volume to the device: the app sets the system
+    /// volume from its row's volume and reports changes with `setSpeakerVolume`. False on a
+    /// link to an older Mac, which applies the volume to the audio itself.
+    public var phoneSpeakerVolumeIsSystemVolume: Bool {
+        guard let session = currentSession, !session.hasEnded else { return false }
+        return session.info.version >= RemoteProtocol.phoneSystemVolumeVersion
+    }
+
     public var phoneSpeakerPhase: PhoneSpeakerPhase { speakerBroadcast.latest ?? .off }
 
     /// The phase now, then every change.
