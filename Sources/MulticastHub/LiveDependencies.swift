@@ -20,10 +20,13 @@ import UniformTypeIdentifiers
 
 public extension LocalHub {
     /// A hub over a real `MulticastSession` (Bonjour discovery, Core Audio outputs, process taps,
-    /// Apple Events to Spotify). Call `start()` to begin discovery.
+    /// Apple Events to Spotify). Call `start()` to begin discovery. `deviceVolumes`: pass
+    /// `NoDeviceVolumes()` to keep every speaker's volume inside Multicast, so that nothing
+    /// this hub does moves the Mac's own output volume (the live test does).
     static func live(settings: HubSettingsStore = UserDefaultsSettingsStore(),
                      sessionConfiguration: MulticastSession.Configuration = LocalHub.defaultSessionConfiguration(),
-                     configuration: Configuration = Configuration()) -> LocalHub {
+                     configuration: Configuration = Configuration(),
+                     deviceVolumes: SpeakerDeviceVolumeProviding = MacOutputVolumes()) -> LocalHub {
         let session = MulticastSession(configuration: sessionConfiguration)
         let deps = HubDependencies(
             session: KitSession(session),
@@ -33,7 +36,7 @@ public extension LocalHub {
             spotify: SpotifyAppleEvents(),
             system: LiveSystemServices(),
             settings: settings,
-            deviceVolumes: MacOutputVolumes()
+            deviceVolumes: deviceVolumes
         )
         return LocalHub(dependencies: deps, configuration: configuration)
     }

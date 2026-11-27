@@ -80,7 +80,9 @@ public final class OutputDeviceVolumes: @unchecked Sendable {
         guard self.volume(forDeviceUID: uid) != nil else { return }
         let v = volume.isFinite ? min(1, max(0, volume)) : 0
         lock.withLock {
-            guard entries[uid]?.control != nil else { return }
+            // No entry: the device list changed since the line above. The value waits all the
+            // same, and `drain` looks the device up again.
+            if let known = entries[uid], known.control == nil { return }
             entries[uid]?.volume = v
             if v > 0 { entries[uid]?.muted = false }
             pending[uid] = v
@@ -149,7 +151,15 @@ public final class OutputDeviceVolumes: @unchecked Sendable {
             }
             Self.read(&entry)
         }
-        lock.withLock { entries[uid] = entry }
+        lock.withLock {
+            // A value still waiting to be written (the device list changed under it) is the
+            // one to report, not what the device had before.
+            if entry.control != nil, let waiting = pending[uid] {
+                entry.volume = waiting
+                if waiting > 0 { entry.muted = false }
+            }
+            entries[uid] = entry
+        }
         return entry
     }
 
@@ -161,17 +171,18 @@ public final class OutputDeviceVolumes: @unchecked Sendable {
     }
 
     /// The device list changed: object ids and controls may be different now. Everything is
-    /// looked up afresh the next time it is asked for.
+    /// looked up afresh the next time it is asked for. Values still waiting to be written stay
+    /// (Multicast's own capture devices coming and going change the list too, and a volume set
+    /// at that moment must not be lost): they are written to the devices as found now.
     private func forgetDevices() {
-        let old: [Entry] = lock.withLock {
+        let (old, waiting): ([Entry], Bool) = lock.withLock {
             let e = Array(entries.values)
             entries.removeAll()
-            pending.removeAll()
-            return e
+            return (e, !pending.isEmpty)
         }
-        guard !old.isEmpty else { return }
         for e in old { removeListeners(e) }
-        notify()
+        if waiting { drain() }
+        if !old.isEmpty { notify() }
     }
 
     private func removeListeners(_ e: Entry) {
@@ -213,10 +224,13 @@ public final class OutputDeviceVolumes: @unchecked Sendable {
 
     /// Writes the newest value waiting for each device.
     private func drain() {
-        let work: [(Entry, Float)] = lock.withLock {
-            let w = pending.compactMap { uid, v in entries[uid].map { ($0, v) } }
-            pending.removeAll()
-            return w
+        let waiting = lock.withLock { pending }
+        // A device forgotten since the value was set is looked up again (it takes the waiting
+        // value as its own); one that has gone, or lost its control, drops it.
+        let work: [(Entry, Float)] = waiting.compactMap { uid, v in probe(uid).map { ($0, v) } }
+        lock.withLock {
+            // A newer value set meanwhile stays for the drain that follows it.
+            for (uid, v) in waiting where pending[uid] == v { pending[uid] = nil }
         }
         for (e, v) in work {
             guard let control = e.control else { continue }

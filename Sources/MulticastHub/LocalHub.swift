@@ -423,6 +423,8 @@ public actor LocalHub: HubBackend {
 
     private func updatePreset(_ id: String, _ change: (inout HubSettings.SpeakerPreset) -> Void) {
         var p = preset(for: id)
+        // A preset that starts its life on a device-volume speaker never was a gain.
+        if settings.speakers[presetKey(id)] == nil, hasLocalDeviceVolume(id) { p.volumeHandedToDevice = true }
         change(&p)
         settings.speakers[presetKey(id)] = p
         deps.settings.save(settings)
@@ -515,6 +517,7 @@ public actor LocalHub: HubBackend {
 
     private func selectNow(_ id: String) async {
         guard enabledOrder.contains(id), blocked[id] == nil, let d = descriptors[id] else { return }
+        handVolumeToDevice(id)
         let p = preset(for: id)
         let gain = sessionGain(for: id)
         noteSessionGain(id)
@@ -663,10 +666,19 @@ public actor LocalHub: HubBackend {
         if deviceVolume(of: id) != nil {
             // The slider is the device's own volume: the gain stays at full. A Mac output's
             // preset (a gain, should the device ever lose its volume control) is left as it
-            // was; a phone's is where its volume is kept.
+            // was; a phone's is where its volume is kept. The person has now chosen the
+            // device's volume, so an old gain is not folded into it afterwards.
+            if hasLocalDeviceVolume(id), !preset(for: id).volumeHandedToDevice {
+                updatePreset(id) { $0.volumeHandedToDevice = true }
+            }
             setDeviceVolume(v, of: id)
         } else {
-            updatePreset(id) { $0.volume = v }
+            // A gain again (the device has no volume control now): should the control come
+            // back, this is what was heard and is folded into the device then.
+            updatePreset(id) {
+                $0.volume = v
+                $0.volumeHandedToDevice = false
+            }
             applySessionGain(id)
         }
         publish()
@@ -687,13 +699,35 @@ public actor LocalHub: HubBackend {
     //  - Such a speaker's gain in the session is held at 1, so its sink's software gain carries
     //    the master volume only (the master still attenuates the whole group).
     //  - `SpeakerItem.volume` is the device's volume, on or off, and `setSpeakerVolume` sets it.
-    //  - Turning the speaker on never writes a remembered value to the device.
+    //  - Turning the speaker on never writes a remembered value to the device, with one
+    //    exception, made once per Mac output: a preset saved while the slider was still a gain
+    //    was heard as that gain on top of the device's volume. Playing it at full gain would be
+    //    a sudden jump in loudness nobody asked for, so the first time such a speaker is turned
+    //    on the device's volume is scaled by the old gain (`handVolumeToDevice`) and the preset
+    //    is marked as handed over. The two volume curves differ, so this is about as loud as
+    //    before rather than exactly. Not done for a phone: the hub cannot read its volume, and
+    //    the phone sends its own on joining.
 
     /// The speaker's device volume (0…1), or nil if its volume is a gain inside Multicast.
     private func deviceVolume(of id: String) -> Double? {
         if externalVolumeOnDevice.contains(id) { return preset(for: id).volume }
         guard let d = descriptors[id], let v = deps.deviceVolumes.deviceVolume(of: d) else { return nil }
         return v.isFinite ? min(1, max(0, v)) : 0
+    }
+
+    /// The speaker's volume is the volume of a device on this Mac (not a phone's).
+    private func hasLocalDeviceVolume(_ id: String) -> Bool {
+        !externalVolumeOnDevice.contains(id) && deviceVolume(of: id) != nil
+    }
+
+    /// Folds a gain remembered from before the speaker's slider was its device's volume into
+    /// the device, once. A device at zero (or muted) has nothing to scale yet: it is looked at
+    /// again when its volume moves.
+    private func handVolumeToDevice(_ id: String) {
+        guard hasLocalDeviceVolume(id), let d = descriptors[id], let stored = settings.speakers[presetKey(id)],
+              !stored.volumeHandedToDevice, let device = deviceVolume(of: id), device > 0 else { return }
+        if stored.volume < 1 { deps.deviceVolumes.setDeviceVolume(device * max(0, stored.volume), of: d) }
+        updatePreset(id) { $0.volumeHandedToDevice = true }
     }
 
     private func setDeviceVolume(_ volume: Double, of id: String) {
@@ -706,6 +740,7 @@ public actor LocalHub: HubBackend {
     /// or lost its volume control: show it, and move the gain of a speaker that changed kind.
     private func deviceVolumesChanged() {
         guard !isShutDown else { return }
+        for id in enabledOrder where blocked[id] == nil { handVolumeToDevice(id) }
         for id in enabledOrder where heldAtFullGain.contains(id) != (deviceVolume(of: id) != nil) { applySessionGain(id) }
         publish()
     }

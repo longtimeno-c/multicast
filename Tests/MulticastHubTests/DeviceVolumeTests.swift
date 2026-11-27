@@ -61,9 +61,10 @@ struct DeviceVolumeTests {
         #expect(rig.deviceVolumes.volumes.get()[Self.desk] == 0.6)
     }
 
-    @Test func turningOnDoesNotWriteAStalePresetToTheDevice() async throws {
-        // A volume remembered from before the speaker's slider became the device's volume.
-        let store = InMemorySettingsStore(HubSettings(speakers: [Self.desk: .init(volume: 0.9, syncTrimMs: 20, isEnabled: true)]))
+    @Test func turningOnDoesNotWriteARememberedVolumeToTheDevice() async throws {
+        // A preset of a speaker whose slider already was the device's volume.
+        let store = InMemorySettingsStore(HubSettings(speakers: [
+            Self.desk: .init(volume: 0.9, syncTrimMs: 20, isEnabled: true, volumeHandedToDevice: true)]))
         let rig = await rig(deskVolume: 0.2, settings: store)
         try await rig.waitFor("restored") { $0.speaker(SpeakerID(Self.desk))?.state == .ready }
         #expect(rig.deviceVolumes.sets.get().isEmpty)
@@ -79,6 +80,67 @@ struct DeviceVolumeTests {
         await rig.hub.settle()
         #expect(rig.deviceVolumes.sets.get().isEmpty)
         #expect(rig.session.inner.get().selectVolumes[Self.desk] == 1)
+    }
+
+    @Test func aGainRememberedFromBeforeIsFoldedIntoTheDeviceOnce() async throws {
+        // Saved by a version in which the slider was a gain: heard as 0.25 of the Mac's 0.8.
+        let old = try JSONDecoder().decode(HubSettings.self, from: Data("""
+            {"masterVolume":0.6,"speakers":{"\(Self.desk)":{"volume":0.25,"syncTrimMs":20,"isEnabled":true}}}
+            """.utf8))
+        #expect(old.speakers[Self.desk]?.volumeHandedToDevice == false)
+        let store = InMemorySettingsStore(old)
+        let rig = await rig(deskVolume: 0.8, settings: store)
+        try await rig.waitFor("restored") { $0.speaker(SpeakerID(Self.desk))?.state == .ready }
+        // Full gain from now on, and the device turned down to match instead of a jump.
+        #expect(rig.session.inner.get().selectVolumes[Self.desk] == 1)
+        let sets = rig.deviceVolumes.sets.get()
+        #expect(sets.count == 1 && abs((sets.first?.volume ?? 0) - 0.2) < 1e-9)
+        #expect(abs((rig.speaker(Fixtures.local())?.volume ?? 0) - 0.2) < 1e-9)
+        #expect(store.load().speakers[Self.desk]?.volumeHandedToDevice == true)
+
+        // Once: off and on again, and a hub started again on the same settings, leave it alone.
+        try await rig.hub.perform(.setSpeakerEnabled(id: SpeakerID(Self.desk), enabled: false))
+        try await rig.hub.perform(.setSpeakerEnabled(id: SpeakerID(Self.desk), enabled: true))
+        await rig.hub.settle()
+        #expect(rig.deviceVolumes.sets.get().count == 1)
+        let again = await self.rig(deskVolume: 0.2, settings: store)
+        try await again.waitFor("restored") { $0.speaker(SpeakerID(Self.desk))?.state == .ready }
+        #expect(again.deviceVolumes.sets.get().isEmpty)
+    }
+
+    @Test func anOldGainIsNotFoldedWhileTheSpeakerIsOffOrAfterTheSliderWasUsed() async throws {
+        let store = InMemorySettingsStore(HubSettings(speakers: [Self.desk: .init(volume: 0.25, isEnabled: false)]))
+        let rig = await rig(deskVolume: 0.8, settings: store)
+        await rig.hub.settle()
+        #expect(rig.deviceVolumes.sets.get().isEmpty)
+        // The person sets the device's volume with the slider: that is the level they want.
+        try await rig.hub.perform(.setSpeakerVolume(id: SpeakerID(Self.desk), volume: 0.5))
+        try await rig.hub.perform(.setSpeakerEnabled(id: SpeakerID(Self.desk), enabled: true))
+        await rig.hub.settle()
+        #expect(rig.deviceVolumes.sets.get().map(\.volume) == [0.5])
+        #expect(rig.session.inner.get().selectVolumes[Self.desk] == 1)
+    }
+
+    @Test func aMutedDeviceIsFoldedWhenItsVolumeComesBack() async throws {
+        let store = InMemorySettingsStore(HubSettings(speakers: [Self.desk: .init(volume: 0.5, isEnabled: true)]))
+        let rig = await rig(deskVolume: 0, settings: store)
+        try await rig.waitFor("restored") { $0.speaker(SpeakerID(Self.desk))?.state == .ready }
+        #expect(rig.deviceVolumes.sets.get().isEmpty)
+        rig.deviceVolumes.changeOutside(Self.desk, to: 0.6)
+        try await rig.waitFor("folded") { abs(($0.speaker(SpeakerID(Self.desk))?.volume ?? 0) - 0.3) < 1e-9 }
+        #expect(rig.deviceVolumes.sets.get().count == 1)
+        rig.deviceVolumes.changeOutside(Self.desk, to: 0.7)
+        try await rig.waitFor("left alone") { $0.speaker(SpeakerID(Self.desk))?.volume == 0.7 }
+        #expect(rig.deviceVolumes.sets.get().count == 1)
+    }
+
+    @Test func aSpeakerFirstUsedWithADeviceVolumeIsNeverFolded() async throws {
+        let store = InMemorySettingsStore()
+        let rig = await rig(deskVolume: 0.8, settings: store)
+        try await rig.hub.perform(.setSpeakerEnabled(id: SpeakerID(Self.desk), enabled: true))
+        await rig.hub.settle()
+        #expect(rig.deviceVolumes.sets.get().isEmpty)
+        #expect(store.load().speakers[Self.desk]?.volumeHandedToDevice == true)
     }
 
     @Test func aChangeMadeElsewhereIsPublished() async throws {

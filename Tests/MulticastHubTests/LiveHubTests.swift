@@ -16,6 +16,10 @@ import Testing
 /// leaves mid-stream. Every speaker plays at 0.10 (master 1.0), set before any audio, for about
 /// 6 s of audible audio, then everything is torn down. Pass/fail is judged from HubState and
 /// the RAOP packet counters, not by ear.
+///
+/// The hub is made without device volumes, so a Mac output among the speakers is turned down
+/// inside Multicast like the others and the Mac's own output volume is neither read nor
+/// changed: the 0.10 is on top of wherever the Mac's volume is.
 @Suite("Live hub", .enabled(if: ProcessInfo.processInfo.environment["MULTICAST_LIVE"] == "1"), .serialized)
 struct LiveHubTests {
     static let speakerVolume = 0.10
@@ -42,7 +46,8 @@ struct LiveHubTests {
         ff.waitUntilExit()
         try #require(ff.terminationStatus == 0)
 
-        let hub = LocalHub.live(settings: InMemorySettingsStore(HubSettings(masterVolume: 1.0)))
+        let hub = LocalHub.live(settings: InMemorySettingsStore(HubSettings(masterVolume: 1.0)),
+                                deviceVolumes: NoDeviceVolumes())
         let started = Date()
         func log(_ s: String) { print(String(format: "[live %5.2f] ", Date().timeIntervalSince(started)) + s) }
         var shutDown = false

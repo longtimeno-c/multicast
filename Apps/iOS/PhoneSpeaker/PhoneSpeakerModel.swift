@@ -53,8 +53,9 @@ final class PhoneSpeakerModel {
     /// Where the row's slider is while it is being dragged.
     private var dragVolume: Double?
 
-    /// The hub's speakers as the app's model has them now, for when no view is there to pass
-    /// them on (the app in the background).
+    /// The hub's speakers as the hub last published them: what this device's volume is
+    /// compared with. Not the app model's speakers, which show a volume sent from here before
+    /// the hub has taken it; the reconciler must only see what the hub itself says.
     @ObservationIgnored var hubSpeakers: (() -> [SpeakerItem])?
     /// Sends a speaker volume to the hub the way a slider does (shown at once, sent at a
     /// measured pace), and ends that the way a slider's release does.
@@ -183,7 +184,13 @@ final class PhoneSpeakerModel {
         } else if seenOnAtHub {
             setOn(false)
         }
-        syncVolume(with: speakers)
+        syncVolume()
+    }
+
+    /// The hub published a state (called for every one, with or without a view on screen).
+    func hubPublished() {
+        guard isOn else { return }
+        syncVolume()
     }
 
     // MARK: Volume
@@ -227,9 +234,9 @@ final class PhoneSpeakerModel {
     /// Compares the hub's volume for this device's row with the system volume and does what the
     /// reconciler says. Until the hub lists this device with the output it is playing through
     /// now, there is nothing to compare with and the device's volume is the one to keep.
-    private func syncVolume(with speakers: [SpeakerItem]? = nil) {
+    private func syncVolume() {
         guard usesSystemVolume, let id = speakerID,
-              let mine = (speakers ?? hubSpeakers?() ?? []).first(where: { $0.id == id }),
+              let mine = (hubSpeakers?() ?? []).first(where: { $0.id == id }),
               mine.model == route.nameAtHub else {
             reconciler.deviceLeadsNow()
             return

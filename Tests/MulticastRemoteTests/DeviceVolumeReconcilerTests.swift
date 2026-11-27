@@ -23,6 +23,59 @@ import Testing
         #expect(r.hubReports(0.3, device: 0.3, now: 12) == .none)
     }
 
+    @Test func aHubThatIsSlowToTakeTheDeviceVolumeNeverGetsItsOwnWrittenInstead() {
+        var r = DeviceVolumeReconciler()
+        // The hub remembered full volume; the command with the phone's 0.3 waits behind a slow
+        // one, and the hub publishes its 1.0 again and again meanwhile.
+        #expect(r.hubReports(1, device: 0.3, now: 10) == .tellHub(0.3))
+        for t in stride(from: 10.2, to: 12, by: 0.2) { #expect(r.hubReports(1, device: 0.3, now: t) == .none) }
+        // Still nothing after two seconds: said again, not given up.
+        #expect(r.hubReports(1, device: 0.3, now: 12) == .tellHub(0.3))
+        for t in stride(from: 12.2, to: 14, by: 0.2) { #expect(r.hubReports(1, device: 0.3, now: t) == .none) }
+        #expect(r.hubReports(0.3, device: 0.3, now: 14.1) == .none)
+        // From here the hub's changes are followed as usual.
+        #expect(r.hubReports(0.6, device: 0.3, now: 16) == .setDevice(0.6))
+    }
+
+    @Test func aButtonPressTheHubIsSlowToEchoIsNotRevertedOnTheDevice() {
+        var r = settled(at: 0)
+        #expect(r.deviceChanged(to: 0.5625, now: 5) == .tellHub(0.5625))
+        // Well past the settle window the hub still shows the value from before.
+        #expect(r.hubReports(0.5, device: 0.5625, now: 6) == .none)
+        #expect(r.hubReports(0.5, device: 0.5625, now: 6.9) == .none)
+        // Sent again where the device is by then (another press meanwhile was sent too).
+        #expect(r.deviceChanged(to: 0.625, now: 6.95) == .tellHub(0.625))
+        #expect(r.hubReports(0.5, device: 0.625, now: 8.9) == .none)
+        #expect(r.hubReports(0.5, device: 0.625, now: 9) == .tellHub(0.625))
+        #expect(r.hubReports(0.625, device: 0.625, now: 9.1) == .none)
+    }
+
+    @Test func echoesThatArriveAfterTheNextWriteOfAFastHubDragAreStillEchoes() {
+        var r = settled(at: 0)
+        // The Mac's slider is dragged: a value every 50 ms. iOS reports each write late.
+        #expect(r.hubReports(0.6, device: 0.5, now: 5) == .setDevice(0.6))
+        #expect(r.hubReports(0.7, device: 0.5, now: 5.05) == .setDevice(0.7))
+        #expect(r.deviceChanged(to: 0.6, now: 5.07) == .none)
+        #expect(r.hubReports(0.8, device: 0.6, now: 5.1) == .setDevice(0.8))
+        #expect(r.deviceChanged(to: 0.7, now: 5.12) == .none)
+        // Nothing went quiet: the drag is still followed, there and back.
+        #expect(r.hubReports(0.7, device: 0.7, now: 5.15) == .none)
+        #expect(r.hubReports(0.6, device: 0.7, now: 5.2) == .setDevice(0.6))
+        #expect(r.deviceChanged(to: 0.8, now: 5.22) == .none)
+        #expect(r.deviceChanged(to: 0.6, now: 5.25) == .none)
+        #expect(r.hubReports(0.6, device: 0.6, now: 7) == .none)
+    }
+
+    @Test func aButtonPressAfterAHubDragHasBeenEchoedIsNotTakenForAnEarlierEcho() {
+        var r = settled(at: 0)
+        #expect(r.hubReports(0.7, device: 0.5, now: 5) == .setDevice(0.7))
+        #expect(r.hubReports(0.75, device: 0.5, now: 5.05) == .setDevice(0.75))
+        #expect(r.hubReports(0.8, device: 0.5, now: 5.1) == .setDevice(0.8))
+        #expect(r.deviceChanged(to: 0.8, now: 5.15) == .none)
+        // A step down lands near the 0.75 written a moment ago: it is a press all the same.
+        #expect(r.deviceChanged(to: 0.7375, now: 5.4) == .tellHub(0.7375))
+    }
+
     @Test func nothingIsSentWhenTheHubAlreadyAgrees() {
         var r = DeviceVolumeReconciler()
         #expect(r.hubReports(0.5, device: 0.51, now: 0) == .none)
@@ -105,6 +158,7 @@ import Testing
     @Test func theLastWriterWinsOnceThingsHaveSettled() {
         var r = settled(at: 0)
         #expect(r.deviceChanged(to: 0.5625, now: 5) == .tellHub(0.5625))
+        #expect(r.hubReports(0.5625, device: 0.5625, now: 5.2) == .none)
         // Somebody at the Mac moves the slider just afterwards: the hub ends up at 0.2.
         #expect(r.hubReports(0.2, device: 0.5625, now: 5.3) == .none)
         #expect(r.hubReports(0.2, device: 0.5625, now: 5.9) == .setDevice(0.2))
