@@ -1,5 +1,6 @@
 import Foundation
 import MulticastHubModel
+import MulticastRemote
 import SwiftUI
 
 /// Reproducible states for review screenshots, chosen with launch arguments:
@@ -55,6 +56,12 @@ enum RemoteScene: String, CaseIterable {
     case otherApp = "other-app"
     /// The hub's DRM-free files.
     case files
+    /// The speakers scene with this iPhone playing too, through a Bluetooth speaker.
+    case phoneSpeaker = "phone-speaker"
+    /// The same, before "This iPhone" is turned on.
+    case phoneSpeakerOff = "phone-speaker-off"
+    /// This iPhone's own speaker details: sync trim and the link to the Mac.
+    case phoneSpeakerDetail = "phone-speaker-detail"
     /// The hub's first second: no speakers found yet, Apple Music not yet allowed.
     case firstRun = "first-run"
     /// iPhone Only (experimental): speakers found, two turned on, no broadcast yet.
@@ -90,6 +97,7 @@ enum RemoteScene: String, CaseIterable {
         case .live, .mock, .pair, .pairing, .pairingError, .searching, .hubNotFound: nil
         case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
              .phoneOnlySearching, .phoneOnlyEmpty: nil
+        case .phoneSpeaker, .phoneSpeakerOff, .phoneSpeakerDetail: .appleMusic
         case .lost, .speakers, .speakerRestricted, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
         case .speakerDetail, .spotify: .spotify
         case .otherApp: .appPicker
@@ -99,7 +107,8 @@ enum RemoteScene: String, CaseIterable {
 
     @MainActor func makeSession() -> RemoteSession {
         if self == .live {
-            return RemoteSession(connector: NetworkHubConnector(remoteName: NetworkHubConnector.deviceName()))
+            return RemoteSession(connector: NetworkHubConnector(remoteName: NetworkHubConnector.deviceName()),
+                                 phoneSpeaker: PhoneSpeakerModel(routes: AudioSessionRouteMonitor(), output: PhoneRouteOutput()))
         }
         let backend: MockHubBackend
         if let hubScene {
@@ -141,6 +150,7 @@ enum RemoteScene: String, CaseIterable {
         case .nowPlaying: nav.showsNowPlaying = true
         case .speakerDetail: nav.speakerDetail = .init(id: MockData.jbl)
         case .speakerRestricted: nav.speakerDetail = .init(id: MockData.neighbourHomePod)
+        case .phoneSpeakerDetail: nav.speakerDetail = .init(id: MockPhoneSpeakerBackend.speakerID)
         case .playlists:
             nav.tab = .music
             nav.musicPath = [.source(.appleMusic)]
@@ -181,7 +191,13 @@ enum RemoteScene: String, CaseIterable {
         }
 
         let connector = MockHubConnector(backend: backend, options: options)
-        return RemoteSession(connector: connector, navigation: nav, searchTimeout: timeout)
+        // Every scene can try "This iPhone" on the mock hub; these three show it over Bluetooth.
+        let showsPhone = [.phoneSpeaker, .phoneSpeakerOff, .phoneSpeakerDetail].contains(self)
+        let route = showsPhone ? PhoneRoute(name: "Garden Speaker", kind: .bluetooth) : PhoneRoute(name: "Speaker", kind: .builtIn)
+        let phone = PhoneSpeakerModel(routes: FixedRouteMonitor(route), output: SilentPhoneOutput())
+        phone.attach(MockPhoneSpeakerBackend(hub: backend))
+        if self == .phoneSpeaker || self == .phoneSpeakerDetail { phone.setOn(true) }
+        return RemoteSession(connector: connector, navigation: nav, phoneSpeaker: phone, searchTimeout: timeout)
     }
 
     /// What iPhone Only mode runs on: Bonjour and the App Group in the real app, made-up

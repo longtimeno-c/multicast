@@ -31,7 +31,15 @@ public enum RemoteProtocol {
     /// are unchanged, so version 2 is still spoken: a remote on a version 2 link never sends the
     /// two new forms (a version 2 hub can't decode them and would drop the link) and answers
     /// catalog search with `.unsupported` itself.
-    public static let currentVersion = 3
+    ///
+    /// 4: a paired iPhone as a speaker (`ClientMessage.speakerOffer` and friends,
+    /// `HubMessage.speakerAccepted`, `SpeakerTransport.phone`, `SpeakerGlyph.phone`, and the UDP
+    /// audio channel in Audio/AudioWire.swift). Older versions are still spoken: the new messages
+    /// are never sent on such a link, and the hub shows an older remote a phone speaker as a
+    /// built-in one (`HubState.downgraded(forRemoteVersion:)`).
+    public static let currentVersion = 4
+    /// The first version in which a remote can offer itself as a speaker.
+    public static let phoneSpeakerVersion = 4
     /// The first version with catalog search.
     public static let catalogSearchVersion = 3
     /// The oldest protocol version this build still speaks.
@@ -210,6 +218,13 @@ enum ClientMessage: Codable, Sendable, Equatable {
     case ping(id: UInt64)
     case pong(id: UInt64)
     case bye
+    // Version 4 and later only:
+    /// "Play on this iPhone": answered with `HubMessage.speakerAccepted` or a `commandResult`
+    /// carrying the refusal. Offering again replaces the earlier offer.
+    case speakerOffer(id: UInt64, route: PhoneRoute)
+    /// The phone's output changed (a Bluetooth speaker connected or left).
+    case speakerRoute(route: PhoneRoute)
+    case speakerWithdraw
 }
 
 enum HubMessage: Codable, Sendable, Equatable {
@@ -225,6 +240,27 @@ enum HubMessage: Codable, Sendable, Equatable {
     /// The Mac removed this remote's pairing. Sent only inside the authenticated, sealed
     /// session, so it is the one signal a remote may delete its key on (see `ClientHandshake`).
     case revoked(reason: String)
+    /// Version 4 and later only: the offer `id` was taken. The audio channel is UDP `port` on
+    /// the hub's address, keyed with `salt` (see Audio/AudioWire.swift); `speakerID` is the
+    /// phone's own row in `HubState.speakers`.
+    case speakerAccepted(id: UInt64, port: UInt16, salt: Data, speakerID: String)
+}
+
+extension HubState {
+    /// The state as a remote speaking `version` can decode it: before version 4 there is no
+    /// phone transport or glyph, so a phone speaker is shown as a built-in, portable one.
+    func downgraded(forRemoteVersion version: Int) -> HubState {
+        guard version < RemoteProtocol.phoneSpeakerVersion, speakers.contains(where: { $0.transport == .phone || $0.glyph == .phone })
+        else { return self }
+        var s = self
+        s.speakers = speakers.map {
+            var item = $0
+            if item.transport == .phone { item.transport = .builtIn }
+            if item.glyph == .phone { item.glyph = .portable }
+            return item
+        }
+        return s
+    }
 }
 
 /// The plaintext inside a sealed frame.

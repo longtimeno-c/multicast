@@ -121,11 +121,17 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
     private let levelsBroadcast = Broadcast<StereoLevels>(replaysLatest: false)
     private let connectionBroadcast = Broadcast<RemoteConnectionState>(replaysLatest: true)
     private let availabilityBroadcast = Broadcast<HubAvailability>(replaysLatest: true)
+    // This device as a speaker (Audio/PhoneSpeakerControl.swift).
+    let speaker = Locked(PhoneSpeakerState())
+    let speakerBroadcast = Broadcast<PhoneSpeakerPhase>(replaysLatest: true)
+    let speakerMutex = AsyncMutex()
+    var currentSession: RemoteSession? { inner.value.session }
 
     public init(configuration: Configuration, keyStore: any PairingKeyStore) {
         self.configuration = configuration
         self.keyStore = keyStore
         connectionBroadcast.yield(.idle)
+        speakerBroadcast.yield(.off)
         availabilityBroadcast.yield(.connecting)
         levelsBroadcast.onSubscriberCountChange = { [weak self] count in
             self?.inner.value.session?.setLevels(count > 0)
@@ -389,12 +395,14 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
         }
         setConnection(.connected(ConnectedHub(id: info.hubID, name: info.hubName, protocolVersion: info.version)))
         if levelsBroadcast.subscriberCount > 0 { session.setLevels(true) }
+        speakerSessionChanged()
         let reason = await withTaskCancellationHandler {
             await session.run()
         } onCancel: {
             session.end("Disconnected.")
         }
         inner.withLock { s in if s.session === session { s.session = nil } }
+        speakerSessionChanged()
         return (reason, session.wasRevoked)
     }
 

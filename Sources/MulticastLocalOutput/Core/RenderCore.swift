@@ -28,6 +28,7 @@ final class RenderCore: @unchecked Sendable {
     private let activeFlag = AtomicU64(0)
     private let outputLatencyNanos = AtomicU64(0)
     private let offsetNanosBits = AtomicU64(0)
+    private let clockOffsetBits = AtomicU64(0)
     private let gainTargetBits = AtomicU64(UInt64(Float(1).bitPattern))
 
     // MARK: IO → control (stats atomics)
@@ -139,6 +140,13 @@ final class RenderCore: @unchecked Sendable {
 
     func setOffset(millis: Int) { offsetNanosBits.store(int64: Int64(millis) * 1_000_000) }
     var offsetNanos: Int64 { offsetNanosBits.loadInt64() }
+
+    /// When the timeline is on ANOTHER machine's clock (a phone playing a hub's stream): that
+    /// clock minus this one, in nanoseconds. Added to every callback time before the timeline is
+    /// consulted. Small changes are followed by the rate correction like any drift; a large one
+    /// makes the cursor jump with a crossfade. 0 (the default) for a timeline on this clock.
+    func setClockOffset(nanos: Int64) { clockOffsetBits.store(int64: nanos) }
+    var clockOffsetNanos: Int64 { clockOffsetBits.loadInt64() }
 
     /// Linear amplitude target; the IO thread ramps towards it.
     func setGainTarget(_ amplitude: Float) { gainTargetBits.store(UInt64(amplitude.bitPattern)) }
@@ -254,7 +262,7 @@ final class RenderCore: @unchecked Sendable {
 
         let ideal = PlayoutClock.frameToRender(
             timeline: timeline,
-            callbackHostNanos: t,
+            callbackHostNanos: UInt64(bitPattern: Int64(bitPattern: t) &+ Int64(bitPattern: clockOffsetBits.load(acquire: false))),
             outputLatencyNanos: outputLatencyNanos.load(acquire: false),
             offsetNanos: Int64(bitPattern: offsetNanosBits.load(acquire: false))
         )

@@ -24,7 +24,7 @@ public struct LocalMachineIdentity: Hashable, Sendable {
     }
 
     public func matches(_ speaker: SpeakerDescriptor) -> Bool {
-        guard speaker.transport != .local else { return false }
+        guard speaker.transport != .local, speaker.transport != .remote else { return false }
         if deviceIDs.contains(speaker.id) { return true }
         if let apID = speaker.airplayDeviceID, deviceIDs.contains(apID) { return true }
         if let host = speaker.host, hostNames.contains(HostName.clean(host).lowercased()) { return true }

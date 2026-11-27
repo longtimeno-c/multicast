@@ -76,6 +76,56 @@ final class RenderSim {
         #expect(abs(sim.left[511] - expectedLeft(Int64(firstExpected + 511))) < 1e-4)
     }
 
+    @Test func aTimelineOnAnotherClockIsShiftedByTheClockOffset() {
+        // The timeline's clock is 10 ms ahead of this device's: what is due "now" there is 441
+        // frames further on.
+        let sim = RenderSim()
+        sim.core.setClockOffset(nanos: 10_000_000)
+        sim.feed(upTo: 20_000)
+        for _ in 0..<4 { sim.callback() }
+        sim.callback()
+        let firstExpected = 1000 + 4 * 512 + 441
+        #expect(abs(sim.left[0] - expectedLeft(Int64(firstExpected))) < 1e-4)
+        // Behind, by the same amount.
+        let behind = RenderSim()
+        behind.core.setClockOffset(nanos: -10_000_000)
+        behind.feed(upTo: 20_000)
+        for _ in 0..<4 { behind.callback() }
+        behind.callback()
+        #expect(abs(behind.left[0] - expectedLeft(Int64(1000 + 4 * 512 - 441))) < 1e-4)
+    }
+
+    @Test func aSmallClockCorrectionIsSlewedNotJumped() {
+        let sim = RenderSim()
+        sim.feed(upTo: 60_000)
+        for _ in 0..<20 { sim.callback() }
+        // The estimate moves by 1 ms in steps of 10 µs, as the phone's receiver applies it.
+        var offset: Int64 = 0
+        for i in 0..<400 {
+            if i < 100 { offset += 10_000 }
+            sim.core.setClockOffset(nanos: offset)
+            sim.feed(upTo: UInt64(sim.deviceFrames) + 30_000)
+            sim.callback()
+        }
+        let stats = sim.core.snapshotStats()
+        #expect(stats.jumps == 0)
+        #expect(stats.underrunFrames == 0)
+        // 1 ms is 44 frames: followed to within a few frames by rate correction alone.
+        #expect(abs(stats.filteredErrorFrames) < 6, "error \(stats.filteredErrorFrames) frames")
+        #expect(abs(stats.ratio - 1) <= 0.001)
+    }
+
+    @Test func aLargeClockCorrectionJumpsWithACrossfade() {
+        let sim = RenderSim()
+        sim.feed(upTo: 60_000)
+        for _ in 0..<20 { sim.callback() }
+        sim.core.setClockOffset(nanos: 100_000_000)
+        sim.feed(upTo: 60_000)
+        sim.callback()
+        sim.callback()
+        #expect(sim.core.snapshotStats().jumps == 1)
+    }
+
     @Test func silenceBeforeTheStreamStarts() {
         // Callbacks start 1 s before the anchor; the stream's first frame is 0.
         let sim = RenderSim(startOffsetFrames: -44_100)

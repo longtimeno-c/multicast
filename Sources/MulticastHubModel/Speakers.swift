@@ -23,6 +23,9 @@ public struct SpeakerID: Hashable, Sendable, Codable, ExpressibleByStringLiteral
 /// How audio reaches a speaker. Drives grouping and the default glyph.
 public enum SpeakerTransport: String, Sendable, Codable, CaseIterable {
     case airPlay1, airPlay2, builtIn, bluetooth, usb
+    /// A paired iPhone playing the stream through its own output (its speaker, or the Bluetooth
+    /// speaker or headphones connected to it). Remote protocol version 4 and later.
+    case phone
 
     public var isNetwork: Bool { self == .airPlay1 || self == .airPlay2 }
 
@@ -33,6 +36,7 @@ public enum SpeakerTransport: String, Sendable, Codable, CaseIterable {
         case .builtIn: "Built-in"
         case .bluetooth: "Bluetooth"
         case .usb: "USB"
+        case .phone: "iPhone"
         }
     }
 }
@@ -40,6 +44,8 @@ public enum SpeakerTransport: String, Sendable, Codable, CaseIterable {
 /// The glyph a speaker row shows. Backends pick one from what they know about the device.
 public enum SpeakerGlyph: String, Sendable, Codable, CaseIterable {
     case speaker, smartSpeaker, receiver, airportExpress, laptop, display, portable, headphones, usb
+    /// Remote protocol version 4 and later.
+    case phone
 
     /// SF Symbol name.
     public var symbolName: String {
@@ -54,6 +60,7 @@ public enum SpeakerGlyph: String, Sendable, Codable, CaseIterable {
         case .portable: "hifispeaker.fill"
         case .headphones: "headphones"
         case .usb: "cable.connector"
+        case .phone: "iphone"
         }
     }
 }

@@ -414,6 +414,17 @@ actor MockHubBackend: HubBackend {
 
     // MARK: Speakers
 
+    /// A speaker that comes and goes with something outside discovery (this phone as a speaker).
+    func setExtraSpeaker(_ item: SpeakerItem) {
+        update { s in
+            if let i = s.speakers.firstIndex(where: { $0.id == item.id }) { s.speakers[i] = item } else { s.speakers.append(item) }
+        }
+    }
+
+    func removeExtraSpeaker(_ id: SpeakerID) {
+        update { s in s.speakers.removeAll { $0.id == id } }
+    }
+
     private func mutateSpeaker(_ id: SpeakerID, _ change: @escaping (inout SpeakerItem) -> Void) {
         update { s in
             guard let i = s.speakers.firstIndex(where: { $0.id == id }) else { return }

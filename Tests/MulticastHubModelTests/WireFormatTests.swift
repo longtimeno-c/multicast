@@ -158,6 +158,21 @@ import Testing
         try roundTrip(s)
     }
 
+    @Test func aPhoneSpeakerHasItsOwnTransportAndGlyph() throws {
+        let phone = SpeakerItem(id: "phone:remote-a", name: "Sample iPhone", transport: .phone, glyph: .phone,
+                                model: "Garden Speaker", isEnabled: true, volume: 0.4, state: .playing, syncTrimMs: -160)
+        let data = try JSONEncoder().encode(phone)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["transport"] as? String == "phone")
+        #expect(object["glyph"] as? String == "phone")
+        #expect(try JSONDecoder().decode(SpeakerItem.self, from: data) == phone)
+        #expect(phone.kindDescription == "iPhone \u{00B7} Garden Speaker")
+        #expect(!SpeakerTransport.phone.isNetwork)
+        #expect(SpeakerGlyph.phone.symbolName == "iphone")
+        // The names older builds know are unchanged.
+        #expect(SpeakerTransport.allCases.map(\.rawValue) == ["airPlay1", "airPlay2", "builtIn", "bluetooth", "usb", "phone"])
+    }
+
     @Test func stateStaysSmall() throws {
         // A busy house: 16 speakers, 20 capturable apps, every issue. Must stay a few KB.
         var s = HubState()

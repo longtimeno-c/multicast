@@ -121,6 +121,40 @@ public final class CurrentRouteSink: AudioSink, @unchecked Sendable {
         try prepareSync(timeline: timeline)
     }
 
+    // MARK: A stream timed by another machine (this device as a hub's speaker)
+
+    /// `prepare`, callable from a queue.
+    public func start(timeline: StreamTimeline) throws { try prepareSync(timeline: timeline) }
+
+    /// The timeline's clock minus this device's, when the timeline came from another machine.
+    public func setClockOffset(nanos: Int64) { core.setClockOffset(nanos: nanos) }
+
+    public func setVolumeNow(_ volume: Float) {
+        control.withLock {
+            self.volume = max(0, min(1, volume))
+            core.setGainTarget(VolumeCurve.amplitude(forVolume: self.volume))
+        }
+    }
+
+    public func setOffsetNow(millis: Int) {
+        control.withLock {
+            offset = millis
+            core.setOffset(millis: millis)
+        }
+    }
+
+    public func flushNow() { core.ring.requestReset() }
+
+    /// `stop`, callable from a queue. Also gives the audio session back, so whatever this
+    /// interrupted (another app's music) can resume.
+    public func stopNow(deactivateSession: Bool) {
+        control.withLock { teardownLocked() }
+        stateBroadcaster.sendIfChanged(.idle)
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
     func prepareSync(timeline: StreamTimeline) throws {
         control.lock()
         defer { control.unlock() }

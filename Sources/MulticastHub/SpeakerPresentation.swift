@@ -13,6 +13,7 @@ public enum SpeakerPresentation {
         switch d.transport {
         case .airplay1: return .airPlay1
         case .airplay2: return .airPlay2
+        case .remote: return .phone
         case .local:
             switch d.localKind {
             case .bluetooth: return .bluetooth
@@ -29,6 +30,7 @@ public enum SpeakerPresentation {
     ///   laptop glyph, otherwise a display or speaker).
     public static func glyph(for d: SpeakerDescriptor, hostIsLaptop: Bool) -> SpeakerGlyph {
         switch d.transport {
+        case .remote: return .phone
         case .local:
             switch d.localKind {
             case .builtIn, .none:
@@ -85,6 +87,8 @@ public enum SpeakerPresentation {
     /// A short human model name, or nil when there is nothing better than the transport label.
     public static func modelName(for d: SpeakerDescriptor) -> String? {
         switch d.transport {
+        // What the phone plays through ("Speaker", or the name of its Bluetooth speaker).
+        case .remote: return d.model
         case .local:
             switch d.localKind {
             case .hdmi: return "HDMI"
@@ -118,6 +122,8 @@ public enum SpeakerPresentation {
     /// local ones.
     public static func address(for d: SpeakerDescriptor) -> String? {
         switch d.transport {
+        case .remote:
+            return nil
         case .local:
             return d.localDeviceUID
         case .airplay1, .airplay2:

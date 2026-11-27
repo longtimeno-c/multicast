@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MulticastAudio
 import MulticastHubModel
 import Network
 
@@ -50,6 +51,35 @@ public enum HubServerEvent: Sendable, Equatable {
     /// "NoAuth" when Local Network access is off). The server is no longer serving; `start()`
     /// may be called again.
     case stopped(reason: String)
+}
+
+/// How the server hands a phone that offered itself to whatever plays the audio (the Mac app
+/// wires these to `LocalHub`). The server itself only knows `HubBackend`, which has no sinks.
+public struct RemoteSpeakerHost: Sendable {
+    /// A phone offers itself, or says its output changed (same `descriptor.id`, same sink).
+    public var add: @Sendable (_ descriptor: SpeakerDescriptor, _ sink: any AudioSink) async -> Void
+    /// The phone withdrew or disconnected.
+    public var remove: @Sendable (_ speakerID: String) async -> Void
+
+    public init(add: @escaping @Sendable (SpeakerDescriptor, any AudioSink) async -> Void,
+                remove: @escaping @Sendable (String) async -> Void) {
+        self.add = add
+        self.remove = remove
+    }
+
+    /// The speaker a phone's offer becomes.
+    public static func descriptor(remoteID: String, remoteName: String, route: PhoneRoute) -> SpeakerDescriptor {
+        let kind: SpeakerDescriptor.LocalKind
+        switch route.kind {
+        case .builtIn: kind = .builtIn
+        case .bluetooth, .headphones, .car: kind = .bluetooth
+        case .airPlay: kind = .airplaySystem
+        case .usb: kind = .usb
+        case .other: kind = .other
+        }
+        return SpeakerDescriptor(id: PhoneSpeakerSink.speakerID(remoteID: remoteID), name: remoteName, transport: .remote,
+                                 model: route.name, localDeviceUID: route.kind.rawValue, localKind: kind)
+    }
 }
 
 // MARK: - HubServer
@@ -131,8 +161,13 @@ public final class HubServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "multicast.hub-server")
     private let eventBroadcast = Broadcast<HubServerEvent>(replaysLatest: false, policy: .unbounded)
     private let commandMutex = AsyncMutex()
+    private let speakerMutex = AsyncMutex()
+    /// nil: this hub takes no phone speakers (offers are refused).
+    private let speakerHost: RemoteSpeakerHost?
 
-    public init(backend: any HubBackend, configuration: Configuration, keyStore: any PairingKeyStore) {
+    public init(backend: any HubBackend, configuration: Configuration, keyStore: any PairingKeyStore,
+                speakerHost: RemoteSpeakerHost? = nil) {
+        self.speakerHost = speakerHost
         self.backend = backend
         self.configuration = configuration
         self.keyStore = keyStore
@@ -393,7 +428,84 @@ public final class HubServer: @unchecked Sendable {
                              receiveKey: keys.remoteToHub, receiveLabel: Direction.remoteToHub)
         let info = ConnectedRemote(id: UUID(), remoteID: remoteID, remoteName: remoteName, connectedAt: Date())
         return HubSession(info: info, link: link, version: version, backend: backend, configuration: configuration,
-                          commandMutex: commandMutex)
+                          commandMutex: commandMutex, speakers: self)
+    }
+
+    // MARK: Phone speakers
+
+    /// One offer or withdrawal at a time across all remotes, so a phone that reconnects never
+    /// has its new speaker removed by its old session's goodbye.
+    func offerSpeaker(from session: HubSession, route: PhoneRoute) async throws -> (port: UInt16, salt: Data, speakerID: String) {
+        guard let host = speakerHost else {
+            throw HubCommandError(.unsupported, "\(configuration.name) can\u{2019}t play to an iPhone.")
+        }
+        return try await withSpeakerLock { [self] in try await offerSpeakerLocked(host, from: session, route: route) }
+    }
+
+    private func withSpeakerLock<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
+        await speakerMutex.lock()
+        do {
+            let result = try await body()
+            await speakerMutex.unlock()
+            return result
+        } catch {
+            await speakerMutex.unlock()
+            throw error
+        }
+    }
+
+    private func offerSpeakerLocked(_ host: RemoteSpeakerHost, from session: HubSession,
+                                    route: PhoneRoute) async throws -> (port: UInt16, salt: Data, speakerID: String) {
+        let route = route.sanitized
+        let descriptor = RemoteSpeakerHost.descriptor(remoteID: session.info.remoteID, remoteName: session.info.remoteName, route: route)
+        // The same phone on an older connection: that speaker goes first.
+        let others = inner.withLock { $0.sessions.values.filter { $0 !== session && $0.info.remoteID == session.info.remoteID } }
+        for other in others {
+            if let old = other.takeSpeaker() {
+                await host.remove(descriptor.id)
+                old.stop()
+            }
+        }
+        if let old = session.takeSpeaker() {
+            await host.remove(descriptor.id)
+            old.stop()
+        }
+        let salt = randomBytes(AudioChannel.saltLength)
+        guard let keys = session.audioChannelKeys(salt: salt) else {
+            throw HubCommandError(.failed, "The session isn\u{2019}t ready.")
+        }
+        let sink = PhoneSpeakerSink(id: descriptor.id, displayName: descriptor.name, keys: keys)
+        let channel = HubAudioChannel(sink: sink, loopbackOnly: configuration.loopbackOnly)
+        let port: UInt16
+        do {
+            port = try await channel.start()
+        } catch {
+            channel.stop()
+            throw HubCommandError(.failed, "Couldn\u{2019}t open the audio channel.")
+        }
+        guard session.setSpeaker(channel) else {
+            channel.stop()
+            throw HubCommandError(.unreachable, "The remote disconnected.")
+        }
+        await host.add(descriptor, sink)
+        return (port, salt, descriptor.id)
+    }
+
+    func updateSpeakerRoute(from session: HubSession, route: PhoneRoute) async {
+        guard let host = speakerHost else { return }
+        await withSpeakerLock {
+            guard let channel = session.currentSpeaker else { return }
+            await host.add(RemoteSpeakerHost.descriptor(remoteID: session.info.remoteID, remoteName: session.info.remoteName,
+                                                        route: route.sanitized), channel.sink)
+        }
+    }
+
+    func withdrawSpeaker(from session: HubSession) async {
+        await withSpeakerLock { [speakerHost] in
+            guard let channel = session.takeSpeaker() else { return }
+            await speakerHost?.remove(channel.sink.id)
+            channel.stop()
+        }
     }
 
     // MARK: Pairing (hub side; protocol in Crypto.swift)
@@ -500,6 +612,7 @@ public final class HubServer: @unchecked Sendable {
         }
         eventBroadcast.yield(.remoteConnected(session.info))
         let reason = await session.run()
+        await withdrawSpeaker(from: session)
         inner.withLock { _ = $0.sessions.removeValue(forKey: session.info.id) }
         eventBroadcast.yield(.remoteDisconnected(session.info, reason: reason))
     }
@@ -514,8 +627,10 @@ final class HubSession: @unchecked Sendable {
     private let backend: any HubBackend
     private let configuration: HubServer.Configuration
     private let commandMutex: AsyncMutex
+    private weak var speakers: HubServer?
 
     private struct Inner {
+        var speaker: HubAudioChannel?
         var tasks: [UUID: Task<Void, Never>] = [:]
         var levelsTask: Task<Void, Never>?
         var lastHeard = Date()
@@ -528,7 +643,8 @@ final class HubSession: @unchecked Sendable {
     private let inner = Locked(Inner())
 
     init(info: ConnectedRemote, link: FramedConnection, version: Int, backend: any HubBackend,
-         configuration: HubServer.Configuration, commandMutex: AsyncMutex) {
+         configuration: HubServer.Configuration, commandMutex: AsyncMutex, speakers: HubServer? = nil) {
+        self.speakers = speakers
         self.info = info
         self.link = link
         self.version = version
@@ -538,6 +654,41 @@ final class HubSession: @unchecked Sendable {
     }
 
     var levelFramesSent: Int { inner.value.levelFramesSent }
+
+    // MARK: This remote as a speaker
+
+    var currentSpeaker: HubAudioChannel? { inner.value.speaker }
+
+    func audioChannelKeys(salt: Data) -> AudioChannelKeys? { link.audioChannelKeys(salt: salt, asHub: true) }
+
+    /// False when the session has already ended (the channel must then be stopped by the caller).
+    func setSpeaker(_ channel: HubAudioChannel) -> Bool {
+        inner.withLock { s in
+            guard s.closeReason == nil else { return false }
+            s.speaker = channel
+            return true
+        }
+    }
+
+    func takeSpeaker() -> HubAudioChannel? {
+        inner.withLock { s in
+            defer { s.speaker = nil }
+            return s.speaker
+        }
+    }
+
+    private func speakerOffered(_ id: UInt64, _ route: PhoneRoute) async {
+        do {
+            guard version >= RemoteProtocol.phoneSpeakerVersion, let speakers else {
+                throw HubCommandError(.unsupported, "This Mac can\u{2019}t play to an iPhone.")
+            }
+            let accepted = try await speakers.offerSpeaker(from: self, route: route)
+            try? await send(.speakerAccepted(id: id, port: accepted.port, salt: accepted.salt, speakerID: accepted.speakerID))
+        } catch {
+            let e = error as? HubCommandError ?? HubCommandError(.failed, error.localizedDescription)
+            try? await send(.commandResult(id: id, error: e))
+        }
+    }
 
     private func spawn(_ body: @escaping @Sendable () async -> Void) {
         let id = UUID()
@@ -580,6 +731,12 @@ final class HubSession: @unchecked Sendable {
                     break
                 case .bye:
                     throw RemoteLinkError.closed("The remote disconnected.")
+                case .speakerOffer(let id, let route):
+                    spawn { [self] in await speakerOffered(id, route) }
+                case .speakerRoute(let route):
+                    spawn { [self] in await speakers?.updateSpeakerRoute(from: self, route: route) }
+                case .speakerWithdraw:
+                    spawn { [self] in await speakers?.withdrawSpeaker(from: self) }
                 }
             }
         } catch {
@@ -632,7 +789,7 @@ final class HubSession: @unchecked Sendable {
         for await state in await backend.states() {
             if Task.isCancelled { break }
             do {
-                try await send(.state(state))
+                try await send(.state(state.downgraded(forRemoteVersion: version)))
             } catch {
                 link.cancel()
                 break

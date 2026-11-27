@@ -110,7 +110,11 @@ final class HubRuntime {
         // Keychain reads can block on an access prompt (ad hoc builds): they happen once, on a
         // queue of their own, and handshakes are answered from memory.
         let keys = CachingPairingKeyStore(wrapping: KeychainPairingKeyStore(service: Self.hubKeychainService))
-        let server = HubServer(backend: backend, configuration: config, keyStore: keys)
+        // A paired iPhone that offers itself becomes a speaker of this hub.
+        let phones = RemoteSpeakerHost(
+            add: { [backend] descriptor, sink in await backend.addExternalSpeaker(descriptor, sink: sink) },
+            remove: { [backend] id in await backend.removeExternalSpeaker(id: id) })
+        let server = HubServer(backend: backend, configuration: config, keyStore: keys, speakerHost: phones)
         self.server = server
         tasks.append(Task { [weak self] in
             await keys.load()

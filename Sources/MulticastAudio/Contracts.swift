@@ -186,6 +186,10 @@ public struct SpeakerDescriptor: Identifiable, Hashable, Sendable, Codable {
         case airplay2
         /// An audio output of this machine (built-in, Bluetooth, USB, HDMI…).
         case local
+        /// A paired device (an iPhone) that plays the stream through its own output. It has no
+        /// address to connect to: its sink is handed over by whatever link the device is on.
+        /// `model` names the device's current output, `localKind` says what kind that is.
+        case remote
     }
 
     public enum LocalKind: String, Sendable, Codable {

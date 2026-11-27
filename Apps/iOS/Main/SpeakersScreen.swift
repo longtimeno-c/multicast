@@ -15,13 +15,18 @@ struct SpeakersScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: MC.Space.xl) {
-                    if model.speakers.isEmpty {
+                    if othersSpeakers.isEmpty {
                         LookingForSpeakers(hubName: hubName)
                             .transition(.opacity)
+                        if session.phoneSpeaker.isAvailable { ThisPhoneSection(hubName: hubName) }
                     } else {
                         SpeakerSummary(counts: model.speakerCounts, isDiscovering: model.isDiscovering,
                                        isLastKnown: session.linkProblem != nil)
                             .padding(.horizontal, MC.Space.m)
+                        // First: it is the one speaker that is in the person's hand.
+                        if session.phoneSpeaker.isAvailable {
+                            ThisPhoneSection(hubName: hubName)
+                        }
                         if model.needsLocalNetwork {
                             LocalNetworkNotice(hubName: hubName)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -31,6 +36,10 @@ struct SpeakersScreen: View {
                         }
                         if !model.localSpeakers.isEmpty {
                             speakerGroup("On \(hubName)", model.localSpeakers)
+                        }
+                        if !otherPhones.isEmpty {
+                            speakerGroup("Other iPhones", otherPhones)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                         if !model.needsLocalNetwork, !model.restrictedSpeakers.isEmpty {
                             restrictedGroup(model.restrictedSpeakers)
@@ -75,6 +84,10 @@ struct SpeakersScreen: View {
     }
 
     private var hubName: String { session.hub?.name ?? "Mac" }
+
+    /// Every speaker but this device's own row, which has its section.
+    private var othersSpeakers: [SpeakerItem] { model.speakers.filter { $0.id != session.phoneSpeaker.speakerID } }
+    private var otherPhones: [SpeakerItem] { model.phoneSpeakers.filter { $0.id != session.phoneSpeaker.speakerID } }
 
     private var hubMenu: some View {
         Menu {

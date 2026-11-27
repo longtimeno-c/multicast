@@ -7,6 +7,11 @@
 	     Apple treats as exempt from export documentation. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- "This iPhone" as a speaker of the Mac's group keeps playing with the screen locked. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Multicast Remote finds the Mac that plays your music and controls it over your network. In iPhone Only mode it finds your AirPlay speakers and plays to them.</string>
 	<key>NSBonjourServices</key>

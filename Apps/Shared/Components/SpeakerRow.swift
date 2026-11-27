@@ -263,7 +263,7 @@ extension SpeakerGlyph {
     /// optical weight next to the filled speakers and receiver.
     var weight: Font.Weight {
         switch self {
-        case .laptop, .display, .headphones, .usb: .semibold
+        case .laptop, .display, .headphones, .usb, .phone: .semibold
         default: .regular
         }
     }

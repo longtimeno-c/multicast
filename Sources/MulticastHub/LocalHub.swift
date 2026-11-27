@@ -66,6 +66,8 @@ public actor LocalHub: HubBackend {
     /// (and not remembered as on), never turned on by the hub, and asked again only when the
     /// person says so (`retrySpeaker`: "Check Again") or turns one on themselves.
     private var restricted: Set<String> = []
+    /// Speakers that came with a device (a paired iPhone) and are listed while it offers itself.
+    private var externalIDs: Set<String> = []
     /// Restricted speakers being asked again right now.
     private var accessChecks: [String: Task<Void, Never>] = [:]
     private var startedAt: Date
@@ -396,15 +398,67 @@ public actor LocalHub: HubBackend {
 
     // MARK: - Speakers
 
+    /// Where a speaker's volume, trim and on/off are remembered. A phone has one preset per
+    /// output it plays through (its own speaker, each Bluetooth speaker by name), because the
+    /// delay to trim away belongs to the output, not to the phone.
+    private func presetKey(_ id: String) -> String {
+        guard let d = descriptors[id], d.transport == .remote, let output = d.model, !output.isEmpty else { return id }
+        return "\(id)#\(output)"
+    }
+
     private func preset(for id: String) -> HubSettings.SpeakerPreset {
-        settings.speakers[id] ?? HubSettings.SpeakerPreset(volume: configuration.defaultSpeakerVolume)
+        settings.speakers[presetKey(id)] ?? HubSettings.SpeakerPreset(volume: configuration.defaultSpeakerVolume)
     }
 
     private func updatePreset(_ id: String, _ change: (inout HubSettings.SpeakerPreset) -> Void) {
         var p = preset(for: id)
         change(&p)
-        settings.speakers[id] = p
+        settings.speakers[presetKey(id)] = p
         deps.settings.save(settings)
+    }
+
+    // MARK: Speakers that come with a device (a paired iPhone)
+
+    /// A paired device offers itself as a speaker, with the sink that reaches it, or says its
+    /// output changed (same id and sink, new descriptor). It is listed until
+    /// `removeExternalSpeaker`, and turned on at once when `enable` is set: offering is the
+    /// person saying "play here".
+    public func addExternalSpeaker(_ descriptor: SpeakerDescriptor, sink: any AudioSink, enable: Bool = true) {
+        guard !isShutDown else { return }
+        let id = descriptor.id
+        let isNew = externalIDs.insert(id).inserted
+        let oldKey = presetKey(id)
+        descriptors[id] = descriptor
+        let session = deps.session
+        enqueue { await session.addExternalSpeaker(descriptor, sink: sink) }
+        if isNew {
+            if enable { self.enable(id, remember: true) }
+        } else if presetKey(id) != oldKey, enabledOrder.contains(id) {
+            // Another output on the same phone: its own volume and trim, and it stays on.
+            updatePreset(id) { $0.isEnabled = true }
+            let p = preset(for: id)
+            session.setVolume(Float(p.volume), forSpeaker: id)
+            session.setOffset(millis: p.syncTrimMs, forSpeaker: id)
+        }
+        publish()
+    }
+
+    /// The device withdrew or disconnected: its speaker leaves the group and the list. What was
+    /// remembered for it stays.
+    public func removeExternalSpeaker(id: String) {
+        guard externalIDs.remove(id) != nil else { return }
+        let wasOn = enabledOrder.contains(id)
+        enabledOrder.removeAll { $0 == id }
+        blocked[id] = nil
+        selectFailures[id] = nil
+        descriptors[id] = nil
+        if wasOn, !hasPlayableSpeaker, wantsPlay { stopForNoSpeakers() }
+        publish()
+        enqueue { [self] in
+            await self.deps.session.removeExternalSpeaker(id: id)
+            await self.reconcileEngine()
+            await self.publish()
+        }
     }
 
     var hasPlayableSpeaker: Bool {
@@ -610,7 +664,8 @@ public actor LocalHub: HubBackend {
 
     private func sessionChanged(_ s: SessionState) {
         var listChanged = false
-        for d in s.speakers where descriptors[d.id] != d {
+        // Remote speakers are kept by add/removeExternalSpeaker, not learned from the list.
+        for d in s.speakers where d.transport != .remote && descriptors[d.id] != d {
             descriptors[d.id] = d
             listChanged = true
         }
@@ -621,8 +676,8 @@ public actor LocalHub: HubBackend {
         }
         if listChanged { lastSpeakerListChange = deps.now() }
         noteRefusals(s.engine.sinks)
-        for d in s.speakers where settings.speakers[d.id]?.isEnabled == true && !restored.contains(d.id)
-            && !restricted.contains(d.id) {
+        for d in s.speakers where d.transport != .remote && settings.speakers[d.id]?.isEnabled == true
+            && !restored.contains(d.id) && !restricted.contains(d.id) {
             restored.insert(d.id)
             enable(d.id, remember: false)
         }
