@@ -9,11 +9,28 @@ public struct HubSettings: Codable, Equatable, Sendable {
         public var volume: Double
         public var syncTrimMs: Int
         public var isEnabled: Bool
+        /// The speaker's loudness has been handed to its device's own volume (a Mac output whose
+        /// slider is that output's volume): `volume` is not in effect as a gain. False for a
+        /// preset saved before that existed, whose `volume` was a gain on top of the device's
+        /// volume and is folded into the device once (see `LocalHub`, "Device-volume speakers").
+        public var volumeHandedToDevice: Bool
 
-        public init(volume: Double, syncTrimMs: Int = 0, isEnabled: Bool = false) {
+        public init(volume: Double, syncTrimMs: Int = 0, isEnabled: Bool = false, volumeHandedToDevice: Bool = false) {
             self.volume = volume
             self.syncTrimMs = syncTrimMs
             self.isEnabled = isEnabled
+            self.volumeHandedToDevice = volumeHandedToDevice
+        }
+
+        private enum CodingKeys: String, CodingKey { case volume, syncTrimMs, isEnabled, volumeHandedToDevice }
+
+        /// Presets saved before a field existed still load (the field takes its default).
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            volume = try c.decode(Double.self, forKey: .volume)
+            syncTrimMs = try c.decode(Int.self, forKey: .syncTrimMs)
+            isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
+            volumeHandedToDevice = try c.decodeIfPresent(Bool.self, forKey: .volumeHandedToDevice) ?? false
         }
     }
 

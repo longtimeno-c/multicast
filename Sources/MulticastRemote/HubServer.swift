@@ -57,11 +57,13 @@ public enum HubServerEvent: Sendable, Equatable {
 /// wires these to `LocalHub`). The server itself only knows `HubBackend`, which has no sinks.
 public struct RemoteSpeakerHost: Sendable {
     /// A phone offers itself, or says its output changed (same `descriptor.id`, same sink).
-    public var add: @Sendable (_ descriptor: SpeakerDescriptor, _ sink: any AudioSink) async -> Void
+    /// `volumeOnDevice`: the phone applies its speaker volume to its own system volume, so the
+    /// hub must not also apply it as a gain (see `RemoteProtocol.phoneSystemVolumeVersion`).
+    public var add: @Sendable (_ descriptor: SpeakerDescriptor, _ sink: any AudioSink, _ volumeOnDevice: Bool) async -> Void
     /// The phone withdrew or disconnected.
     public var remove: @Sendable (_ speakerID: String) async -> Void
 
-    public init(add: @escaping @Sendable (SpeakerDescriptor, any AudioSink) async -> Void,
+    public init(add: @escaping @Sendable (SpeakerDescriptor, any AudioSink, Bool) async -> Void,
                 remove: @escaping @Sendable (String) async -> Void) {
         self.add = add
         self.remove = remove
@@ -487,7 +489,7 @@ public final class HubServer: @unchecked Sendable {
             channel.stop()
             throw HubCommandError(.unreachable, "The remote disconnected.")
         }
-        await host.add(descriptor, sink)
+        await host.add(descriptor, sink, session.appliesVolumeOnDevice)
         return (port, salt, descriptor.id)
     }
 
@@ -496,7 +498,7 @@ public final class HubServer: @unchecked Sendable {
         await withSpeakerLock {
             guard let channel = session.currentSpeaker else { return }
             await host.add(RemoteSpeakerHost.descriptor(remoteID: session.info.remoteID, remoteName: session.info.remoteName,
-                                                        route: route.sanitized), channel.sink)
+                                                        route: route.sanitized), channel.sink, session.appliesVolumeOnDevice)
         }
     }
 
@@ -658,6 +660,9 @@ final class HubSession: @unchecked Sendable {
     // MARK: This remote as a speaker
 
     var currentSpeaker: HubAudioChannel? { inner.value.speaker }
+
+    /// This remote, as a speaker, sets its own system volume from its speaker volume.
+    var appliesVolumeOnDevice: Bool { version >= RemoteProtocol.phoneSystemVolumeVersion }
 
     func audioChannelKeys(salt: Data) -> AudioChannelKeys? { link.audioChannelKeys(salt: salt, asHub: true) }
 

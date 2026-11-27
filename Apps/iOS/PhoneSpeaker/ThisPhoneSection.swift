@@ -26,8 +26,9 @@ struct ThisPhoneSection: View {
                     onToggle: { on in
                         withAnimation(MC.Motion.state(reduceMotion)) { phone.setOn(on) }
                     },
-                    onVolume: { if let id = phone.speakerID { model.setVolume($0, for: id) } },
-                    onCommitVolume: { if let id = phone.speakerID { model.commitVolume(for: id) } },
+                    // This iPhone's own volume: set here at once, and the Mac is told.
+                    onVolume: phone.setVolume,
+                    onCommitVolume: phone.commitVolume,
                     onRetry: phone.resume,
                     onDetails: phone.speakerID.map { id in { showDetail(id) } }
                 ) {

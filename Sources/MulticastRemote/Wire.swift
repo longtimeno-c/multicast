@@ -37,7 +37,16 @@ public enum RemoteProtocol {
     /// audio channel in Audio/AudioWire.swift). Older versions are still spoken: the new messages
     /// are never sent on such a link, and the hub shows an older remote a phone speaker as a
     /// built-in one (`HubState.downgraded(forRemoteVersion:)`).
-    public static let currentVersion = 4
+    ///
+    /// 5: a phone that is a speaker applies its speaker volume (`SpeakerItem.volume` of its own
+    /// row) to its system volume, and reports its system volume with `setSpeakerVolume`. For
+    /// such a phone the hub sends the master volume alone in the audio channel's volume field.
+    /// No message changed, so version 4 is still spoken both ways: a version 4 phone gets its
+    /// whole volume in that field as before, and a phone on a version 4 hub leaves its system
+    /// volume alone.
+    public static let currentVersion = 5
+    /// The first version in which a phone speaker's volume is the phone's system volume.
+    public static let phoneSystemVolumeVersion = 5
     /// The first version in which a remote can offer itself as a speaker.
     public static let phoneSpeakerVersion = 4
     /// The first version with catalog search.

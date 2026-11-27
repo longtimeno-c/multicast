@@ -77,6 +77,58 @@ struct PhoneSpeakerHubTests {
         #expect(saved["phone:remote-a"] == nil)
     }
 
+    @Test func aPhoneThatSetsItsOwnVolumeIsHeldAtFullGainAndItsVolumeIsOnlyKept() async throws {
+        let rig = Rig()
+        await rig.start()
+        let sink = NullSink(Self.phone())
+        await rig.hub.addExternalSpeaker(Self.phone(), sink: sink, volumeOnDevice: true)
+        try await rig.waitFor { $0.speaker(Self.id)?.isEnabled == true }
+        await rig.hub.settle()
+        #expect(rig.session.inner.get().selectVolumes[Self.id.rawValue] == 1)
+
+        // From the Mac's slider or from the phone reporting its buttons: kept and published,
+        // never applied to the audio.
+        try await rig.hub.perform(.setSpeakerVolume(id: Self.id, volume: 0.2))
+        #expect(rig.state.speaker(Self.id)?.volume == 0.2)
+        #expect(rig.settings.load().speakers["phone:remote-a#Speaker"]?.volume == 0.2)
+        let gains = { rig.session.calls.filter { $0.hasPrefix("volume phone:remote-a ") } }
+        #expect(gains().allSatisfy { $0 == "volume phone:remote-a 1.0" })
+        // The master still reaches it like any speaker.
+        try await rig.hub.perform(.setMasterVolume(volume: 0.4))
+        #expect(rig.session.inner.get().master == 0.4)
+
+        // Another output: the value kept for it is shown until the phone says where it is,
+        // and the gain stays at full.
+        await rig.hub.addExternalSpeaker(Self.phone("Sample Speaker", kind: .bluetooth), sink: sink, volumeOnDevice: true)
+        try await rig.waitFor("route shown") { $0.speaker(Self.id)?.model == "Sample Speaker" }
+        #expect(rig.state.speaker(Self.id)?.volume == 0.5)
+        try await rig.hub.perform(.setSpeakerVolume(id: Self.id, volume: 0.7))
+        #expect(rig.state.speaker(Self.id)?.volume == 0.7)
+        #expect(gains().allSatisfy { $0 == "volume phone:remote-a 1.0" })
+        #expect(rig.settings.load().speakers["phone:remote-a#Speaker"]?.volume == 0.2)
+    }
+
+    @Test func aPhoneOnAnOlderBuildKeepsItsVolumeAsAGain() async throws {
+        let rig = Rig()
+        await rig.start()
+        let d = Self.phone()
+        await rig.hub.addExternalSpeaker(d, sink: NullSink(d))
+        try await rig.waitFor { $0.speaker(Self.id)?.isEnabled == true }
+        await rig.hub.settle()
+        #expect(rig.session.inner.get().selectVolumes[Self.id.rawValue] == 0.5)
+        try await rig.hub.perform(.setSpeakerVolume(id: Self.id, volume: 0.2))
+        #expect(rig.session.calls.contains("volume phone:remote-a 0.2"))
+
+        // The same phone after an update: it leaves and offers itself again.
+        await rig.hub.removeExternalSpeaker(id: Self.id.rawValue)
+        await rig.hub.settle()
+        await rig.hub.addExternalSpeaker(d, sink: NullSink(d), volumeOnDevice: true)
+        try await rig.waitFor("back on") { $0.speaker(Self.id)?.isEnabled == true }
+        await rig.hub.settle()
+        #expect(rig.session.inner.get().selectVolumes[Self.id.rawValue] == 1)
+        #expect(rig.state.speaker(Self.id)?.volume == 0.2)
+    }
+
     @Test func aPhoneThatLeavesIsDroppedAndPlaybackStopsWithTheLastSpeaker() async throws {
         let rig = Rig()
         await rig.start()

@@ -110,7 +110,8 @@ enum RemoteScene: String, CaseIterable {
     @MainActor func makeSession() -> RemoteSession {
         if self == .live {
             return RemoteSession(connector: NetworkHubConnector(remoteName: NetworkHubConnector.deviceName()),
-                                 phoneSpeaker: PhoneSpeakerModel(routes: AudioSessionRouteMonitor(), output: PhoneRouteOutput()))
+                                 phoneSpeaker: PhoneSpeakerModel(routes: AudioSessionRouteMonitor(), output: PhoneRouteOutput(),
+                                                                 systemVolume: SystemVolumeController()))
         }
         let backend: MockHubBackend
         if let hubScene {

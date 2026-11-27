@@ -8,6 +8,7 @@ import MulticastAudio
 import MulticastEngine
 import MulticastHubModel
 import MulticastKit
+import MulticastLocalOutput
 import MulticastRAOP
 import MulticastSources
 import os
@@ -19,10 +20,13 @@ import UniformTypeIdentifiers
 
 public extension LocalHub {
     /// A hub over a real `MulticastSession` (Bonjour discovery, Core Audio outputs, process taps,
-    /// Apple Events to Spotify). Call `start()` to begin discovery.
+    /// Apple Events to Spotify). Call `start()` to begin discovery. `deviceVolumes`: pass
+    /// `NoDeviceVolumes()` to keep every speaker's volume inside Multicast, so that nothing
+    /// this hub does moves the Mac's own output volume (the live test does).
     static func live(settings: HubSettingsStore = UserDefaultsSettingsStore(),
                      sessionConfiguration: MulticastSession.Configuration = LocalHub.defaultSessionConfiguration(),
-                     configuration: Configuration = Configuration()) -> LocalHub {
+                     configuration: Configuration = Configuration(),
+                     deviceVolumes: SpeakerDeviceVolumeProviding = MacOutputVolumes()) -> LocalHub {
         let session = MulticastSession(configuration: sessionConfiguration)
         let deps = HubDependencies(
             session: KitSession(session),
@@ -32,6 +36,7 @@ public extension LocalHub {
             spotify: SpotifyAppleEvents(),
             system: LiveSystemServices(),
             settings: settings,
+            deviceVolumes: deviceVolumes,
             microphone: MacMicrophone()
         )
         return LocalHub(dependencies: deps, configuration: configuration)
@@ -136,6 +141,28 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
         await raop.setProgress(elapsedSeconds: elapsed, durationSeconds: duration)
         return true
     }
+}
+
+// MARK: - Device volumes
+
+/// This Mac's outputs: a local speaker's slider is the output device's own volume, where the
+/// device has one that can be set. Network speakers have none here.
+public final class MacOutputVolumes: SpeakerDeviceVolumeProviding, @unchecked Sendable {
+    private let volumes = OutputDeviceVolumes()
+
+    public init() {}
+
+    public func deviceVolume(of speaker: SpeakerDescriptor) -> Double? {
+        guard speaker.transport == .local, let uid = speaker.localDeviceUID else { return nil }
+        return volumes.volume(forDeviceUID: uid).map(Double.init)
+    }
+
+    public func setDeviceVolume(_ volume: Double, of speaker: SpeakerDescriptor) {
+        guard speaker.transport == .local, let uid = speaker.localDeviceUID else { return }
+        volumes.setVolume(Float(volume), forDeviceUID: uid)
+    }
+
+    public func deviceVolumeChanges() -> AsyncStream<Void> { volumes.changes }
 }
 
 // MARK: - Sources

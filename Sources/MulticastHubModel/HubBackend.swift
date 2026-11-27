@@ -32,6 +32,8 @@ import Foundation
 //    you applied in the next state; UIs hold their own value until the echo matches (or 500 ms
 //    pass), so a slider never snaps back under the pointer.
 //  - Volume and trim are legal while a speaker is off: they are its preset, applied on connect.
+//    Where a speaker's volume is its device's own (an output of the Mac), setting it sets the
+//    device, and the state also carries changes made elsewhere (the Mac's volume keys).
 //  - Volumes are 0…1. A speaker plays at its own volume × the master.
 //
 // Implement `perform(_:)` once; the named command methods (`play()`, `setSpeaker(_:volume:)`, …)

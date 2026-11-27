@@ -13,6 +13,9 @@ protocol PhoneSpeakerBackend: AnyObject, Sendable {
     func phoneSpeakerPhases() -> AsyncStream<PhoneSpeakerPhase>
     var phoneSpeakerStats: PhoneSpeakerStats? { get }
     func phoneSpeakerOutputStopped()
+    /// The Mac leaves this speaker's volume to the device (false for an older Mac, which
+    /// applies it to the audio itself).
+    var phoneSpeakerVolumeIsSystemVolume: Bool { get }
 }
 
 extension RemoteHubBackend: PhoneSpeakerBackend {}
@@ -20,8 +23,15 @@ extension RemoteHubBackend: PhoneSpeakerBackend {}
 /// "Play on this iPhone": the one switch, what it would play through, and how it is going.
 ///
 /// Turning it on offers this device to the Mac as a speaker; the Mac lists it, turns it on and
-/// sends it the stream. Its volume and sync trim are the hub's, like any speaker's, kept per
-/// output. It is off at every launch: an app that starts playing by itself is a surprise.
+/// sends it the stream. Its sync trim is the hub's, like any speaker's, kept per output. It is
+/// off at every launch: an app that starts playing by itself is a surprise.
+///
+/// Its volume is this iPhone's own volume. The row's slider sets the system volume at once and
+/// tells the Mac; the side buttons and Control Centre move the slider and tell the Mac; and a
+/// change made on the Mac (its slider for this row) is written to the system volume here.
+/// `DeviceVolumeReconciler` decides which way a difference goes, so the two never fight. When
+/// the speaker is turned on, and when the output changes (iOS keeps a volume per output), the
+/// phone's volume is the one kept. With an older Mac the volume stays the hub's, as it was.
 @Observable
 @MainActor
 final class PhoneSpeakerModel {
@@ -38,9 +48,24 @@ final class PhoneSpeakerModel {
     private(set) var outputDiagnostics: PhoneOutputDiagnostics?
     /// False on a hub link that can't carry audio (the mock connector without a backend).
     private(set) var isAvailable = false
+    /// This device's system volume, as iOS last reported it.
+    private(set) var deviceVolume: Double
+    /// Where the row's slider is while it is being dragged.
+    private var dragVolume: Double?
+
+    /// The hub's speakers as the hub last published them: what this device's volume is
+    /// compared with. Not the app model's speakers, which show a volume sent from here before
+    /// the hub has taken it; the reconciler must only see what the hub itself says.
+    @ObservationIgnored var hubSpeakers: (() -> [SpeakerItem])?
+    /// Sends a speaker volume to the hub the way a slider does (shown at once, sent at a
+    /// measured pace), and ends that the way a slider's release does.
+    @ObservationIgnored var sendVolume: ((SpeakerID, Double) -> Void)?
+    @ObservationIgnored var commitSentVolume: ((SpeakerID) -> Void)?
 
     @ObservationIgnored private let routes: any PhoneRouteMonitoring
     @ObservationIgnored private let output: any PhoneSpeakerOutput
+    @ObservationIgnored private let systemVolume: any PhoneSystemVolume
+    @ObservationIgnored private var reconciler = DeviceVolumeReconciler()
     @ObservationIgnored private var backend: (any PhoneSpeakerBackend)?
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var phaseTask: Task<Void, Never>?
@@ -49,10 +74,14 @@ final class PhoneSpeakerModel {
 
     static let placeholderID: SpeakerID = "phone:this-device"
 
-    init(routes: any PhoneRouteMonitoring, output: any PhoneSpeakerOutput) {
+    init(routes: any PhoneRouteMonitoring, output: any PhoneSpeakerOutput, systemVolume: (any PhoneSystemVolume)? = nil) {
+        let systemVolume = systemVolume ?? FixedSystemVolume()
         self.routes = routes
         self.output = output
+        self.systemVolume = systemVolume
+        deviceVolume = systemVolume.volume
         route = routes.current
+        systemVolume.onChange = { [weak self] volume in self?.systemVolumeChanged(volume) }
         output.onInterruption = { [weak self] interrupted in
             Task { @MainActor in self?.isInterrupted = interrupted }
         }
@@ -71,6 +100,11 @@ final class PhoneSpeakerModel {
                 if fresh != self.stats { self.stats = fresh }
                 let measured = self.isOn ? self.output.diagnostics : nil
                 if measured != self.outputDiagnostics { self.outputDiagnostics = measured }
+                // A change iOS didn't announce, and anything the settle window put off.
+                if self.isOn {
+                    self.systemVolume.refresh()
+                    self.syncVolume()
+                }
             }
         })
     }
@@ -83,10 +117,16 @@ final class PhoneSpeakerModel {
         isAvailable = backend != nil
         isOn = false
         phase = .off
+        dragVolume = nil
+        reconciler.deviceLeadsNow()
+        systemVolume.setInUse(false)
         guard let backend else { return }
         let phases = backend.phoneSpeakerPhases()
         phaseTask = Task { [weak self] in
-            for await phase in phases { self?.phase = phase }
+            for await phase in phases {
+                self?.phase = phase
+                self?.syncVolume()
+            }
         }
     }
 
@@ -96,7 +136,11 @@ final class PhoneSpeakerModel {
         notice = nil
         seenOnAtHub = false
         isOn = on
+        dragVolume = nil
+        reconciler.deviceLeadsNow()
+        systemVolume.setInUse(on)
         if on {
+            systemVolume.refresh()
             route = routes.current
             output.resume()
             backend?.startPhoneSpeaker(route: route, output: output)
@@ -117,6 +161,9 @@ final class PhoneSpeakerModel {
         let old = route
         guard new != old else { return }
         route = new
+        // iOS keeps a volume per output: the new output's is the one to keep.
+        reconciler.deviceLeadsNow()
+        systemVolume.refresh()
         guard isOn else { return }
         if lostOutput {
             // What was playing went away. Like any player, stop rather than carry on from the
@@ -137,6 +184,77 @@ final class PhoneSpeakerModel {
         } else if seenOnAtHub {
             setOn(false)
         }
+        syncVolume()
+    }
+
+    /// The hub published a state (called for every one, with or without a view on screen).
+    func hubPublished() {
+        guard isOn else { return }
+        syncVolume()
+    }
+
+    // MARK: Volume
+
+    /// The Mac leaves this speaker's volume to this device, and the speaker is on.
+    private var usesSystemVolume: Bool {
+        isOn && speakerID != nil && backend?.phoneSpeakerVolumeIsSystemVolume == true
+    }
+
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    /// The row's slider moved.
+    func setVolume(_ volume: Double) {
+        guard let id = speakerID else { return }
+        let v = min(1, max(0, volume))
+        guard usesSystemVolume else {
+            sendVolume?(id, v)
+            return
+        }
+        dragVolume = v
+        systemVolume.set(v)
+        perform(reconciler.userSet(v, now: now))
+    }
+
+    /// The row's slider was let go.
+    func commitVolume() {
+        dragVolume = nil
+        if let id = speakerID { commitSentVolume?(id) }
+    }
+
+    /// The side buttons, Control Centre, or iOS following a write made here.
+    private func systemVolumeChanged(_ volume: Double) {
+        deviceVolume = volume
+        guard usesSystemVolume else { return }
+        // The output changed and iOS moved to its volume before saying so.
+        if routes.current != route { reconciler.deviceLeadsNow() }
+        perform(reconciler.deviceChanged(to: volume, now: now))
+        syncVolume()
+    }
+
+    /// Compares the hub's volume for this device's row with the system volume and does what the
+    /// reconciler says. Until the hub lists this device with the output it is playing through
+    /// now, there is nothing to compare with and the device's volume is the one to keep.
+    private func syncVolume() {
+        guard usesSystemVolume, let id = speakerID,
+              let mine = (hubSpeakers?() ?? []).first(where: { $0.id == id }),
+              mine.model == route.nameAtHub else {
+            reconciler.deviceLeadsNow()
+            return
+        }
+        perform(reconciler.hubReports(mine.volume, device: systemVolume.volume, now: now))
+    }
+
+    private func perform(_ action: DeviceVolumeReconciler.Action) {
+        guard let id = speakerID else { return }
+        switch action {
+        case .none:
+            break
+        case .setDevice(let volume):
+            systemVolume.set(volume)
+        case .tellHub(let volume):
+            sendVolume?(id, volume)
+            if dragVolume == nil { commitSentVolume?(id) }
+        }
     }
 
     // MARK: What to show
@@ -154,6 +272,8 @@ final class PhoneSpeakerModel {
             ?? SpeakerItem(id: Self.placeholderID, name: "", transport: .phone, glyph: .phone, isEnabled: isOn, volume: 0.5,
                            state: placeholderState)
         item.name = Self.outputName(route)
+        // The slider is this iPhone's volume: shown as it is here, not as the hub last heard it.
+        if usesSystemVolume { item.volume = dragVolume ?? deviceVolume }
         item.model = nil
         item.notSeenSince = nil
         switch route.kind {
@@ -250,6 +370,8 @@ final class MockPhoneSpeakerBackend: PhoneSpeakerBackend, @unchecked Sendable {
     }
 
     func phoneSpeakerPhases() -> AsyncStream<PhoneSpeakerPhase> { stream }
+
+    let phoneSpeakerVolumeIsSystemVolume = false
 
     var phoneSpeakerStats: PhoneSpeakerStats? {
         var s = PhoneSpeakerStats()
