@@ -168,6 +168,7 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
             }
             return (s.runTask, s.session, s.intentWaiter, s.inputWaiter?.continuation)
         }
+        await calibrationMicrophone.value?.stop()
         task?.cancel()
         intent?.resume(returning: false)
         input?.resume(returning: .cancelled)
@@ -359,6 +360,9 @@ public final class RemoteHubBackend: HubBackend, @unchecked Sendable {
             } catch {
                 reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
+            // The link is gone: the Mac can no longer tell this device's microphone to stop, so
+            // stop it here. A tuning that was listening with it has ended with the link.
+            await calibrationMicrophone.value?.stop()
             if Task.isCancelled { return }
             failures += 1
             let delay: TimeInterval
