@@ -42,6 +42,12 @@ struct RemoteMainView: View {
                 .environment(model)
                 .environment(session)
         }
+        .sheet(isPresented: $nav.showsTuning) {
+            TuneSpeakersScreen()
+                .environment(model)
+                .environment(session)
+                .environment(\.mcTuningFrozenTime, nav.tuningFrozenTime)
+        }
         .sheet(item: $nav.speakerDetail) { target in
             SpeakerDetailSheet(speakerID: target.id)
                 .environment(model)

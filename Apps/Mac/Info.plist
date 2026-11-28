@@ -5,7 +5,7 @@
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Multicast captures the sound of the app you choose, such as Spotify, so it can play it on your speakers.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Multicast reads the sound the Mac plays to the Multicast output device so it can play it on your speakers. It never listens to a microphone.</string>
+	<string>Multicast reads the sound the Mac plays to the Multicast output device so it can play it on your speakers. It listens to the microphone only while you calibrate speaker sync, to hear a short test sound; nothing is recorded or kept.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Multicast asks Spotify and Music what they are playing and sends them play, pause and skip.</string>
 	<key>NSLocalNetworkUsageDescription</key>

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MulticastAudio
 import MulticastHubModel
 import Network
 
@@ -164,6 +165,11 @@ final class RemoteSession: @unchecked Sendable {
         var state: @Sendable (HubState) -> Void
         var levels: @Sendable (StereoLevels) -> Void
         var clockSample: @Sendable (_ sent: Date, _ received: Date, _ hubTime: Date) -> Void
+        /// The hub asks this device's microphone something (a calibration it is the microphone
+        /// of); `received` is this device's clock when the question arrived.
+        var microphone: @Sendable (_ request: MicrophoneRequest, _ received: UInt64) async -> MicrophoneAnswer = { request, received in
+            await MicrophoneResponder(microphone: nil).answer(request, received: received)
+        }
     }
 
     private struct PendingRequest {
@@ -248,6 +254,12 @@ final class RemoteSession: @unchecked Sendable {
                         throw RemoteLinkError.closed(why)
                     case .speakerAccepted(let id, let port, let salt, let speakerID):
                         resolve(id, .speaker(port: port, salt: salt, speakerID: speakerID))
+                    case .microphoneRequest(let id, let request):
+                        let received = HostClock.nowNanos()
+                        Task {
+                            let answer = await self.callbacks.microphone(request, received)
+                            try? await self.send(.microphoneAnswer(id: id, answer: answer))
+                        }
                     }
                 }
             }

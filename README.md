@@ -18,6 +18,10 @@ Multicast Remote, plays the part of the old iTunes Remote.
   volume, and nudge any speaker earlier or later with a per-speaker sync trim. The slider of one of this Mac's own
   outputs is that output's own volume, the one the volume keys and the menu bar move (where the output has a volume
   that can be set; an HDMI display or a DAC without one is turned down inside Multicast instead).
+- **Speaker sync tuning.** Stand next to a speaker with your iPhone (or use the Mac's microphone for speakers near
+  it): the speaker plays a short test sound, the microphone hears when it really arrives, and its trim is set. One
+  speaker at a time, in any order, saved on the Mac per speaker. See
+  [docs/sync-calibration.md](docs/sync-calibration.md).
 - **Apple Music library.** Playlists and playlist folders, pinned playlists, search, and an Up Next queue owned by
   the hub, with Play Next, Add to Queue and Shuffle.
 - **Other sources.** Capture the sound of any other app on the Mac, or play DRM-free audio files.
@@ -429,7 +433,11 @@ Multicast is a work in progress. There are development builds only: no signed, n
   is playing only while This iPhone is on (a remote that plays nothing gets no Lock Screen controls from iOS).
 - **Sync is verified by protocol and state, not by ear.** Speakers report playing, RTP counters and timing
   replies are healthy, but nobody has listened to confirm the rooms line up.
-- **AirPlay 1 bridges (AirConnect and similar) need a sync trim, set by hand,** and sync across bridges has not
+- **Speaker sync tuning is verified on the Mac's own speakers and microphone only** (a trim of +40 ms measured
+  as +40.00 ms). The iPhone as the microphone is tested over a loopback link with a made-up microphone, not on a
+  real phone; Bluetooth, AirPlay and phone speakers have not been tuned for real
+  ([docs/sync-calibration.md](docs/sync-calibration.md)).
+- **AirPlay 1 bridges (AirConnect and similar) need a sync trim** (set by hand, or by tuning its sync), and sync across bridges has not
   been checked by ear. The bridge itself plays to our timing: it reports its buffer in `Audio-Latency` from
   RECORD (22050 frames, 0.5 s, for AirConnect 1.12.4), and that is the receiver's minimum buffer, already covered
   by the 2 s group latency. The extra delay comes from the device behind the bridge (a Sonos or UPnP renderer

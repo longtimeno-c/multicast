@@ -14,15 +14,19 @@ public struct HubSettings: Codable, Equatable, Sendable {
         /// preset saved before that existed, whose `volume` was a gain on top of the device's
         /// volume and is folded into the device once (see `LocalHub`, "Device-volume speakers").
         public var volumeHandedToDevice: Bool
+        /// The last sync calibration of this speaker; nil = never measured.
+        public var calibration: Calibration?
 
-        public init(volume: Double, syncTrimMs: Int = 0, isEnabled: Bool = false, volumeHandedToDevice: Bool = false) {
+        public init(volume: Double, syncTrimMs: Int = 0, isEnabled: Bool = false, volumeHandedToDevice: Bool = false,
+                    calibration: Calibration? = nil) {
+            self.calibration = calibration
             self.volume = volume
             self.syncTrimMs = syncTrimMs
             self.isEnabled = isEnabled
             self.volumeHandedToDevice = volumeHandedToDevice
         }
 
-        private enum CodingKeys: String, CodingKey { case volume, syncTrimMs, isEnabled, volumeHandedToDevice }
+        private enum CodingKeys: String, CodingKey { case volume, syncTrimMs, isEnabled, volumeHandedToDevice, calibration }
 
         /// Presets saved before a field existed still load (the field takes its default).
         public init(from decoder: Decoder) throws {
@@ -31,6 +35,28 @@ public struct HubSettings: Codable, Equatable, Sendable {
             syncTrimMs = try c.decode(Int.self, forKey: .syncTrimMs)
             isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
             volumeHandedToDevice = try c.decodeIfPresent(Bool.self, forKey: .volumeHandedToDevice) ?? false
+            calibration = try c.decodeIfPresent(Calibration.self, forKey: .calibration)
+        }
+    }
+
+    /// What a sync calibration measured for one speaker. Kept so that speakers tuned at
+    /// different times still line up: trims are worked out from every measurement made with
+    /// the same microphone, not only the latest.
+    public struct Calibration: Codable, Equatable, Sendable {
+        /// How late the speaker was heard with no trim at all, in milliseconds, through
+        /// `microphone` (so it compares only with measurements made through the same one).
+        public var latenessMs: Double
+        /// Which microphone: "hub", or "phone:" + the remote's id.
+        public var microphone: String
+        public var measuredAt: Date
+        /// One of the hub's own built-in speakers: the preferred reference.
+        public var isHubBuiltIn: Bool
+
+        public init(latenessMs: Double, microphone: String, measuredAt: Date, isHubBuiltIn: Bool = false) {
+            self.latenessMs = latenessMs
+            self.microphone = microphone
+            self.measuredAt = measuredAt
+            self.isHubBuiltIn = isHubBuiltIn
         }
     }
 

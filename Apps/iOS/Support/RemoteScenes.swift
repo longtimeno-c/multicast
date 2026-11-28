@@ -80,6 +80,43 @@ enum RemoteScene: String, CaseIterable {
     case phoneOnlyEmpty = "phone-only-empty"
     /// iPhone Only: playing, and a speaker that admits only its owner set apart.
     case phoneOnlyRestricted = "phone-only-restricted"
+    /// Tune Speaker Sync: the list, some speakers tuned. Tapping one and Start plays a tuning
+    /// out on the mock hub, so the whole flow can be watched.
+    case tune
+    /// One speaker's screen before starting: where to stand.
+    case tuneReady = "tune-ready"
+    /// Asked for; the speaker is connecting.
+    case tuneStarting = "tune-starting"
+    /// Listening: two sweeps heard, the third in the air (held at that moment).
+    case tuneListening = "tune-listening"
+    /// Heard 172 ms late and trimmed.
+    case tuneInSync = "tune-in-sync"
+    /// The first speaker tuned: the one the others will line up to.
+    case tuneReference = "tune-reference"
+    /// Not heard.
+    case tuneNotHeard = "tune-not-heard"
+    /// Heard, but the sweeps disagree.
+    case tuneNoisy = "tune-noisy"
+    /// The microphone was refused.
+    case tuneRefused = "tune-refused"
+
+    /// The tuning a scene opens on.
+    private var tuningMoment: MockTuning.Moment? {
+        switch self {
+        case .tuneStarting: .starting
+        case .tuneListening: .listening
+        case .tuneInSync: .inSync
+        case .tuneReference: .reference
+        case .tuneNotHeard: .notHeard
+        case .tuneNoisy: .tooNoisy
+        case .tuneRefused: .refused
+        default: nil
+        }
+    }
+
+    private var isTuning: Bool {
+        self == .tune || self == .tuneReady || tuningMoment != nil
+    }
 
     static var current: RemoteScene {
         UserDefaults.standard.string(forKey: "MCScene").flatMap(RemoteScene.init(rawValue:)) ?? .live
@@ -101,6 +138,7 @@ enum RemoteScene: String, CaseIterable {
              .phoneOnlySearching, .phoneOnlyEmpty, .phoneOnlyRestricted: nil
         case .phoneSpeaker, .phoneSpeakerOff, .phoneSpeakerDetail: .appleMusic
         case .lost, .speakers, .speakerRestricted, .nowPlaying, .playlists, .playlist, .folder, .search, .upNext, .files: .appleMusic
+        case .tune, .tuneReady, .tuneStarting, .tuneListening, .tuneInSync, .tuneReference, .tuneNotHeard, .tuneNoisy, .tuneRefused: .appleMusic
         case .speakerDetail, .spotify: .spotify
         case .otherApp: .appPicker
         case .firstRun: .firstRun
@@ -111,11 +149,33 @@ enum RemoteScene: String, CaseIterable {
         if self == .live {
             return RemoteSession(connector: NetworkHubConnector(remoteName: NetworkHubConnector.deviceName()),
                                  phoneSpeaker: PhoneSpeakerModel(routes: AudioSessionRouteMonitor(), output: PhoneRouteOutput(),
-                                                                 systemVolume: SystemVolumeController()))
+                                                                 systemVolume: SystemVolumeController()),
+                                 tuning: .live())
         }
         let backend: MockHubBackend
         if let hubScene {
-            backend = MockHubBackend(state: hubScene.state, content: hubScene.content, artwork: MockData.artwork)
+            var state = hubScene.state
+            if isTuning {
+                // Some speakers were tuned on other days; the Bluetooth speaker is the one in hand.
+                for i in state.speakers.indices where !state.speakers[i].isRestricted && state.speakers[i].id != MockData.jbl {
+                    guard tuningMoment != .reference, i % 3 != 2 else { continue }
+                    state.speakers[i].tunedAt = Date().addingTimeInterval(-86_400 * Double(i % 2))
+                    state.speakers[i].syncTrimMs = -14 * i
+                }
+                if let j = state.speakers.firstIndex(where: { $0.id == MockData.jbl }) {
+                    state.speakers[j].syncTrimMs = 0
+                    if let tuningMoment {
+                        state.calibration = MockTuning.status(tuningMoment, speaker: MockData.jbl)
+                        if tuningMoment == .inSync {
+                            state.speakers[j].syncTrimMs = -172
+                            state.speakers[j].tunedAt = Date()
+                        } else if tuningMoment == .reference {
+                            state.speakers[j].tunedAt = Date()
+                        }
+                    }
+                }
+            }
+            backend = MockHubBackend(state: state, content: hubScene.content, artwork: MockData.artwork)
             if hubScene.state.transport.isPlaying {
                 // Starts the mock's clock and level meter for a scene that opens mid-song.
                 Task { try? await backend.perform(.play) }
@@ -189,6 +249,13 @@ enum RemoteScene: String, CaseIterable {
         case .phoneOnly, .phoneOnlyPlaying, .phoneOnlySilent, .phoneOnlyUnreachable, .phoneOnlyStopped,
              .phoneOnlySearching, .phoneOnlyEmpty, .phoneOnlyRestricted:
             nav.showsPhoneOnly = true
+        case .tune:
+            nav.showsTuning = true
+        case .tuneReady, .tuneStarting, .tuneListening, .tuneInSync, .tuneReference, .tuneNotHeard, .tuneNoisy, .tuneRefused:
+            nav.showsTuning = true
+            nav.tuningPath = [MockData.jbl]
+            // Held at the moment the scene describes, so a screenshot shows it.
+            if tuningMoment != nil { nav.tuningFrozenTime = 2.45 }
         default:
             break
         }
@@ -200,7 +267,9 @@ enum RemoteScene: String, CaseIterable {
         let phone = PhoneSpeakerModel(routes: FixedRouteMonitor(route), output: SilentPhoneOutput())
         phone.attach(MockPhoneSpeakerBackend(hub: backend))
         if self == .phoneSpeaker || self == .phoneSpeakerDetail { phone.setOn(true) }
-        return RemoteSession(connector: connector, navigation: nav, phoneSpeaker: phone, searchTimeout: timeout)
+        let tuning = TuningModel(microphone: nil, waveform: MockMicrophone.waveform)
+        tuning.attach(MockTuningBackend(hub: backend))
+        return RemoteSession(connector: connector, navigation: nav, phoneSpeaker: phone, tuning: tuning, searchTimeout: timeout)
     }
 
     /// What iPhone Only mode runs on: Bonjour and the App Group in the real app, made-up

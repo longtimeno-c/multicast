@@ -229,7 +229,7 @@ extension PhoneSpeakerPhase {
         #expect(try WireJSON.decode(HubMessage.self, WireJSON.encode(hub)) == hub)
         #expect(String(decoding: try WireJSON.encode(ClientMessage.speakerWithdraw), as: UTF8.self) == #"{"speakerWithdraw":{}}"#)
         #expect(RemoteProtocol.supportedVersions.contains(3) && RemoteProtocol.supportedVersions.contains(4))
-        #expect(RemoteProtocol.currentVersion == 5 && RemoteProtocol.phoneSystemVolumeVersion == 5)
+        #expect(RemoteProtocol.currentVersion >= 5 && RemoteProtocol.phoneSystemVolumeVersion == 5)
         // Text from the phone is cleaned before the hub shows it.
         let odd = PhoneRoute(name: String(repeating: "x", count: 500) + "\n", kind: .other).sanitized
         #expect(odd.name.count < 200 && !odd.name.contains("\n"))

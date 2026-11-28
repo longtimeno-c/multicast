@@ -36,7 +36,8 @@ public extension LocalHub {
             spotify: SpotifyAppleEvents(),
             system: LiveSystemServices(),
             settings: settings,
-            deviceVolumes: deviceVolumes
+            deviceVolumes: deviceVolumes,
+            microphone: MacMicrophone()
         )
         return LocalHub(dependencies: deps, configuration: configuration)
     }
@@ -118,6 +119,7 @@ public final class KitSession: HubSessionControlling, @unchecked Sendable {
     }
     public func removeExternalSpeaker(id: String) async { await session.removeExternalSpeaker(id: id) }
 
+    public func setMuted(_ muted: Bool, forSpeaker id: String) { session.setMuted(muted, forSpeaker: id) }
     public func setSource(_ source: AudioSource) async throws { try await session.setSource(.custom(source)) }
     public func play() async throws { try await session.play() }
     public func pause() async { await session.pause() }

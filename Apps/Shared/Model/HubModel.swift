@@ -23,6 +23,8 @@ final class HubModel {
     private(set) var speakers: [SpeakerItem] = []
     private(set) var masterVolume: Double = 0.6
     private(set) var isDiscovering = false
+    /// A sync calibration that is running, or the last one's results until dismissed.
+    private(set) var calibration: SyncCalibrationStatus?
     private(set) var activeSource: SourceKind?
     private(set) var nowPlaying: NowPlayingInfo?
     private(set) var transport = TransportState()
@@ -263,6 +265,7 @@ final class HubModel {
         }
         if masterVolume != master { masterVolume = master }
         if isDiscovering != s.isDiscovering { withAnimation(structural) { isDiscovering = s.isDiscovering } }
+        if calibration != s.calibration { withAnimation(structural) { calibration = s.calibration } }
     }
 
     /// Applies the last published speakers again just after the echo window, so that a state
@@ -589,6 +592,21 @@ final class HubModel {
     func refreshSpeakers() {
         isDiscovering = true
         send(.refreshSpeakers)
+    }
+
+    /// Tune every speaker that is on, in turn, with the hub's microphone.
+    func calibrateSync() {
+        send(.calibrateSync)
+    }
+
+    /// Tune one speaker's sync with the hub's microphone.
+    func tuneSpeaker(_ id: SpeakerID) {
+        send(.calibrateSpeakerSync(id: id))
+    }
+
+    /// Stops a running calibration, or dismisses a finished one's results.
+    func endCalibration() {
+        send(.cancelSyncCalibration)
     }
 
     func retry(_ id: SpeakerID) {

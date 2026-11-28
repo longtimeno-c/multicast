@@ -125,13 +125,19 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     ///
     /// Wire: the key `isCheckingAccess` is present only when true; absent reads as false.
     public var isCheckingAccess: Bool
+    /// When this speaker's sync was last measured by a calibration (the hub keeps the
+    /// measurement with the speaker's other settings). nil: never, its trim is 0 or set by hand.
+    ///
+    /// Wire: the key `tunedAt` is present only when set.
+    public var tunedAt: Date?
 
     public static let syncTrimRange: ClosedRange<Int> = -500...500
 
     public init(id: SpeakerID, name: String, transport: SpeakerTransport, glyph: SpeakerGlyph,
                 model: String? = nil, address: String? = nil, isEnabled: Bool = false,
                 volume: Double, state: SpeakerState = .off, syncTrimMs: Int = 0, notSeenSince: Date? = nil,
-                isRestricted: Bool = false, isCheckingAccess: Bool = false) {
+                isRestricted: Bool = false, isCheckingAccess: Bool = false, tunedAt: Date? = nil) {
+        self.tunedAt = tunedAt
         self.id = id
         self.name = name
         self.transport = transport
@@ -148,7 +154,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, transport, glyph, model, address, isEnabled, volume, state, syncTrimMs, notSeenSince, isRestricted, isCheckingAccess
+        case id, name, transport, glyph, model, address, isEnabled, volume, state, syncTrimMs, notSeenSince, isRestricted, isCheckingAccess, tunedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -166,6 +172,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         notSeenSince = try c.decodeIfPresent(Date.self, forKey: .notSeenSince)
         isRestricted = try c.decodeIfPresent(Bool.self, forKey: .isRestricted) ?? false
         isCheckingAccess = try c.decodeIfPresent(Bool.self, forKey: .isCheckingAccess) ?? false
+        tunedAt = try c.decodeIfPresent(Date.self, forKey: .tunedAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -183,6 +190,7 @@ public struct SpeakerItem: Identifiable, Equatable, Hashable, Sendable, Codable 
         try c.encodeIfPresent(notSeenSince, forKey: .notSeenSince)
         if isRestricted { try c.encode(true, forKey: .isRestricted) }
         if isCheckingAccess { try c.encode(true, forKey: .isCheckingAccess) }
+        try c.encodeIfPresent(tunedAt, forKey: .tunedAt)
     }
 
     /// What the speaker actually plays at: its own level scaled by the master.

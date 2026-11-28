@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MulticastAudio
+import MulticastCalibration
 import MulticastHubModel
 import Network
 
@@ -166,10 +167,13 @@ public final class HubServer: @unchecked Sendable {
     private let speakerMutex = AsyncMutex()
     /// nil: this hub takes no phone speakers (offers are refused).
     private let speakerHost: RemoteSpeakerHost?
+    /// nil: this hub doesn't tune speakers with a phone's microphone (asking is refused).
+    let microphoneHost: RemoteMicrophoneHost?
 
     public init(backend: any HubBackend, configuration: Configuration, keyStore: any PairingKeyStore,
-                speakerHost: RemoteSpeakerHost? = nil) {
+                speakerHost: RemoteSpeakerHost? = nil, microphoneHost: RemoteMicrophoneHost? = nil) {
         self.speakerHost = speakerHost
+        self.microphoneHost = microphoneHost
         self.backend = backend
         self.configuration = configuration
         self.keyStore = keyStore
@@ -640,6 +644,9 @@ final class HubSession: @unchecked Sendable {
         var activeQueries = 0
         var levelFramesSent = 0
         var pingCounter: UInt64 = 0
+        /// Questions to this remote's microphone that are waiting for their answer.
+        var microphoneQuestions: [UInt64: CheckedContinuation<MicrophoneAnswer?, Never>] = [:]
+        var microphoneCounter: UInt64 = 0
     }
 
     private let inner = Locked(Inner())
@@ -695,6 +702,62 @@ final class HubSession: @unchecked Sendable {
         }
     }
 
+    // MARK: This remote as the microphone of a calibration
+
+    private func tuneRequested(_ id: UInt64, _ speakerID: SpeakerID) async {
+        var outcome: HubCommandError?
+        do {
+            guard version >= RemoteProtocol.calibrationVersion, let host = speakers?.microphoneHost else {
+                throw HubCommandError(.unsupported, "This Mac can\u{2019}t tune speakers with an iPhone.")
+            }
+            guard !speakerID.rawValue.isEmpty, speakerID.rawValue.utf8.count <= RemoteInputPolicy.maxIDLength else {
+                throw HubCommandError(.notFound, "That item isn't on the Mac.")
+            }
+            let microphone = RemoteMicrophone(ask: { [weak self] request, timeout in
+                await self?.askMicrophone(request, timeout: timeout)
+            })
+            try await host.tune(speakerID.rawValue, microphone, "phone:\(info.remoteID)", String(info.remoteName.prefix(RemoteInputPolicy.maxTextLength)))
+        } catch let e as HubCommandError {
+            outcome = e
+        } catch {
+            outcome = HubCommandError(.failed, error.localizedDescription)
+        }
+        try? await send(.commandResult(id: id, error: outcome))
+    }
+
+    /// Asks the remote's microphone something and waits for its answer; nil when none comes in
+    /// `timeout` seconds or the session ends.
+    func askMicrophone(_ request: MicrophoneRequest, timeout: TimeInterval) async -> MicrophoneAnswer? {
+        let id: UInt64? = inner.withLock { s in
+            guard s.closeReason == nil else { return nil }
+            s.microphoneCounter += 1
+            return s.microphoneCounter
+        }
+        guard let id else { return nil }
+        return await withCheckedContinuation { (c: CheckedContinuation<MicrophoneAnswer?, Never>) in
+            let live = inner.withLock { s -> Bool in
+                guard s.closeReason == nil else { return false }
+                s.microphoneQuestions[id] = c
+                return true
+            }
+            guard live else {
+                c.resume(returning: nil)
+                return
+            }
+            Task { [weak self] in
+                do { try await self?.send(.microphoneRequest(id: id, request: request)) } catch { self?.microphoneAnswered(id, nil) }
+            }
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1e9))
+                self?.microphoneAnswered(id, nil)
+            }
+        }
+    }
+
+    private func microphoneAnswered(_ id: UInt64, _ answer: MicrophoneAnswer?) {
+        inner.withLock { $0.microphoneQuestions.removeValue(forKey: id) }?.resume(returning: answer)
+    }
+
     private func spawn(_ body: @escaping @Sendable () async -> Void) {
         let id = UUID()
         inner.withLock { s in
@@ -742,6 +805,10 @@ final class HubSession: @unchecked Sendable {
                     spawn { [self] in await speakers?.updateSpeakerRoute(from: self, route: route) }
                 case .speakerWithdraw:
                     spawn { [self] in await speakers?.withdrawSpeaker(from: self) }
+                case .tuneSpeaker(let id, let speakerID):
+                    spawn { [self] in await tuneRequested(id, speakerID) }
+                case .microphoneAnswer(let id, let answer):
+                    microphoneAnswered(id, answer)
                 }
             }
         } catch {
@@ -749,6 +816,12 @@ final class HubSession: @unchecked Sendable {
         }
         if let set = inner.value.closeReason { reason = set }
         commandInput.finish()
+        // Nobody is left to answer: a calibration listening through this remote hears nothing more.
+        let unanswered = inner.withLock { s in
+            defer { s.microphoneQuestions.removeAll() }
+            return Array(s.microphoneQuestions.values)
+        }
+        for c in unanswered { c.resume(returning: nil) }
         let tasks: [Task<Void, Never>] = inner.withLock { s in
             if s.closeReason == nil { s.closeReason = reason }
             defer {
@@ -977,7 +1050,7 @@ enum RemoteInputPolicy {
         case .removeFiles(let ids):
             guard ids.count <= maxRemovedFiles, ids.allSatisfy(idOK) else { return .failure(notFound) }
             return .success(command)
-        case .setSpeakerEnabled(let id, _), .retrySpeaker(let id):
+        case .setSpeakerEnabled(let id, _), .retrySpeaker(let id), .calibrateSpeakerSync(let id):
             return idOK(id.rawValue) ? .success(command) : .failure(notFound)
         case .setSpeakerVolume(let id, let volume):
             guard idOK(id.rawValue) else { return .failure(notFound) }
@@ -988,7 +1061,7 @@ enum RemoteInputPolicy {
             return .success(.setSpeakerSyncTrim(id: id, milliseconds: min(r.upperBound, max(r.lowerBound, ms))))
         case .setMasterVolume(let volume):
             return .success(.setMasterVolume(volume: clamp01(volume)))
-        case .refreshSpeakers:
+        case .refreshSpeakers, .calibrateSync, .cancelSyncCalibration:
             return .success(command)
         }
     }

@@ -1,5 +1,6 @@
 import Foundation
 import MulticastAudio
+import MulticastCalibration
 import MulticastEngine
 import MulticastHubModel
 import MulticastKit
@@ -67,6 +68,9 @@ public protocol HubSessionControlling: AnyObject, Sendable {
     func setMasterVolume(_ volume: Float)
     func setVolume(_ volume: Float, forSpeaker id: String)
     func setOffset(millis: Int, forSpeaker id: String)
+    /// Silences a speaker without changing its volume setting or taking it out of the group
+    /// (sync calibration plays its test sound on one speaker at a time). Default: nothing.
+    func setMuted(_ muted: Bool, forSpeaker id: String)
 
     /// Pushes metadata to a selected network speaker. Returns false for speakers that take none
     /// (local outputs, or not selected).
@@ -242,6 +246,8 @@ public struct HubDependencies: Sendable {
     public var spotify: MediaAppControlling
     public var system: HubSystemServices
     public var settings: HubSettingsStore
+    /// The hub's own microphone for sync calibration; nil = it has none (a phone's can still be used).
+    public var microphone: CalibrationMicrophone?
     /// Which speakers' sliders are a real device volume, and that volume.
     public var deviceVolumes: SpeakerDeviceVolumeProviding
     /// The hub's clock (tests pin it).
@@ -250,6 +256,7 @@ public struct HubDependencies: Sendable {
     public init(session: HubSessionControlling, sources: HubSourceMaking, apps: AppPresenceMonitoring,
                 capturableApps: CapturableAppsProviding, spotify: MediaAppControlling, system: HubSystemServices,
                 settings: HubSettingsStore, deviceVolumes: SpeakerDeviceVolumeProviding = NoDeviceVolumes(),
+                microphone: CalibrationMicrophone? = nil,
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.deviceVolumes = deviceVolumes
         self.session = session
@@ -259,6 +266,7 @@ public struct HubDependencies: Sendable {
         self.spotify = spotify
         self.system = system
         self.settings = settings
+        self.microphone = microphone
         self.now = now
     }
 }
@@ -267,4 +275,5 @@ extension HubSessionControlling {
     public func addExternalSpeaker(_ speaker: SpeakerDescriptor, sink: any AudioSink) async {}
     public func removeExternalSpeaker(id: String) async {}
     public func refreshSpeakers() {}
+    public func setMuted(_ muted: Bool, forSpeaker id: String) {}
 }
